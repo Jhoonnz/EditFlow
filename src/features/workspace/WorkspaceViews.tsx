@@ -113,9 +113,11 @@ export function SettingsView({
   const [inviteRole, setInviteRole] = useState<Exclude<WorkspaceRole, 'owner'>>('editor');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState('...');
   const canManage = workspace.role === 'owner' || workspace.role === 'admin';
 
   useEffect(() => setWorkspaceName(workspace.name), [workspace.id, workspace.name]);
+  useEffect(() => { void window.editflow.getVersion().then(setAppVersion); }, []);
 
   const loadMembers = useCallback(async () => {
     if (!supabase) return;
@@ -192,6 +194,15 @@ export function SettingsView({
     await onWorkspacesChanged();
   };
 
+  const checkForUpdates = async () => {
+    setError(null);
+    try {
+      await window.editflow.checkForUpdates();
+    } catch {
+      setError('Não foi possível verificar atualizações agora. Tente novamente em alguns instantes.');
+    }
+  };
+
   return (
     <div className="settings-view">
       {error ? <div className="panel-error">{error}</div> : null}
@@ -222,6 +233,11 @@ export function SettingsView({
             </article>
           ))}
         </div>
+      </section>
+
+      <section className="content-card update-settings-row">
+        <div><h2>Atualizações</h2><p>Versão instalada: {appVersion}. O EditFlow também verifica automaticamente ao abrir.</p></div>
+        <button className="secondary-button" onClick={() => void checkForUpdates()}>Verificar atualizações</button>
       </section>
 
       {workspace.role === 'owner' ? (

@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('editflow', {
   platform: process.platform,
   openExternal: (url: string) => ipcRenderer.invoke('system:open-external', url),
+  getVersion: () => ipcRenderer.invoke('system:get-version'),
   checkForUpdates: () => ipcRenderer.invoke('updater:check'),
   installUpdate: () => ipcRenderer.invoke('updater:install'),
   onUpdateStatus: (callback: (status: unknown) => void) => {

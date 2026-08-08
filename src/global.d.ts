@@ -24,6 +24,7 @@ interface Window {
   editflow: {
     platform: string;
     openExternal: (url: string) => Promise<boolean>;
+    getVersion: () => Promise<string>;
     checkForUpdates: () => Promise<boolean>;
     installUpdate: () => Promise<void>;
     onUpdateStatus: (callback: (status: EditFlowUpdateStatus) => void) => () => void;

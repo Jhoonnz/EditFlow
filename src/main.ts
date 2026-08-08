@@ -12,6 +12,7 @@ type UpdateStatus =
 
 let updateVersion: string | undefined;
 let manualUpdateCheck = false;
+let updateDownloadStarted = false;
 
 const sendUpdateStatus = (status: UpdateStatus) => {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -69,6 +70,8 @@ ipcMain.handle('system:open-external', (_event, url: unknown) => {
   return openSafeExternal(url);
 });
 
+ipcMain.handle('system:get-version', () => app.getVersion());
+
 const configureAutoUpdater = () => {
   if (!app.isPackaged) return;
 
@@ -79,7 +82,7 @@ const configureAutoUpdater = () => {
     owner: 'Jhoonnz',
     repo: 'EditFlow',
   });
-  autoUpdater.autoDownload = true;
+  autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
 
   // Automatic checks stay silent unless an update is actually found.
@@ -89,6 +92,13 @@ const configureAutoUpdater = () => {
   autoUpdater.on('update-available', (info) => {
     updateVersion = info.version;
     sendUpdateStatus({ state: 'available', version: info.version });
+    if (!updateDownloadStarted) {
+      updateDownloadStarted = true;
+      void autoUpdater.downloadUpdate().catch((error: Error) => {
+        updateDownloadStarted = false;
+        sendUpdateStatus({ state: 'error', message: error.message });
+      });
+    }
   });
   autoUpdater.on('download-progress', (progress) => {
     sendUpdateStatus({
@@ -98,19 +108,20 @@ const configureAutoUpdater = () => {
     });
   });
   autoUpdater.on('update-downloaded', (info) => {
+    updateDownloadStarted = false;
     updateVersion = info.version;
     sendUpdateStatus({ state: 'downloaded', version: info.version });
   });
   autoUpdater.on('update-not-available', () => {
+    updateDownloadStarted = false;
     if (manualUpdateCheck) {
       sendUpdateStatus({ state: 'up-to-date', version: app.getVersion() });
     }
     manualUpdateCheck = false;
   });
   autoUpdater.on('error', (error) => {
-    if (manualUpdateCheck) {
-      sendUpdateStatus({ state: 'error', message: error.message });
-    }
+    updateDownloadStarted = false;
+    sendUpdateStatus({ state: 'error', message: error.message });
     manualUpdateCheck = false;
   });
 

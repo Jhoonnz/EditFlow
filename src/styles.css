@@ -494,6 +494,9 @@ button { color: inherit; }
 .invite-form label > svg { position: absolute; top: 12px; left: 11px; color: #a0a1aa; }
 .invite-form label input { padding-left: 34px; }
 .danger-zone { display: flex; align-items: center; justify-content: space-between; border-color: #f0d7da; }
+.update-settings-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.update-settings-row h2 { margin: 0 0 4px; color: #353641; font-size: 15px; }
+.update-settings-row p { margin: 0; color: #92939d; font-size: 10px; }
 
 /* Notifications */
 .notification-wrap { position: relative; }
