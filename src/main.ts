@@ -82,7 +82,10 @@ const configureAutoUpdater = () => {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
-  autoUpdater.on('checking-for-update', () => sendUpdateStatus({ state: 'checking' }));
+  // Automatic checks stay silent unless an update is actually found.
+  autoUpdater.on('checking-for-update', () => {
+    if (manualUpdateCheck) sendUpdateStatus({ state: 'checking' });
+  });
   autoUpdater.on('update-available', (info) => {
     updateVersion = info.version;
     sendUpdateStatus({ state: 'available', version: info.version });

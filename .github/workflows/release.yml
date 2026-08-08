@@ -26,16 +26,38 @@ jobs:
       - name: Instalar dependências
         run: npm ci
 
-      - name: Validar TypeScript
-        run: npm run typecheck
-
-      - name: Empacotar o aplicativo
-        run: npm run package
+      - name: Verificar configuração do Supabase
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:VITE_SUPABASE_URL)) {
+            throw "O secret VITE_SUPABASE_URL não foi configurado no GitHub."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:VITE_SUPABASE_PUBLISHABLE_KEY)) {
+            throw "O secret VITE_SUPABASE_PUBLISHABLE_KEY não foi configurado no GitHub."
+          }
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
 
-      - name: Criar e publicar instalador
-        run: npx electron-builder --win nsis --prepackaged out/EditFlow-win32-x64 --publish always
+      - name: Validar TypeScript
+        run: npm run typecheck
+
+      - name: Criar o instalador
+        run: npm run make
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+
+      - name: Publicar a Release
+        shell: pwsh
+        run: |
+          $appVersion = (Get-Content package.json | ConvertFrom-Json).version
+          gh release create $env:GITHUB_REF_NAME `
+            "release/EditFlow-Setup-$appVersion.exe" `
+            "release/EditFlow-Setup-$appVersion.exe.blockmap" `
+            "release/latest.yml" `
+            --verify-tag `
+            --title "EditFlow $env:GITHUB_REF_NAME" `
+            --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
