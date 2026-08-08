@@ -1,0 +1,71 @@
+{
+  "name": "editflow",
+  "productName": "EditFlow",
+  "version": "0.1.4",
+  "description": "Gestao de producao para equipes de edicao.",
+  "author": "EditFlow",
+  "main": ".vite/build/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron-forge start",
+    "package": "electron-forge package",
+    "make": "npm run package && electron-builder --win nsis --prepackaged out/EditFlow-win32-x64",
+    "release": "npm run package && electron-builder --win nsis --prepackaged out/EditFlow-win32-x64 --publish always",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.112.2",
+    "electron-updater": "^6.8.9",
+    "lucide-react": "^0.468.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.11.2",
+    "@electron-forge/plugin-fuses": "^7.11.2",
+    "@electron-forge/plugin-vite": "^7.11.2",
+    "@electron/fuses": "^1.8.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron": "^43.3.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1"
+  },
+  "build": {
+    "appId": "com.editflow.desktop",
+    "productName": "EditFlow",
+    "directories": {
+      "output": "release"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Jhoonnz",
+      "repo": "EditFlow",
+      "releaseType": "release"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "selectPerMachineByDefault": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "EditFlow",
+      "installerLanguages": ["pt_BR"],
+      "artifactName": "EditFlow-Setup-${version}.${ext}"
+    }
+  }
+}

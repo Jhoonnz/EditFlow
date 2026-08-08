@@ -1,0 +1,293 @@
+import { FormEvent, useEffect, useState } from 'react';
+import type { Session } from '@supabase/supabase-js';
+import { ArrowLeft, Download, LoaderCircle, RotateCw, X } from 'lucide-react';
+import { isSupabaseConfigured, supabase } from './lib/supabase';
+import { AuthenticatedApp } from './features/workspace/AuthenticatedApp';
+
+type AuthMode = 'signin' | 'forgot';
+type Notice = { kind: 'error' | 'success' | 'info'; message: string } | null;
+
+function App() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(isSupabaseConfigured);
+
+  useEffect(() => {
+    if (!supabase) return;
+
+    void supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setSessionLoading(false);
+    });
+
+    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setSessionLoading(false);
+    });
+
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  if (sessionLoading) {
+    return (
+      <>
+        <main className="loading-screen">
+          <LoaderCircle className="spinner" size={28} />
+        </main>
+        <UpdateNotice />
+      </>
+    );
+  }
+
+  if (session) {
+    return (
+      <>
+        <AuthenticatedApp user={session.user} />
+        <UpdateNotice />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <AuthScreen />
+      <UpdateNotice />
+    </>
+  );
+}
+
+function UpdateNotice() {
+  const [status, setStatus] = useState<EditFlowUpdateStatus | null>(null);
+
+  useEffect(() => {
+    if (!window.editflow?.onUpdateStatus) return;
+    return window.editflow.onUpdateStatus(setStatus);
+  }, []);
+
+  useEffect(() => {
+    if (status?.state !== 'up-to-date' && status?.state !== 'error') return;
+    const timeout = window.setTimeout(() => setStatus(null), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [status]);
+
+  if (!status) return null;
+
+  const isBusy = status.state === 'checking' || status.state === 'available' || status.state === 'downloading';
+  const title = status.state === 'checking'
+    ? 'Procurando atualizações'
+    : status.state === 'available'
+      ? `Versão ${status.version} encontrada`
+      : status.state === 'downloading'
+        ? `Baixando versão ${status.version ?? 'nova'}`
+        : status.state === 'downloaded'
+          ? `Versão ${status.version} pronta`
+          : status.state === 'up-to-date'
+            ? 'EditFlow está atualizado'
+            : 'Não foi possível atualizar';
+
+  return (
+    <aside className={`update-notice ${status.state}`} role="status" aria-live="polite">
+      <div className="update-icon">
+        {isBusy ? <LoaderCircle className="spinner" size={18} /> : status.state === 'downloaded' ? <Download size={18} /> : <RotateCw size={18} />}
+      </div>
+      <div className="update-copy">
+        <strong>{title}</strong>
+        {status.state === 'checking' ? <span>Isso leva apenas alguns segundos.</span> : null}
+        {status.state === 'available' ? <span>O download começará automaticamente.</span> : null}
+        {status.state === 'downloading' ? (
+          <>
+            <span>{status.percent}% concluído</span>
+            <div className="update-progress"><i style={{ width: `${status.percent}%` }} /></div>
+          </>
+        ) : null}
+        {status.state === 'downloaded' ? <span>Reinicie agora para concluir a instalação.</span> : null}
+        {status.state === 'up-to-date' ? <span>Você está usando a versão {status.version}.</span> : null}
+        {status.state === 'error' ? <span>Tente novamente mais tarde.</span> : null}
+      </div>
+      {status.state === 'downloaded' ? (
+        <button className="update-install" type="button" onClick={() => void window.editflow.installUpdate()}>
+          Reiniciar e atualizar
+        </button>
+      ) : null}
+      {!isBusy && status.state !== 'downloaded' ? (
+        <button className="update-close" type="button" aria-label="Fechar aviso" onClick={() => setStatus(null)}>
+          <X size={15} />
+        </button>
+      ) : null}
+    </aside>
+  );
+}
+
+function AuthScreen() {
+  const [mode, setMode] = useState<AuthMode>('signin');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [notice, setNotice] = useState<Notice>(null);
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setNotice(null);
+
+    if (!supabase) {
+      setNotice({ kind: 'info', message: 'Configure as credenciais do Supabase no arquivo .env.' });
+      return;
+    }
+
+    if (!email.trim()) {
+      setNotice({ kind: 'error', message: 'Digite seu e-mail para continuar.' });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      if (mode === 'forgot') {
+        const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+        if (error) throw error;
+        setNotice({ kind: 'success', message: 'Enviamos as instruções para o seu e-mail.' });
+        return;
+      }
+
+      if (!password) {
+        setNotice({ kind: 'error', message: 'Digite sua senha para continuar.' });
+        return;
+      }
+
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+      if (error) throw error;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Não foi possível concluir o acesso.';
+      setNotice({ kind: 'error', message: translateAuthError(message) });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const showSocialNotice = (provider: string) => {
+    setNotice({
+      kind: 'info',
+      message: `O acesso com ${provider} será habilitado na configuração de autenticação social.`,
+    });
+  };
+
+  return (
+    <main className="liquid-page">
+      <div className="color-cloud cloud-blue" />
+      <div className="color-cloud cloud-pink" />
+      <div className="color-cloud cloud-violet" />
+      <div className="page-noise" />
+
+      <section className="liquid-card" aria-label="Login do EditFlow">
+        <div className="liquid-shine" />
+
+        {mode === 'forgot' ? (
+          <button className="back-button" type="button" onClick={() => { setMode('signin'); setNotice(null); }}>
+            <ArrowLeft size={17} /> Voltar
+          </button>
+        ) : null}
+
+        <header className="login-heading">
+          <h1>{mode === 'signin' ? 'Welcome Back' : 'Reset Password'}</h1>
+          <p>
+            {mode === 'signin'
+              ? 'Sign in to your account to continue'
+              : 'Enter your email to receive instructions'}
+          </p>
+        </header>
+
+        <form className="login-form" onSubmit={handleSubmit} noValidate>
+          <label className="plain-field">
+            <span>Email Address</span>
+            <input
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="Enter your email"
+            />
+          </label>
+
+          {mode === 'signin' ? (
+            <label className="plain-field">
+              <span>Password</span>
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Enter your password"
+              />
+            </label>
+          ) : null}
+
+          {notice ? <div className={`notice ${notice.kind}`} role="status">{notice.message}</div> : null}
+
+          <button className="sign-in-button" type="submit" disabled={submitting}>
+            {submitting ? <LoaderCircle className="spinner" size={20} /> : mode === 'signin' ? 'Sign In' : 'Send Instructions'}
+          </button>
+        </form>
+
+        {mode === 'signin' ? (
+          <>
+            <div className="continue-label">OR CONTINUE WITH</div>
+
+            <div className="social-stack">
+              <button type="button" className="social-button" onClick={() => showSocialNotice('Google')}>
+                <GoogleIcon />
+                <span>Continue with Google</span>
+              </button>
+              <button type="button" className="social-button" onClick={() => showSocialNotice('Apple')}>
+                <AppleIcon />
+                <span>Continue with Apple</span>
+              </button>
+              <button type="button" className="social-button" onClick={() => showSocialNotice('Meta')}>
+                <MetaIcon />
+                <span>Continue with Meta</span>
+              </button>
+            </div>
+
+            <button className="forgot-button" type="button" onClick={() => { setMode('forgot'); setNotice(null); }}>
+              Forgot your password?
+            </button>
+          </>
+        ) : null}
+      </section>
+    </main>
+  );
+}
+
+function GoogleIcon() {
+  return (
+    <svg className="provider-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.23-.2-1.78H12v3.4h5.52a4.7 4.7 0 0 1-2.05 3.08l-.02.11 2.98 2.31.21.02c1.94-1.79 2.96-4.43 2.96-7.14Z" />
+      <path fill="#34A853" d="M12 22c2.7 0 4.96-.89 6.64-2.63l-3.17-2.44c-.85.57-1.99.97-3.47.97a6.02 6.02 0 0 1-5.69-4.17l-.1.01-3.1 2.4-.03.1A10.02 10.02 0 0 0 12 22Z" />
+      <path fill="#FBBC05" d="M6.31 13.73A6.15 6.15 0 0 1 6 11.99c0-.6.11-1.19.3-1.74v-.12L3.17 7.69l-.1.05A10 10 0 0 0 2 12c0 1.54.36 3 .99 4.3l3.32-2.57Z" />
+      <path fill="#EA4335" d="M12 6.1c1.88 0 3.15.81 3.88 1.48l2.82-2.75A9.56 9.56 0 0 0 12 2a10.02 10.02 0 0 0-8.92 5.74l3.22 2.51A6.04 6.04 0 0 1 12 6.1Z" />
+    </svg>
+  );
+}
+
+function AppleIcon() {
+  return (
+    <svg className="provider-icon apple-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="currentColor" d="M17.05 12.54c-.03-2.72 2.22-4.04 2.32-4.1a4.96 4.96 0 0 0-3.9-2.12c-1.64-.17-3.23.98-4.07.98-.86 0-2.15-.96-3.54-.93a5.16 5.16 0 0 0-4.34 2.64c-1.89 3.27-.48 8.08 1.33 10.72.91 1.3 1.97 2.75 3.36 2.7 1.36-.06 1.87-.87 3.51-.87 1.63 0 2.1.87 3.52.84 1.46-.02 2.38-1.3 3.25-2.61a10.7 10.7 0 0 0 1.49-3.03 4.7 4.7 0 0 1-2.93-4.22ZM14.4 4.58A4.77 4.77 0 0 0 15.5 1.2a4.86 4.86 0 0 0-3.14 1.6 4.54 4.54 0 0 0-1.13 3.24 4 4 0 0 0 3.17-1.46Z" />
+    </svg>
+  );
+}
+
+function MetaIcon() {
+  return <span className="meta-icon" aria-hidden="true">f</span>;
+}
+
+function translateAuthError(message: string) {
+  const normalized = message.toLowerCase();
+  if (normalized.includes('invalid login credentials')) return 'E-mail ou senha incorretos.';
+  if (normalized.includes('email not confirmed')) return 'Confirme seu e-mail antes de entrar.';
+  if (normalized.includes('rate limit')) return 'Muitas tentativas. Aguarde um instante e tente novamente.';
+  return message;
+}
+
+export default App;
