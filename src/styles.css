@@ -382,11 +382,17 @@ button { color: inherit; }
 .kanban-board { display: flex; gap: 14px; flex: 1; min-height: 0; padding: 22px 30px 30px; overflow-x: auto; overflow-y: hidden; scrollbar-color: #c8c9d1 transparent; }
 .kanban-column { display: flex; flex-direction: column; flex: 0 0 286px; min-height: 100%; padding: 12px; border: 1px solid #e7e8ed; border-radius: 16px; background: #eeeff3; transition: border-color .15s, background .15s; }
 .kanban-column.drop-active { border-color: #9189df; background: #ebe9fa; }
-.column-header { display: flex; align-items: center; gap: 8px; height: 33px; padding: 0 3px 10px; }
+.column-header { position: relative; display: flex; align-items: center; gap: 8px; height: 33px; padding: 0 3px 10px; }
 .column-dot { width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 0 3px rgba(255,255,255,.65); }
 .column-header h2 { margin: 0; overflow: hidden; flex: 1; color: #52535d; font-size: 11px; font-weight: 760; white-space: nowrap; text-overflow: ellipsis; text-transform: uppercase; letter-spacing: .045em; }
 .column-count { display: grid; place-items: center; width: 21px; height: 21px; border-radius: 7px; background: #dfe0e6; color: #777983; font-size: 10px; font-weight: 700; }
 .column-header button { display: grid; place-items: center; padding: 0; border: 0; background: transparent; color: #999aa4; cursor: pointer; }
+.column-menu { position: absolute; top: 29px; right: 0; z-index: 12; display: grid; width: 154px; padding: 6px; border: 1px solid #dedee6; border-radius: 11px; background: #fff; box-shadow: 0 12px 28px rgba(39,38,58,.17); }
+.column-menu button { display: flex; justify-content: flex-start; width: 100%; height: 34px; padding: 0 9px; border-radius: 7px; color: #555660; font-size: 10px; }
+.column-menu button:hover { background: #f2f1f8; }
+.column-menu button.danger { color: #b04c5a; }
+.column-menu label { display: flex; align-items: center; justify-content: space-between; height: 34px; padding: 0 9px; color: #555660; font-size: 10px; cursor: pointer; }
+.column-menu input[type="color"] { width: 26px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: transparent; cursor: pointer; }
 .column-cards { display: flex; flex-direction: column; gap: 9px; min-height: 80px; overflow-y: auto; padding: 1px 1px 5px; scrollbar-width: thin; }
 .task-card { display: block; width: 100%; padding: 13px; border: 1px solid #e0e1e7; border-radius: 13px; background: #fff; box-shadow: 0 3px 8px rgba(54,55,72,.05); cursor: grab; text-align: left; transition: transform .15s, border-color .15s, box-shadow .15s, opacity .15s; }
 .task-card:hover { transform: translateY(-2px); border-color: #d0cdec; box-shadow: 0 8px 18px rgba(54,55,72,.09); }
@@ -449,6 +455,59 @@ button { color: inherit; }
 .link-form button { grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; gap: 6px; height: 38px; border: 1px solid #dcd9f0; border-radius: 10px; background: #f0eefb; color: #4f478f; font-size: 10px; font-weight: 740; cursor: pointer; }
 .delete-task { display: flex; align-items: center; gap: 7px; margin-top: 27px; padding: 0; border: 0; background: transparent; color: #b14b5a; font-size: 11px; cursor: pointer; }
 
+/* Clients and settings */
+.content-view, .settings-view { display: grid; align-content: start; gap: 18px; flex: 1; min-height: 0; padding: 24px 30px 35px; overflow-y: auto; background: #f6f6f9; }
+.content-view { grid-template-columns: minmax(280px, .75fr) minmax(390px, 1.25fr); }
+.settings-view { grid-template-columns: minmax(0, 1fr); }
+.content-card { padding: 21px; border: 1px solid #e4e4ea; border-radius: 16px; background: #fff; box-shadow: 0 5px 16px rgba(48,48,65,.04); }
+.content-card-heading { display: flex; align-items: center; gap: 11px; margin-bottom: 20px; }
+.content-icon { display: grid; place-items: center; flex: 0 0 38px; height: 38px; border-radius: 11px; background: #efedfb; color: #514a94; }
+.content-card-heading h2, .danger-zone h2 { margin: 0 0 3px; color: #353641; font-size: 15px; }
+.content-card-heading p, .danger-zone p { margin: 0; color: #9697a1; font-size: 10px; }
+.settings-form { display: grid; gap: 13px; }
+.settings-grid { grid-template-columns: 1fr 1fr; }
+.settings-form label > span { display: block; margin-bottom: 6px; color: #60616b; font-size: 10px; font-weight: 750; }
+.settings-form input, .invite-form input, .invite-form select { width: 100%; height: 41px; padding: 0 11px; border: 1px solid #dedee6; border-radius: 10px; outline: 0; background: #fff; color: #383943; font-size: 11px; }
+.settings-form input:focus, .invite-form input:focus, .invite-form select:focus { border-color: #8a83d7; box-shadow: 0 0 0 3px rgba(138,131,215,.1); }
+.settings-form input:disabled { background: #f3f3f6; color: #92939d; }
+.form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.full-row { grid-column: 1 / -1; }
+.primary-button, .secondary-button, .danger-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 38px; padding: 0 14px; border-radius: 10px; font-size: 10px; font-weight: 750; cursor: pointer; }
+.primary-button { border: 0; background: #211b70; color: #fff; }
+.secondary-button { border: 1px solid #dedee5; background: #fff; color: #696a74; }
+.danger-button { border: 1px solid #f0cdd2; background: #fff4f5; color: #ad4050; }
+.primary-button:disabled, .danger-button:disabled { opacity: .6; }
+.panel-error { padding: 10px 12px; border: 1px solid #f0c5cc; border-radius: 10px; background: #fff0f2; color: #aa3f50; font-size: 10px; }
+.client-list, .member-list { display: grid; gap: 7px; }
+.client-row, .member-row { display: flex; align-items: center; gap: 10px; min-height: 57px; padding: 8px 9px; border: 1px solid #e7e7ec; border-radius: 11px; }
+.client-avatar { display: grid; place-items: center; flex: 0 0 35px; height: 35px; border-radius: 10px; background: #ebe8fb; color: #4e478e; font-size: 12px; font-weight: 800; }
+.client-copy { display: grid; min-width: 0; flex: 1; gap: 3px; }
+.client-copy strong, .client-copy small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.client-copy strong { color: #464750; font-size: 11px; }
+.client-copy small { color: #999aa3; font-size: 9px; }
+.client-row > button, .member-row > button { display: grid; place-items: center; flex: 0 0 31px; width: 31px; height: 31px; border: 0; border-radius: 8px; background: transparent; color: #8d8e98; cursor: pointer; }
+.client-row > button:hover { background: #f0eef9; color: #514a91; }
+.client-row > button.danger-icon:hover, .member-row > button.danger-icon:hover { background: #fff0f2; color: #b34a59; }
+.empty-panel { padding: 28px 10px; border: 1px dashed #dddde4; border-radius: 11px; color: #a1a2ab; font-size: 10px; text-align: center; }
+.invite-form { display: grid; grid-template-columns: minmax(220px,1fr) 150px auto; gap: 8px; margin-bottom: 16px; }
+.invite-form label { position: relative; }
+.invite-form label > svg { position: absolute; top: 12px; left: 11px; color: #a0a1aa; }
+.invite-form label input { padding-left: 34px; }
+.danger-zone { display: flex; align-items: center; justify-content: space-between; border-color: #f0d7da; }
+
+/* Notifications */
+.notification-wrap { position: relative; }
+.round-action.has-notifications { position: relative; }
+.round-action.has-notifications > i { position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; border: 2px solid #fff; border-radius: 50%; background: #ef5268; }
+.notification-popover { position: absolute; top: 48px; right: 0; z-index: 30; display: grid; width: 290px; padding: 10px; border: 1px solid #e1e1e7; border-radius: 13px; background: #fff; box-shadow: 0 15px 38px rgba(36,35,55,.18); }
+.notification-popover > strong { padding: 4px 6px 9px; color: #454650; font-size: 11px; }
+.notification-popover > button { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 42px; padding: 8px; border: 0; border-radius: 8px; background: transparent; color: #555660; cursor: pointer; text-align: left; }
+.notification-popover > button:hover { background: #f3f2f9; }
+.notification-popover button span { overflow: hidden; font-size: 10px; white-space: nowrap; text-overflow: ellipsis; }
+.notification-popover button small { flex: 0 0 auto; color: #9a702d; font-size: 8px; }
+.notification-popover button small.overdue { color: #bb4657; }
+.notification-popover p { margin: 0; padding: 24px 8px; color: #9c9da6; font-size: 10px; text-align: center; }
+
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes slide-in { from { transform: translateX(30px); opacity: .7; } }
 
@@ -479,4 +538,7 @@ button { color: inherit; }
   .account-row { justify-content: center; padding-inline: 0; }
   .dashboard-header, .board-toolbar { padding-inline: 20px; }
   .kanban-board { padding-inline: 20px; }
+  .content-view { grid-template-columns: 1fr; padding-inline: 20px; }
+  .settings-grid { grid-template-columns: 1fr; }
+  .invite-form { grid-template-columns: 1fr; }
 }

@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { ClientsView, SettingsView } from '../workspace/WorkspaceViews';
 import type {
   Board,
   BoardColumn,
@@ -40,9 +41,11 @@ type Props = {
   workspace: WorkspaceSummary;
   workspaces: WorkspaceSummary[];
   onWorkspaceChange: (id: string) => void;
+  onWorkspacesChanged: () => Promise<void>;
 };
 
 type SyncStatus = 'connecting' | 'connected' | 'offline' | 'error';
+type DashboardView = 'board' | 'clients' | 'settings';
 
 const emptyDraft: TaskDraft = {
   title: '',
@@ -52,7 +55,7 @@ const emptyDraft: TaskDraft = {
   client_id: '',
 };
 
-export function Dashboard({ user, workspace, workspaces, onWorkspaceChange }: Props) {
+export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWorkspacesChanged }: Props) {
   const [board, setBoard] = useState<Board | null>(null);
   const [columns, setColumns] = useState<BoardColumn[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -64,7 +67,10 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange }: Pr
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(navigator.onLine ? 'connecting' : 'offline');
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [dropColumnId, setDropColumnId] = useState<string | null>(null);
-  const [editor, setEditor] = useState<{ mode: 'new' | 'edit'; task: Task | null } | null>(null);
+  const [editor, setEditor] = useState<{ mode: 'new' | 'edit'; task: Task | null; columnId?: string } | null>(null);
+  const [view, setView] = useState<DashboardView>('board');
+  const [columnMenuId, setColumnMenuId] = useState<string | null>(null);
+  const [showNotifications, setShowNotifications] = useState(false);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadBoard = useCallback(async (quiet = false) => {
@@ -204,6 +210,41 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange }: Pr
     if (taskId) void moveTask(taskId, columnId);
   };
 
+  const renameColumn = async (column: BoardColumn) => {
+    if (!supabase) return;
+    const nextName = window.prompt('Novo nome da coluna:', column.name)?.trim();
+    if (!nextName || nextName === column.name) return;
+    const { error: updateError } = await supabase.from('columns').update({ name: nextName }).eq('id', column.id);
+    if (updateError) setError(updateError.message);
+    else await loadBoard(true);
+    setColumnMenuId(null);
+  };
+
+  const changeColumnColor = async (column: BoardColumn, color: string) => {
+    if (!supabase) return;
+    setColumns((current) => current.map((item) => item.id === column.id ? { ...item, color } : item));
+    const { error: updateError } = await supabase.from('columns').update({ color }).eq('id', column.id);
+    if (updateError) { setError(updateError.message); await loadBoard(true); }
+  };
+
+  const deleteColumn = async (column: BoardColumn) => {
+    if (!supabase) return;
+    const taskCount = tasks.filter((task) => task.column_id === column.id).length;
+    if (taskCount) return setError(`Mova as ${taskCount} tarefas desta coluna antes de excluí-la.`);
+    if (columns.length === 1) return setError('O quadro precisa ter pelo menos uma coluna.');
+    if (!window.confirm(`Excluir a coluna “${column.name}”?`)) return;
+    const { error: deleteError } = await supabase.from('columns').delete().eq('id', column.id);
+    if (deleteError) setError(deleteError.message);
+    else await loadBoard(true);
+    setColumnMenuId(null);
+  };
+
+  const notifications = useMemo(() => tasks
+    .filter((task) => task.due_at)
+    .map((task) => ({ task, distance: new Date(task.due_at!).getTime() - Date.now() }))
+    .filter(({ distance }) => distance < 7 * 24 * 60 * 60 * 1000)
+    .sort((a, b) => a.distance - b.distance), [tasks]);
+
   if (loading) {
     return <main className="app-loading"><LoaderCircle className="spinner" size={26} /></main>;
   }
@@ -222,8 +263,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange }: Pr
         </label>
 
         <nav className="sidebar-nav" aria-label="Navegação principal">
-          <button className="nav-item active"><LayoutDashboard size={18} /><span>Produção</span></button>
-          <button className="nav-item"><Users size={18} /><span>Clientes</span><small>{clients.length}</small></button>
+          <button className={`nav-item ${view === 'board' ? 'active' : ''}`} onClick={() => setView('board')}><LayoutDashboard size={18} /><span>Produção</span></button>
+          <button className={`nav-item ${view === 'clients' ? 'active' : ''}`} onClick={() => setView('clients')}><Users size={18} /><span>Clientes</span><small>{clients.length}</small></button>
         </nav>
 
         <div className="sidebar-spacer" />
@@ -231,7 +272,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange }: Pr
           {syncStatus === 'offline' || syncStatus === 'error' ? <WifiOff size={14} /> : <Wifi size={14} />}
           <span>{syncLabel(syncStatus)}</span>
         </div>
-        <button className="nav-item"><Settings size={18} /><span>Configurações</span></button>
+        <button className={`nav-item ${view === 'settings' ? 'active' : ''}`} onClick={() => setView('settings')}><Settings size={18} /><span>Configurações</span></button>
         <button className="account-row" onClick={() => void supabase?.auth.signOut()} title="Sair da conta">
           <span className="user-avatar">{(user.email?.[0] ?? 'U').toUpperCase()}</span>
           <span className="account-copy"><strong>{user.user_metadata.full_name || 'Minha conta'}</strong><small>{user.email}</small></span>
@@ -243,22 +284,31 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange }: Pr
         <header className="dashboard-header">
           <div>
             <p>ESPAÇO DE TRABALHO</p>
-            <h1>{board?.name ?? 'Produção'}</h1>
+            <h1>{view === 'board' ? board?.name ?? 'Produção' : view === 'clients' ? 'Clientes' : 'Configurações'}</h1>
           </div>
           <div className="header-actions">
-            <button className="round-action" aria-label="Notificações"><Bell size={19} /></button>
-            <button className="new-task-button" onClick={() => setEditor({ mode: 'new', task: null })}><Plus size={18} />Nova tarefa</button>
+            <div className="notification-wrap">
+              <button className={`round-action ${notifications.length ? 'has-notifications' : ''}`} aria-label="Notificações" onClick={() => setShowNotifications((show) => !show)}><Bell size={19} />{notifications.length ? <i /> : null}</button>
+              {showNotifications ? (
+                <div className="notification-popover">
+                  <strong>Prazos próximos</strong>
+                  {notifications.map(({ task, distance }) => <button key={task.id} onClick={() => { setView('board'); setEditor({ mode: 'edit', task }); setShowNotifications(false); }}><span>{task.title}</span><small className={distance < 0 ? 'overdue' : ''}>{distance < 0 ? 'Atrasado' : formatDate(task.due_at!)}</small></button>)}
+                  {!notifications.length ? <p>Nenhum prazo nos próximos 7 dias.</p> : null}
+                </div>
+              ) : null}
+            </div>
+            {view === 'board' ? <button className="new-task-button" onClick={() => setEditor({ mode: 'new', task: null, columnId: columns[0]?.id })}><Plus size={18} />Nova tarefa</button> : null}
           </div>
         </header>
 
-        <div className="board-toolbar">
+        {view === 'board' ? <div className="board-toolbar">
           <label className="board-search"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar trabalhos ou clientes..." /></label>
           <span className="task-total">{tasks.length} {tasks.length === 1 ? 'trabalho' : 'trabalhos'}</span>
-        </div>
+        </div> : null}
 
         {error ? <div className="board-error"><span>{error}</span><button onClick={() => void loadBoard()}>Tentar novamente</button></div> : null}
 
-        <div className="kanban-board">
+        {view === 'board' ? <div className="kanban-board">
           {columns.map((column) => {
             const columnTasks = tasksByColumn.get(column.id) ?? [];
             return (
@@ -273,7 +323,14 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange }: Pr
                   <span className="column-dot" style={{ background: column.color ?? '#8b8fa3' }} />
                   <h2>{column.name}</h2>
                   <span className="column-count">{columnTasks.length}</span>
-                  <button aria-label={`Opções de ${column.name}`}><MoreHorizontal size={17} /></button>
+                  <button aria-label={`Opções de ${column.name}`} onClick={() => setColumnMenuId((current) => current === column.id ? null : column.id)}><MoreHorizontal size={17} /></button>
+                  {columnMenuId === column.id ? (
+                    <div className="column-menu">
+                      <button onClick={() => void renameColumn(column)}>Renomear</button>
+                      <label><span>Cor</span><input type="color" value={column.color ?? '#8b8fa3'} onChange={(event) => void changeColumnColor(column, event.target.value)} /></label>
+                      <button className="danger" onClick={() => void deleteColumn(column)}>Excluir coluna</button>
+                    </div>
+                  ) : null}
                 </header>
 
                 <div className="column-cards">
@@ -295,11 +352,13 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange }: Pr
                   {!columnTasks.length ? <div className="empty-column">Arraste uma tarefa para cá</div> : null}
                 </div>
 
-                <button className="column-add" onClick={() => setEditor({ mode: 'new', task: null })}><Plus size={16} />Adicionar tarefa</button>
+                <button className="column-add" onClick={() => setEditor({ mode: 'new', task: null, columnId: column.id })}><Plus size={16} />Adicionar tarefa</button>
               </section>
             );
           })}
-        </div>
+        </div> : null}
+        {view === 'clients' ? <ClientsView workspace={workspace} clients={clients} tasks={tasks} onChanged={() => loadBoard(true)} /> : null}
+        {view === 'settings' ? <SettingsView user={user} workspace={workspace} onWorkspacesChanged={onWorkspacesChanged} /> : null}
       </section>
 
       {editor && board && columns[0] ? (
@@ -307,7 +366,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange }: Pr
           mode={editor.mode}
           task={editor.task}
           board={board}
-          firstColumn={columns[0]}
+          firstColumn={columns.find((column) => column.id === editor.columnId) ?? columns[0]}
           workspace={workspace}
           clients={clients}
           links={editor.task ? links.filter((link) => link.task_id === editor.task?.id) : []}

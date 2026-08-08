@@ -6,6 +6,13 @@ export type WorkspaceSummary = {
   role: WorkspaceRole;
 };
 
+export type WorkspaceMember = {
+  user_id: string;
+  role: WorkspaceRole;
+  display_name: string;
+  email?: string;
+};
+
 export type Board = {
   id: string;
   name: string;

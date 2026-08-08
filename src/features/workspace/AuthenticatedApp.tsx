@@ -88,6 +88,7 @@ export function AuthenticatedApp({ user }: Props) {
       workspace={activeWorkspace}
       workspaces={workspaces}
       onWorkspaceChange={setActiveWorkspaceId}
+      onWorkspacesChanged={loadWorkspaces}
     />
   );
 }
@@ -162,8 +163,18 @@ function WorkspaceOnboarding({
 }
 
 function translateWorkspaceError(message: string) {
-  if (message.toLowerCase().includes('profiles')) {
-    return 'Seu perfil ainda não foi preparado no banco. Execute a migration e entre novamente.';
+  const normalized = message.toLowerCase();
+  if (normalized.includes('profiles') || normalized.includes('foreign key')) {
+    return 'Seu perfil ainda não foi preparado no banco. Aplique a migration 002 e tente novamente.';
+  }
+  if (normalized.includes('create_workspace') || normalized.includes('schema cache')) {
+    return 'A função de criação da equipe não está instalada no Supabase. Aplique as migrations do projeto.';
+  }
+  if (normalized.includes('permission denied')) {
+    return 'O banco ainda não concedeu acesso ao aplicativo. Aplique a migration 003 no Supabase.';
+  }
+  if (normalized.includes('workspace_members') || normalized.includes('relation')) {
+    return 'As tabelas do EditFlow ainda não estão instaladas no Supabase. Aplique a migration inicial.';
   }
   return message;
 }
