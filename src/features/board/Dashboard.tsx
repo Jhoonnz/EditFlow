@@ -55,6 +55,8 @@ const emptyDraft: TaskDraft = {
   client_id: '',
 };
 
+const columnColors = ['#8b8fa3', '#a78bfa', '#60a5fa', '#f59e0b', '#f97316', '#fb7185', '#34d399', '#22c55e'];
+
 export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWorkspacesChanged }: Props) {
   const [board, setBoard] = useState<Board | null>(null);
   const [columns, setColumns] = useState<BoardColumn[]>([]);
@@ -70,6 +72,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [editor, setEditor] = useState<{ mode: 'new' | 'edit'; task: Task | null; columnId?: string } | null>(null);
   const [view, setView] = useState<DashboardView>('board');
   const [columnMenuId, setColumnMenuId] = useState<string | null>(null);
+  const [editingColumn, setEditingColumn] = useState<BoardColumn | null>(null);
   const [showNotifications, setShowNotifications] = useState(false);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -210,35 +213,6 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     if (taskId) void moveTask(taskId, columnId);
   };
 
-  const renameColumn = async (column: BoardColumn) => {
-    if (!supabase) return;
-    const nextName = window.prompt('Novo nome da coluna:', column.name)?.trim();
-    if (!nextName || nextName === column.name) return;
-    const { error: updateError } = await supabase.from('columns').update({ name: nextName }).eq('id', column.id);
-    if (updateError) setError(updateError.message);
-    else await loadBoard(true);
-    setColumnMenuId(null);
-  };
-
-  const changeColumnColor = async (column: BoardColumn, color: string) => {
-    if (!supabase) return;
-    setColumns((current) => current.map((item) => item.id === column.id ? { ...item, color } : item));
-    const { error: updateError } = await supabase.from('columns').update({ color }).eq('id', column.id);
-    if (updateError) { setError(updateError.message); await loadBoard(true); }
-  };
-
-  const deleteColumn = async (column: BoardColumn) => {
-    if (!supabase) return;
-    const taskCount = tasks.filter((task) => task.column_id === column.id).length;
-    if (taskCount) return setError(`Mova as ${taskCount} tarefas desta coluna antes de excluí-la.`);
-    if (columns.length === 1) return setError('O quadro precisa ter pelo menos uma coluna.');
-    if (!window.confirm(`Excluir a coluna “${column.name}”?`)) return;
-    const { error: deleteError } = await supabase.from('columns').delete().eq('id', column.id);
-    if (deleteError) setError(deleteError.message);
-    else await loadBoard(true);
-    setColumnMenuId(null);
-  };
-
   const notifications = useMemo(() => tasks
     .filter((task) => task.due_at)
     .map((task) => ({ task, distance: new Date(task.due_at!).getTime() - Date.now() }))
@@ -326,9 +300,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                   <button aria-label={`Opções de ${column.name}`} onClick={() => setColumnMenuId((current) => current === column.id ? null : column.id)}><MoreHorizontal size={17} /></button>
                   {columnMenuId === column.id ? (
                     <div className="column-menu">
-                      <button onClick={() => void renameColumn(column)}>Renomear</button>
-                      <label><span>Cor</span><input type="color" value={column.color ?? '#8b8fa3'} onChange={(event) => void changeColumnColor(column, event.target.value)} /></label>
-                      <button className="danger" onClick={() => void deleteColumn(column)}>Excluir coluna</button>
+                      <button onClick={() => { setEditingColumn(column); setColumnMenuId(null); }}>Editar nome e cor</button>
+                      <button className="danger" onClick={() => { setEditingColumn(column); setColumnMenuId(null); }}>Gerenciar coluna</button>
                     </div>
                   ) : null}
                 </header>
@@ -376,7 +349,75 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           onLinksChanged={async () => { await loadBoard(true); }}
         />
       ) : null}
+      {editingColumn ? (
+        <ColumnEditor
+          column={editingColumn}
+          taskCount={tasks.filter((task) => task.column_id === editingColumn.id).length}
+          totalColumns={columns.length}
+          onClose={() => setEditingColumn(null)}
+          onChanged={async () => { await loadBoard(true); setEditingColumn(null); }}
+        />
+      ) : null}
     </main>
+  );
+}
+
+function ColumnEditor({
+  column,
+  taskCount,
+  totalColumns,
+  onClose,
+  onChanged,
+}: {
+  column: BoardColumn;
+  taskCount: number;
+  totalColumns: number;
+  onClose: () => void;
+  onChanged: () => Promise<void>;
+}) {
+  const [name, setName] = useState(column.name);
+  const [color, setColor] = useState(column.color ?? '#8b8fa3');
+  const [saving, setSaving] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!supabase || !name.trim()) return setError('Digite um nome para a coluna.');
+    setSaving(true);
+    setError(null);
+    const { error: updateError } = await supabase.from('columns').update({ name: name.trim(), color }).eq('id', column.id);
+    setSaving(false);
+    if (updateError) return setError(updateError.message);
+    await onChanged();
+  };
+
+  const remove = async () => {
+    if (!supabase) return;
+    if (taskCount) return setError(`Mova as ${taskCount} tarefas desta coluna antes de excluí-la.`);
+    if (totalColumns === 1) return setError('O quadro precisa ter pelo menos uma coluna.');
+    if (!confirmingDelete) return setConfirmingDelete(true);
+    setSaving(true);
+    const { error: deleteError } = await supabase.from('columns').delete().eq('id', column.id);
+    setSaving(false);
+    if (deleteError) return setError(deleteError.message);
+    await onChanged();
+  };
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="column-editor-modal" role="dialog" aria-modal="true" aria-label="Editar coluna">
+        <header><div><p>CONFIGURAÇÃO DA COLUNA</p><h2>Editar coluna</h2></div><button onClick={onClose} aria-label="Fechar"><X size={19} /></button></header>
+        <form onSubmit={save}>
+          <label><span>Nome</span><input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} autoFocus /></label>
+          <fieldset><legend>Cor</legend><div className="color-palette">{columnColors.map((option) => <button type="button" key={option} className={color === option ? 'selected' : ''} style={{ background: option }} onClick={() => setColor(option)} aria-label={`Usar cor ${option}`}>{color === option ? '✓' : ''}</button>)}</div></fieldset>
+          <div className="column-preview"><i style={{ background: color }} /><span>{name || 'Nome da coluna'}</span></div>
+          {error ? <div className="panel-error">{error}</div> : null}
+          <button className="primary-button column-save" type="submit" disabled={saving}>{saving ? <LoaderCircle className="spinner" size={16} /> : null}Salvar coluna</button>
+        </form>
+        <div className="column-danger-zone"><div><strong>Excluir coluna</strong><small>{taskCount ? `${taskCount} tarefas precisam ser movidas antes.` : 'Esta ação não pode ser desfeita.'}</small></div><button onClick={() => void remove()} disabled={saving || taskCount > 0}>{confirmingDelete ? 'Confirmar exclusão' : 'Excluir'}</button></div>
+      </section>
+    </div>
   );
 }
 
