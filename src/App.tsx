@@ -57,14 +57,18 @@ function App() {
 
 function UpdateNotice() {
   const [status, setStatus] = useState<EditFlowUpdateStatus | null>(null);
+  const [showDetails, setShowDetails] = useState(false);
 
   useEffect(() => {
     if (!window.editflow?.onUpdateStatus) return;
-    return window.editflow.onUpdateStatus(setStatus);
+    return window.editflow.onUpdateStatus((nextStatus) => {
+      setStatus(nextStatus);
+      setShowDetails(false);
+    });
   }, []);
 
   useEffect(() => {
-    if (status?.state !== 'up-to-date' && status?.state !== 'error') return;
+    if (status?.state !== 'up-to-date') return;
     const timeout = window.setTimeout(() => setStatus(null), 5000);
     return () => window.clearTimeout(timeout);
   }, [status]);
@@ -101,7 +105,17 @@ function UpdateNotice() {
         ) : null}
         {status.state === 'downloaded' ? <span>Reinicie agora para concluir a instalação.</span> : null}
         {status.state === 'up-to-date' ? <span>Você está usando a versão {status.version}.</span> : null}
-        {status.state === 'error' ? <span>Tente novamente mais tarde.</span> : null}
+        {status.state === 'error' ? (
+          <>
+            <span>Abra os detalhes para identificar a causa.</span>
+            <div className="update-error-actions">
+              <button type="button" onClick={() => setShowDetails((show) => !show)}>{showDetails ? 'Ocultar detalhes' : 'Ver detalhes'}</button>
+              <button type="button" onClick={() => void window.editflow.checkForUpdates()}>Tentar novamente</button>
+              <button type="button" onClick={() => void window.editflow.showUpdateLog()}>Abrir log</button>
+            </div>
+            {showDetails ? <code className="update-error-detail">{status.message}</code> : null}
+          </>
+        ) : null}
       </div>
       {status.state === 'downloaded' ? (
         <button className="update-install" type="button" onClick={() => void window.editflow.installUpdate()}>

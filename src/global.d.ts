@@ -27,6 +27,7 @@ interface Window {
     getVersion: () => Promise<string>;
     checkForUpdates: () => Promise<boolean>;
     installUpdate: () => Promise<void>;
+    showUpdateLog: () => Promise<boolean>;
     onUpdateStatus: (callback: (status: EditFlowUpdateStatus) => void) => () => void;
   };
 }

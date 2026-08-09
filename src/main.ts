@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
-import { autoUpdater } from 'electron-updater';
+import { autoUpdater, type NsisUpdater } from 'electron-updater';
+import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 type UpdateStatus =
@@ -17,6 +18,18 @@ let updateDownloadStarted = false;
 const sendUpdateStatus = (status: UpdateStatus) => {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('updater:status', status);
+  }
+};
+
+const updateLogPath = () => path.join(app.getPath('userData'), 'logs', 'updater.log');
+
+const writeUpdateLog = async (event: string, details = '') => {
+  try {
+    const logPath = updateLogPath();
+    await mkdir(path.dirname(logPath), { recursive: true });
+    await appendFile(logPath, `[${new Date().toISOString()}] ${event}${details ? `: ${details}` : ''}\n`, 'utf8');
+  } catch {
+    // Logging must never interrupt the update itself.
   }
 };
 
@@ -71,6 +84,17 @@ ipcMain.handle('system:open-external', (_event, url: unknown) => {
 });
 
 ipcMain.handle('system:get-version', () => app.getVersion());
+ipcMain.handle('updater:show-log', async () => {
+  const logPath = updateLogPath();
+  await mkdir(path.dirname(logPath), { recursive: true });
+  try {
+    await appendFile(logPath, '', 'utf8');
+  } catch {
+    await writeFile(logPath, '', 'utf8');
+  }
+  shell.showItemInFolder(logPath);
+  return true;
+});
 
 const configureAutoUpdater = () => {
   if (!app.isPackaged) return;
@@ -84,23 +108,28 @@ const configureAutoUpdater = () => {
   });
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
+  (autoUpdater as NsisUpdater).disableDifferentialDownload = true;
 
   // Automatic checks stay silent unless an update is actually found.
   autoUpdater.on('checking-for-update', () => {
+    void writeUpdateLog('Verificando atualizações', `versão atual ${app.getVersion()}`);
     if (manualUpdateCheck) sendUpdateStatus({ state: 'checking' });
   });
   autoUpdater.on('update-available', (info) => {
+    void writeUpdateLog('Atualização encontrada', info.version);
     updateVersion = info.version;
     sendUpdateStatus({ state: 'available', version: info.version });
     if (!updateDownloadStarted) {
       updateDownloadStarted = true;
       void autoUpdater.downloadUpdate().catch((error: Error) => {
+        void writeUpdateLog('Falha ao baixar atualização', error.stack ?? error.message);
         updateDownloadStarted = false;
         sendUpdateStatus({ state: 'error', message: error.message });
       });
     }
   });
   autoUpdater.on('download-progress', (progress) => {
+    if (Math.round(progress.percent) % 10 === 0) void writeUpdateLog('Progresso do download', `${Math.round(progress.percent)}%`);
     sendUpdateStatus({
       state: 'downloading',
       version: updateVersion,
@@ -108,11 +137,13 @@ const configureAutoUpdater = () => {
     });
   });
   autoUpdater.on('update-downloaded', (info) => {
+    void writeUpdateLog('Atualização pronta', info.version);
     updateDownloadStarted = false;
     updateVersion = info.version;
     sendUpdateStatus({ state: 'downloaded', version: info.version });
   });
   autoUpdater.on('update-not-available', () => {
+    void writeUpdateLog('Nenhuma atualização disponível', app.getVersion());
     updateDownloadStarted = false;
     if (manualUpdateCheck) {
       sendUpdateStatus({ state: 'up-to-date', version: app.getVersion() });
@@ -120,6 +151,7 @@ const configureAutoUpdater = () => {
     manualUpdateCheck = false;
   });
   autoUpdater.on('error', (error) => {
+    void writeUpdateLog('Erro do atualizador', error.stack ?? error.message);
     updateDownloadStarted = false;
     sendUpdateStatus({ state: 'error', message: error.message });
     manualUpdateCheck = false;

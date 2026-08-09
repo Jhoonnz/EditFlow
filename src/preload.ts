@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('editflow', {
   getVersion: () => ipcRenderer.invoke('system:get-version'),
   checkForUpdates: () => ipcRenderer.invoke('updater:check'),
   installUpdate: () => ipcRenderer.invoke('updater:install'),
+  showUpdateLog: () => ipcRenderer.invoke('updater:show-log'),
   onUpdateStatus: (callback: (status: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, status: unknown) => callback(status);
     ipcRenderer.on('updater:status', listener);
