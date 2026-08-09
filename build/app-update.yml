@@ -1,0 +1,4 @@
+provider: github
+owner: Jhoonnz
+repo: EditFlow
+updaterCacheDirName: editflow-updater
