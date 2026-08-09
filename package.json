@@ -1,7 +1,7 @@
 {
   "name": "editflow",
   "productName": "EditFlow",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "Gestao de producao para equipes de edicao.",
   "author": "EditFlow",
   "main": ".vite/build/main.js",
