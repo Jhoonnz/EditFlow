@@ -13,6 +13,7 @@ import {
   Link2,
   LoaderCircle,
   LogOut,
+  MessageSquare,
   MoreHorizontal,
   Plus,
   Search,
@@ -28,11 +29,14 @@ import {
 import { supabase } from '../../lib/supabase';
 import { ClientsView, SettingsView } from '../workspace/WorkspaceViews';
 import type {
+  AppNotification,
   Board,
   BoardColumn,
   Client,
   Task,
   TaskActivity,
+  TaskComment,
+  TaskCommentKind,
   TaskDraft,
   TaskLink,
   TaskLinkCategory,
@@ -59,6 +63,7 @@ const emptyDraft: TaskDraft = {
   due_at: '',
   client_id: '',
   assignee_id: '',
+  revision_round: 1,
 };
 
 const columnColors = ['#8b8fa3', '#a78bfa', '#60a5fa', '#f59e0b', '#f97316', '#fb7185', '#34d399', '#22c55e'];
@@ -70,6 +75,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [clients, setClients] = useState<Client[]>([]);
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [links, setLinks] = useState<TaskLink[]>([]);
+  const [inboxNotifications, setInboxNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -107,14 +113,15 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     }
 
     const currentBoard = boardRow as Board;
-    const [columnResult, taskResult, clientResult, membershipResult] = await Promise.all([
+    const [columnResult, taskResult, clientResult, membershipResult, notificationResult] = await Promise.all([
       supabase.from('columns').select('*').eq('board_id', currentBoard.id).order('position'),
       supabase.from('tasks').select('*').eq('board_id', currentBoard.id).order('position'),
       supabase.from('clients').select('*').eq('workspace_id', workspace.id).order('name'),
       supabase.from('workspace_members').select('user_id, role').eq('workspace_id', workspace.id),
+      supabase.from('notifications').select('*').eq('workspace_id', workspace.id).eq('user_id', user.id).order('created_at', { ascending: false }).limit(30),
     ]);
 
-    const firstError = columnResult.error ?? taskResult.error ?? clientResult.error ?? membershipResult.error;
+    const firstError = columnResult.error ?? taskResult.error ?? clientResult.error ?? membershipResult.error ?? notificationResult.error;
     if (firstError) {
       setError(firstError.message);
       setLoading(false);
@@ -153,8 +160,9 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     setClients((clientResult.data ?? []) as Client[]);
     setMembers(nextMembers);
     setLinks(nextLinks);
+    setInboxNotifications((notificationResult.data ?? []) as AppNotification[]);
     setLoading(false);
-  }, [workspace.id]);
+  }, [user.id, workspace.id]);
 
   const scheduleReload = useCallback(() => {
     if (reloadTimer.current) clearTimeout(reloadTimer.current);
@@ -180,6 +188,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         .on('postgres_changes', { event: '*', schema: 'public', table: 'task_links' }, scheduleReload)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'columns' }, scheduleReload)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'workspace_members', filter: `workspace_id=eq.${workspace.id}` }, scheduleReload)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` }, scheduleReload)
         .subscribe((status) => {
           if (status === 'SUBSCRIBED') setSyncStatus('connected');
           else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setSyncStatus('error');
@@ -198,7 +207,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
       if (channel) void realtimeClient.removeChannel(channel);
       if (reloadTimer.current) clearTimeout(reloadTimer.current);
     };
-  }, [scheduleReload, workspace.id]);
+  }, [scheduleReload, user.id, workspace.id]);
 
   const filteredTasks = useMemo(() => {
     const term = search.trim().toLocaleLowerCase('pt-BR');
@@ -323,11 +332,33 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     setColumnDropTarget(null);
   };
 
-  const notifications = useMemo(() => tasks
+  const deadlineNotifications = useMemo(() => tasks
     .filter((task) => task.due_at)
     .map((task) => ({ task, distance: new Date(task.due_at!).getTime() - Date.now() }))
     .filter(({ distance }) => distance < 7 * 24 * 60 * 60 * 1000)
     .sort((a, b) => a.distance - b.distance), [tasks]);
+
+  const unreadNotifications = inboxNotifications.filter((notification) => !notification.read_at);
+
+  const openInboxNotification = async (notification: AppNotification) => {
+    const notificationTask = tasks.find((task) => task.id === notification.task_id);
+    if (notificationTask) {
+      setView('board');
+      setEditor({ mode: 'edit', task: notificationTask });
+    }
+    setShowNotifications(false);
+    if (!supabase || notification.read_at) return;
+    const readAt = new Date().toISOString();
+    setInboxNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, read_at: readAt } : item));
+    await supabase.from('notifications').update({ read_at: readAt }).eq('id', notification.id);
+  };
+
+  const markAllNotificationsRead = async () => {
+    if (!supabase || !unreadNotifications.length) return;
+    const readAt = new Date().toISOString();
+    setInboxNotifications((current) => current.map((item) => ({ ...item, read_at: item.read_at ?? readAt })));
+    await supabase.from('notifications').update({ read_at: readAt }).eq('workspace_id', workspace.id).eq('user_id', user.id).is('read_at', null);
+  };
 
   if (loading) {
     return <main className="app-loading"><LoaderCircle className="spinner" size={26} /></main>;
@@ -372,12 +403,14 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           </div>
           <div className="header-actions">
             <div className="notification-wrap">
-              <button className={`round-action ${notifications.length ? 'has-notifications' : ''}`} aria-label="Notificações" onClick={() => setShowNotifications((show) => !show)}><Bell size={19} />{notifications.length ? <i /> : null}</button>
+              <button className={`round-action ${unreadNotifications.length || deadlineNotifications.length ? 'has-notifications' : ''}`} aria-label="Notificações" onClick={() => setShowNotifications((show) => !show)}><Bell size={19} />{unreadNotifications.length ? <i /> : null}</button>
               {showNotifications ? (
                 <div className="notification-popover">
-                  <strong>Prazos próximos</strong>
-                  {notifications.map(({ task, distance }) => <button key={task.id} onClick={() => { setView('board'); setEditor({ mode: 'edit', task }); setShowNotifications(false); }}><span>{task.title}</span><small className={distance < 0 ? 'overdue' : ''}>{distance < 0 ? 'Atrasado' : formatDate(task.due_at!)}</small></button>)}
-                  {!notifications.length ? <p>Nenhum prazo nos próximos 7 dias.</p> : null}
+                  <div className="notification-heading"><strong>Notificações</strong>{unreadNotifications.length ? <button onClick={() => void markAllNotificationsRead()}>Marcar como lidas</button> : null}</div>
+                  {inboxNotifications.slice(0, 8).map((notification) => <button className={notification.read_at ? '' : 'unread'} key={notification.id} onClick={() => void openInboxNotification(notification)}><span>{notification.message}</span><small>{formatActivityDate(notification.created_at)}</small></button>)}
+                  {!inboxNotifications.length ? <p>Nenhum comentário ou atribuição nova.</p> : null}
+                  {deadlineNotifications.length ? <div className="notification-divider">PRAZOS PRÓXIMOS</div> : null}
+                  {deadlineNotifications.map(({ task, distance }) => <button key={`deadline-${task.id}`} onClick={() => { setView('board'); setEditor({ mode: 'edit', task }); setShowNotifications(false); }}><span>{task.title}</span><small className={distance < 0 ? 'overdue' : ''}>{distance < 0 ? 'Atrasado' : formatDate(task.due_at!)}</small></button>)}
                 </div>
               ) : null}
             </div>
@@ -644,7 +677,7 @@ function TaskCard({
       onDrop={onDrop}
       onClick={onOpen}
     >
-      <div className="task-card-top"><span className={`priority-badge ${task.priority}`}>{priorityLabel(task.priority)}</span><MoreHorizontal size={16} /></div>
+      <div className="task-card-top"><div><span className={`priority-badge ${task.priority}`}>{priorityLabel(task.priority)}</span><span className="revision-badge">V{task.revision_round ?? 1}</span></div><MoreHorizontal size={16} /></div>
       <h3>{task.title}</h3>
       {task.description ? <p>{task.description}</p> : null}
       <div className="task-meta">
@@ -695,25 +728,40 @@ function TaskEditor({
   const [linkUrl, setLinkUrl] = useState('');
   const [linkCategory, setLinkCategory] = useState<TaskLinkCategory>('download');
   const [activities, setActivities] = useState<TaskActivity[]>([]);
+  const [comments, setComments] = useState<TaskComment[]>([]);
+  const [commentBody, setCommentBody] = useState('');
+  const [commentKind, setCommentKind] = useState<TaskCommentKind>('change_request');
+  const [commentSaving, setCommentSaving] = useState(false);
   const [activityError, setActivityError] = useState<string | null>(null);
 
-  const loadActivities = useCallback(async () => {
+  const loadReviewData = useCallback(async () => {
     if (!supabase || !task) return;
-    const { data, error: loadError } = await supabase
-      .from('task_activities')
-      .select('*')
-      .eq('task_id', task.id)
-      .order('created_at', { ascending: false })
-      .limit(40);
+    const [activityResult, commentResult] = await Promise.all([
+      supabase.from('task_activities').select('*').eq('task_id', task.id).order('created_at', { ascending: false }).limit(60),
+      supabase.from('task_comments').select('*').eq('task_id', task.id).order('created_at', { ascending: true }),
+    ]);
+    const loadError = activityResult.error ?? commentResult.error;
     if (loadError) {
       setActivityError(loadError.message);
       return;
     }
     setActivityError(null);
-    setActivities((data ?? []) as TaskActivity[]);
+    setActivities((activityResult.data ?? []) as TaskActivity[]);
+    setComments((commentResult.data ?? []) as TaskComment[]);
   }, [task]);
 
-  useEffect(() => { void loadActivities(); }, [loadActivities]);
+  useEffect(() => { void loadReviewData(); }, [loadReviewData]);
+
+  useEffect(() => {
+    if (!supabase || !task) return;
+    const realtimeClient = supabase;
+    const channel = realtimeClient
+      .channel(`editflow-review:${task.id}:${userId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'task_comments', filter: `task_id=eq.${task.id}` }, () => void loadReviewData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'task_activities', filter: `task_id=eq.${task.id}` }, () => void loadReviewData())
+      .subscribe();
+    return () => { void realtimeClient.removeChannel(channel); };
+  }, [loadReviewData, task, userId]);
 
   const saveTask = async (event: FormEvent) => {
     event.preventDefault();
@@ -731,16 +779,27 @@ function TaskEditor({
       due_at: draft.due_at ? new Date(`${draft.due_at}T12:00:00`).toISOString() : null,
       client_id: draft.client_id || null,
       assignee_id: draft.assignee_id || null,
+      revision_round: Math.max(1, Math.min(99, draft.revision_round || 1)),
     };
 
+    let normalizedUrl = linkUrl.trim();
+    if (normalizedUrl && !normalizedUrl.startsWith('https://')) normalizedUrl = `https://${normalizedUrl}`;
+
     const result = mode === 'new'
-      ? await supabase.from('tasks').insert({
-          ...payload,
-          workspace_id: workspace.id,
-          board_id: board.id,
-          column_id: firstColumn.id,
-          created_by: userId,
-          position: Date.now(),
+      ? await supabase.rpc('create_task_with_download_link', {
+          workspace_target: workspace.id,
+          board_target: board.id,
+          column_target: firstColumn.id,
+          client_target: payload.client_id,
+          assignee_target: payload.assignee_id,
+          task_title: payload.title,
+          task_description: payload.description,
+          task_priority: payload.priority,
+          task_position: Date.now(),
+          task_due_at: payload.due_at,
+          task_revision_round: payload.revision_round,
+          download_label: normalizedUrl ? linkLabel.trim() || 'Arquivos para download' : null,
+          download_url: normalizedUrl || null,
         })
       : await supabase.from('tasks').update(payload).eq('id', task!.id);
 
@@ -780,7 +839,7 @@ function TaskEditor({
     if (linkError) { setError(linkError.message); return; }
     setLinkUrl('');
     await onLinksChanged();
-    await loadActivities();
+    await loadReviewData();
   };
 
   const removeLink = async (linkId: string) => {
@@ -789,8 +848,41 @@ function TaskEditor({
     if (removeError) setError(removeError.message);
     else {
       await onLinksChanged();
-      await loadActivities();
+      await loadReviewData();
     }
+  };
+
+  const addComment = async () => {
+    if (!supabase || !task || !commentBody.trim()) return;
+    setCommentSaving(true);
+    setError(null);
+    const { error: commentError } = await supabase.from('task_comments').insert({
+      task_id: task.id,
+      workspace_id: workspace.id,
+      author_id: userId,
+      kind: commentKind,
+      body: commentBody.trim(),
+      revision_round: draft.revision_round,
+    });
+    setCommentSaving(false);
+    if (commentError) { setError(commentError.message); return; }
+    setCommentBody('');
+    await loadReviewData();
+  };
+
+  const toggleCommentResolved = async (comment: TaskComment) => {
+    if (!supabase) return;
+    const nextResolved = !comment.is_resolved;
+    const { error: commentError } = await supabase
+      .from('task_comments')
+      .update({
+        is_resolved: nextResolved,
+        resolved_by: nextResolved ? userId : null,
+        resolved_at: nextResolved ? new Date().toISOString() : null,
+      })
+      .eq('id', comment.id);
+    if (commentError) { setError(commentError.message); return; }
+    await loadReviewData();
   };
 
   const deleteTask = async () => {
@@ -825,15 +917,29 @@ function TaskEditor({
             </div>
           </label>
 
-          <label>
-            <span>Editor responsável</span>
-            <select value={draft.assignee_id} onChange={(event) => setDraft({ ...draft, assignee_id: event.target.value })}>
-              <option value="">Sem responsável</option>
-              {members.map((member) => <option value={member.user_id} key={member.user_id}>{member.display_name} · {roleLabel(member.role)}</option>)}
-            </select>
-          </label>
+          <div className="editor-grid">
+            <label>
+              <span>Editor responsável</span>
+              <select value={draft.assignee_id} onChange={(event) => setDraft({ ...draft, assignee_id: event.target.value })}>
+                <option value="">Sem responsável</option>
+                {members.map((member) => <option value={member.user_id} key={member.user_id}>{member.display_name} · {roleLabel(member.role)}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>Versão atual</span>
+              <div className="revision-input"><strong>V</strong><input type="number" min="1" max="99" value={draft.revision_round} onChange={(event) => setDraft({ ...draft, revision_round: Math.max(1, Math.min(99, Number(event.target.value) || 1)) })} /></div>
+            </label>
+          </div>
 
           {showClientForm ? <div className="quick-client"><input value={newClientName} onChange={(event) => setNewClientName(event.target.value)} placeholder="Nome do novo cliente" /><button type="button" onClick={() => void createClient()}>Adicionar</button></div> : null}
+
+          {mode === 'new' ? (
+            <div className="initial-link-panel">
+              <div><Link2 size={17} /><span><strong>Arquivos para download</strong><small>Opcional — você também poderá adicionar depois.</small></span></div>
+              <input value={linkLabel} onChange={(event) => setLinkLabel(event.target.value)} placeholder="Nome do link" />
+              <input value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} placeholder="https://drive.google.com/..." inputMode="url" />
+            </div>
+          ) : null}
 
           {error ? <div className="editor-error" role="alert">{error}</div> : null}
 
@@ -858,6 +964,33 @@ function TaskEditor({
               <input value={linkLabel} onChange={(event) => setLinkLabel(event.target.value)} placeholder="Nome do link" />
               <input value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} placeholder="https://drive.google.com/..." />
               <button type="button" onClick={() => void addLink()}><Plus size={16} />Adicionar link</button>
+            </div>
+          </section>
+        ) : null}
+
+        {mode === 'edit' && task ? (
+          <section className="review-section">
+            <div className="section-title"><div><p>REVISÃO E FEEDBACK</p><h3>Comentários da V{draft.revision_round}</h3></div><MessageSquare size={19} /></div>
+            <div className="comment-form">
+              <select value={commentKind} onChange={(event) => setCommentKind(event.target.value as TaskCommentKind)}>
+                <option value="change_request">Solicitação de ajuste</option>
+                <option value="comment">Comentário</option>
+              </select>
+              <textarea value={commentBody} onChange={(event) => setCommentBody(event.target.value)} rows={3} placeholder="Descreva o ajuste ou deixe um comentário..." />
+              <button type="button" disabled={commentSaving || !commentBody.trim()} onClick={() => void addComment()}>{commentSaving ? <LoaderCircle className="spinner" size={16} /> : <MessageSquare size={15} />}Adicionar feedback na V{draft.revision_round}</button>
+            </div>
+            <div className="comment-list">
+              {comments.map((comment) => {
+                const author = members.find((member) => member.user_id === comment.author_id);
+                return (
+                  <article className={`comment-item ${comment.is_resolved ? 'resolved' : ''}`} key={comment.id}>
+                    <header><span className={`comment-kind ${comment.kind}`}>{comment.kind === 'change_request' ? 'Ajuste' : 'Comentário'}</span><b>V{comment.revision_round}</b><small>{formatActivityDate(comment.created_at)}</small></header>
+                    <p>{comment.body}</p>
+                    <footer><span>{comment.kind === 'change_request' ? 'Solicitado por' : 'Enviado por'} <strong>{author?.display_name || 'Membro'}</strong></span><button type="button" onClick={() => void toggleCommentResolved(comment)}>{comment.is_resolved ? 'Reabrir' : 'Marcar como resolvido'}</button></footer>
+                  </article>
+                );
+              })}
+              {!comments.length ? <p className="no-links">Nenhum comentário ou ajuste solicitado.</p> : null}
             </div>
           </section>
         ) : null}
@@ -895,6 +1028,7 @@ function taskToDraft(task: Task): TaskDraft {
     due_at: task.due_at ? task.due_at.slice(0, 10) : '',
     client_id: task.client_id ?? '',
     assignee_id: task.assignee_id ?? '',
+    revision_round: task.revision_round ?? 1,
   };
 }
 
@@ -921,7 +1055,12 @@ function activityDescription(activity: TaskActivity, columns: BoardColumn[], mem
     return `atribuiu a tarefa para ${assignee}.`;
   }
   if (activity.action === 'link_added') return `adicionou o link “${activity.details.label ?? 'sem nome'}”.`;
-  return `removeu o link “${activity.details.label ?? 'sem nome'}”.`;
+  if (activity.action === 'link_removed') return `removeu o link “${activity.details.label ?? 'sem nome'}”.`;
+  if (activity.action === 'revision_changed') return `alterou a revisão para V${activity.details.to_revision ?? '?'}.`;
+  if (activity.action === 'comment_added') return `comentou na revisão V${activity.details.revision_round ?? '?'}.`;
+  if (activity.action === 'adjustment_requested') return `solicitou um ajuste na revisão V${activity.details.revision_round ?? '?'}.`;
+  if (activity.action === 'comment_resolved') return `marcou um feedback da V${activity.details.revision_round ?? '?'} como resolvido.`;
+  return `reabriu um feedback da V${activity.details.revision_round ?? '?'}.`;
 }
 
 function roleLabel(role: WorkspaceMember['role']) {

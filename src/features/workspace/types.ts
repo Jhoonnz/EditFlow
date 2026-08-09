@@ -43,6 +43,7 @@ export type Task = {
   column_id: string;
   client_id: string | null;
   assignee_id: string | null;
+  revision_round: number;
   title: string;
   description: string;
   priority: TaskPriority;
@@ -73,9 +74,21 @@ export type TaskDraft = {
   due_at: string;
   client_id: string;
   assignee_id: string;
+  revision_round: number;
 };
 
-export type TaskActivityAction = 'created' | 'updated' | 'moved' | 'assigned' | 'link_added' | 'link_removed';
+export type TaskActivityAction =
+  | 'created'
+  | 'updated'
+  | 'moved'
+  | 'assigned'
+  | 'link_added'
+  | 'link_removed'
+  | 'revision_changed'
+  | 'comment_added'
+  | 'adjustment_requested'
+  | 'comment_resolved'
+  | 'comment_reopened';
 
 export type TaskActivity = {
   id: string;
@@ -84,5 +97,34 @@ export type TaskActivity = {
   actor_id: string | null;
   action: TaskActivityAction;
   details: Record<string, string | null>;
+  created_at: string;
+};
+
+export type TaskCommentKind = 'comment' | 'change_request';
+
+export type TaskComment = {
+  id: string;
+  task_id: string;
+  workspace_id: string;
+  author_id: string;
+  kind: TaskCommentKind;
+  body: string;
+  revision_round: number;
+  is_resolved: boolean;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AppNotification = {
+  id: string;
+  workspace_id: string;
+  user_id: string;
+  task_id: string | null;
+  actor_id: string | null;
+  type: 'assignment' | 'comment' | 'change_request';
+  message: string;
+  read_at: string | null;
   created_at: string;
 };
