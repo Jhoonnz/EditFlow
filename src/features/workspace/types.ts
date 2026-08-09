@@ -42,6 +42,7 @@ export type Task = {
   board_id: string;
   column_id: string;
   client_id: string | null;
+  assignee_id: string | null;
   title: string;
   description: string;
   priority: TaskPriority;
@@ -71,4 +72,17 @@ export type TaskDraft = {
   priority: TaskPriority;
   due_at: string;
   client_id: string;
+  assignee_id: string;
+};
+
+export type TaskActivityAction = 'created' | 'updated' | 'moved' | 'assigned' | 'link_added' | 'link_removed';
+
+export type TaskActivity = {
+  id: string;
+  task_id: string;
+  workspace_id: string;
+  actor_id: string | null;
+  action: TaskActivityAction;
+  details: Record<string, string | null>;
+  created_at: string;
 };

@@ -5,7 +5,10 @@ import {
   CalendarDays,
   ChevronDown,
   CirclePlus,
+  Columns3,
   ExternalLink,
+  GripVertical,
+  History,
   LayoutDashboard,
   Link2,
   LoaderCircle,
@@ -29,11 +32,13 @@ import type {
   BoardColumn,
   Client,
   Task,
+  TaskActivity,
   TaskDraft,
   TaskLink,
   TaskLinkCategory,
   TaskPriority,
   WorkspaceSummary,
+  WorkspaceMember,
 } from '../workspace/types';
 
 type Props = {
@@ -53,6 +58,7 @@ const emptyDraft: TaskDraft = {
   priority: 'normal',
   due_at: '',
   client_id: '',
+  assignee_id: '',
 };
 
 const columnColors = ['#8b8fa3', '#a78bfa', '#60a5fa', '#f59e0b', '#f97316', '#fb7185', '#34d399', '#22c55e'];
@@ -62,6 +68,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [columns, setColumns] = useState<BoardColumn[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
+  const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [links, setLinks] = useState<TaskLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -69,10 +76,14 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(navigator.onLine ? 'connecting' : 'offline');
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [dropColumnId, setDropColumnId] = useState<string | null>(null);
+  const [taskDropTarget, setTaskDropTarget] = useState<{ taskId: string; edge: 'before' | 'after' } | null>(null);
+  const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null);
+  const [columnDropTarget, setColumnDropTarget] = useState<{ columnId: string; edge: 'before' | 'after' } | null>(null);
   const [editor, setEditor] = useState<{ mode: 'new' | 'edit'; task: Task | null; columnId?: string } | null>(null);
   const [view, setView] = useState<DashboardView>('board');
   const [columnMenuId, setColumnMenuId] = useState<string | null>(null);
   const [editingColumn, setEditingColumn] = useState<BoardColumn | null>(null);
+  const [creatingColumn, setCreatingColumn] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -96,13 +107,14 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     }
 
     const currentBoard = boardRow as Board;
-    const [columnResult, taskResult, clientResult] = await Promise.all([
+    const [columnResult, taskResult, clientResult, membershipResult] = await Promise.all([
       supabase.from('columns').select('*').eq('board_id', currentBoard.id).order('position'),
       supabase.from('tasks').select('*').eq('board_id', currentBoard.id).order('position'),
       supabase.from('clients').select('*').eq('workspace_id', workspace.id).order('name'),
+      supabase.from('workspace_members').select('user_id, role').eq('workspace_id', workspace.id),
     ]);
 
-    const firstError = columnResult.error ?? taskResult.error ?? clientResult.error;
+    const firstError = columnResult.error ?? taskResult.error ?? clientResult.error ?? membershipResult.error;
     if (firstError) {
       setError(firstError.message);
       setLoading(false);
@@ -110,6 +122,21 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     }
 
     const nextTasks = (taskResult.data ?? []) as Task[];
+    const memberIds = (membershipResult.data ?? []).map((membership) => membership.user_id as string);
+    const profileResult = memberIds.length
+      ? await supabase.from('profiles').select('id, display_name').in('id', memberIds)
+      : { data: [], error: null };
+    if (profileResult.error) {
+      setError(profileResult.error.message);
+      setLoading(false);
+      return;
+    }
+    const memberNames = new Map((profileResult.data ?? []).map((profile) => [profile.id as string, profile.display_name as string]));
+    const nextMembers = (membershipResult.data ?? []).map((membership) => ({
+      user_id: membership.user_id as string,
+      role: membership.role as WorkspaceMember['role'],
+      display_name: memberNames.get(membership.user_id as string) || 'Membro',
+    }));
     let nextLinks: TaskLink[] = [];
     if (nextTasks.length) {
       const linkResult = await supabase
@@ -124,6 +151,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     setColumns((columnResult.data ?? []) as BoardColumn[]);
     setTasks(nextTasks);
     setClients((clientResult.data ?? []) as Client[]);
+    setMembers(nextMembers);
     setLinks(nextLinks);
     setLoading(false);
   }, [workspace.id]);
@@ -150,6 +178,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `workspace_id=eq.${workspace.id}` }, scheduleReload)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'clients', filter: `workspace_id=eq.${workspace.id}` }, scheduleReload)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'task_links' }, scheduleReload)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'columns' }, scheduleReload)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'workspace_members', filter: `workspace_id=eq.${workspace.id}` }, scheduleReload)
         .subscribe((status) => {
           if (status === 'SUBSCRIBED') setSyncStatus('connected');
           else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setSyncStatus('error');
@@ -175,42 +205,122 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     if (!term) return tasks;
     return tasks.filter((task) => {
       const client = clients.find((item) => item.id === task.client_id);
-      return `${task.title} ${task.description} ${client?.name ?? ''}`.toLocaleLowerCase('pt-BR').includes(term);
+      const assignee = members.find((item) => item.user_id === task.assignee_id);
+      return `${task.title} ${task.description} ${client?.name ?? ''} ${assignee?.display_name ?? ''}`.toLocaleLowerCase('pt-BR').includes(term);
     });
-  }, [clients, search, tasks]);
+  }, [clients, members, search, tasks]);
 
   const tasksByColumn = useMemo(() => {
     const grouped = new Map<string, Task[]>();
     columns.forEach((column) => grouped.set(column.id, []));
-    filteredTasks.forEach((task) => grouped.get(task.column_id)?.push(task));
+    filteredTasks
+      .slice()
+      .sort((first, second) => Number(first.position) - Number(second.position))
+      .forEach((task) => grouped.get(task.column_id)?.push(task));
     return grouped;
   }, [columns, filteredTasks]);
 
-  const moveTask = async (taskId: string, columnId: string) => {
-    if (!supabase) return;
-    const task = tasks.find((item) => item.id === taskId);
-    if (!task || task.column_id === columnId) return;
+  const moveTask = async (taskId: string, targetColumnId: string, beforeTaskId: string | null) => {
+    if (!supabase || !board) return;
+    const originalTasks = tasks;
+    const movingTask = originalTasks.find((item) => item.id === taskId);
+    if (!movingTask || beforeTaskId === taskId) return;
 
-    const columnTasks = tasks.filter((item) => item.column_id === columnId);
-    const position = Math.max(0, ...columnTasks.map((item) => Number(item.position))) + 1000;
-    setTasks((current) => current.map((item) => item.id === taskId ? { ...item, column_id: columnId, position } : item));
+    const grouped = new Map<string, Task[]>();
+    columns.forEach((column) => grouped.set(column.id, []));
+    originalTasks
+      .filter((item) => item.id !== taskId)
+      .slice()
+      .sort((first, second) => Number(first.position) - Number(second.position))
+      .forEach((item) => grouped.get(item.column_id)?.push(item));
 
-    const { error: updateError } = await supabase
-      .from('tasks')
-      .update({ column_id: columnId, position })
-      .eq('id', taskId);
-    if (updateError) {
-      setError(updateError.message);
+    const targetTasks = grouped.get(targetColumnId);
+    if (!targetTasks) return;
+    const insertionIndex = beforeTaskId
+      ? targetTasks.findIndex((item) => item.id === beforeTaskId)
+      : targetTasks.length;
+    targetTasks.splice(insertionIndex < 0 ? targetTasks.length : insertionIndex, 0, { ...movingTask, column_id: targetColumnId });
+
+    const orderedById = new Map<string, Task>();
+    grouped.forEach((columnTasks, columnId) => {
+      columnTasks.forEach((item, index) => {
+        orderedById.set(item.id, { ...item, column_id: columnId, position: (index + 1) * 1000 });
+      });
+    });
+    const nextTasks = originalTasks.map((item) => orderedById.get(item.id) ?? item);
+    const orderChanged = nextTasks.some((item, index) => (
+      item.column_id !== originalTasks[index].column_id
+      || Number(item.position) !== Number(originalTasks[index].position)
+    ));
+    if (!orderChanged) return;
+
+    setTasks(nextTasks);
+    setError(null);
+    const { error: reorderError } = await supabase.rpc('reorder_tasks', {
+      target_board: board.id,
+      ordered_items: nextTasks.map((item) => ({ id: item.id, column_id: item.column_id, position: item.position })),
+    });
+    if (reorderError) {
+      setTasks(originalTasks);
+      setError(reorderError.message);
       await loadBoard(true);
     }
   };
 
-  const handleDrop = (event: DragEvent, columnId: string) => {
+  const finishTaskDrag = () => {
+    setDropColumnId(null);
+    setTaskDropTarget(null);
+    setDraggedTaskId(null);
+  };
+
+  const handleColumnTaskDrop = (event: DragEvent, columnId: string) => {
     event.preventDefault();
     const taskId = event.dataTransfer.getData('text/editflow-task') || draggedTaskId;
-    setDropColumnId(null);
-    setDraggedTaskId(null);
-    if (taskId) void moveTask(taskId, columnId);
+    finishTaskDrag();
+    if (taskId) void moveTask(taskId, columnId, null);
+  };
+
+  const handleTaskDrop = (event: DragEvent, targetTask: Task, edge: 'before' | 'after') => {
+    event.preventDefault();
+    event.stopPropagation();
+    const taskId = event.dataTransfer.getData('text/editflow-task') || draggedTaskId;
+    const columnTasks = tasks
+      .filter((item) => item.column_id === targetTask.column_id && item.id !== taskId)
+      .sort((first, second) => Number(first.position) - Number(second.position));
+    const targetIndex = columnTasks.findIndex((item) => item.id === targetTask.id);
+    const beforeTaskId = edge === 'before'
+      ? targetTask.id
+      : columnTasks[targetIndex + 1]?.id ?? null;
+    finishTaskDrag();
+    if (taskId) void moveTask(taskId, targetTask.column_id, beforeTaskId);
+  };
+
+  const reorderColumn = async (columnId: string, targetColumnId: string, edge: 'before' | 'after') => {
+    if (!supabase || !board || columnId === targetColumnId) return;
+    const originalColumns = columns;
+    const movingColumn = originalColumns.find((column) => column.id === columnId);
+    if (!movingColumn) return;
+    const nextColumns = originalColumns.filter((column) => column.id !== columnId);
+    const targetIndex = nextColumns.findIndex((column) => column.id === targetColumnId);
+    if (targetIndex < 0) return;
+    nextColumns.splice(targetIndex + (edge === 'after' ? 1 : 0), 0, movingColumn);
+    const positionedColumns = nextColumns.map((column, index) => ({ ...column, position: (index + 1) * 1000 }));
+    setColumns(positionedColumns);
+    setError(null);
+    const { error: reorderError } = await supabase.rpc('reorder_columns', {
+      target_board: board.id,
+      ordered_column_ids: positionedColumns.map((column) => column.id),
+    });
+    if (reorderError) {
+      setColumns(originalColumns);
+      setError(reorderError.message);
+      await loadBoard(true);
+    }
+  };
+
+  const finishColumnDrag = () => {
+    setDraggedColumnId(null);
+    setColumnDropTarget(null);
   };
 
   const notifications = useMemo(() => tasks
@@ -277,7 +387,10 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 
         {view === 'board' ? <div className="board-toolbar">
           <label className="board-search"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar trabalhos ou clientes..." /></label>
-          <span className="task-total">{tasks.length} {tasks.length === 1 ? 'trabalho' : 'trabalhos'}</span>
+          <div className="board-toolbar-actions">
+            <span className="task-total">{tasks.length} {tasks.length === 1 ? 'trabalho' : 'trabalhos'}</span>
+            <button className="new-column-button" onClick={() => setCreatingColumn(true)}><Columns3 size={16} />Nova coluna</button>
+          </div>
         </div> : null}
 
         {error ? <div className="board-error"><span>{error}</span><button onClick={() => void loadBoard()}>Tentar novamente</button></div> : null}
@@ -287,13 +400,50 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
             const columnTasks = tasksByColumn.get(column.id) ?? [];
             return (
               <section
-                className={`kanban-column ${dropColumnId === column.id ? 'drop-active' : ''}`}
+                className={`kanban-column ${dropColumnId === column.id ? 'drop-active' : ''} ${columnDropTarget?.columnId === column.id ? `column-drop-${columnDropTarget.edge}` : ''}`}
                 key={column.id}
-                onDragOver={(event) => { event.preventDefault(); setDropColumnId(column.id); }}
-                onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDropColumnId(null); }}
-                onDrop={(event) => handleDrop(event, column.id)}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  if (event.dataTransfer.types.includes('text/editflow-column')) {
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    setColumnDropTarget({ columnId: column.id, edge: event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after' });
+                    setDropColumnId(null);
+                  } else {
+                    setDropColumnId(column.id);
+                  }
+                }}
+                onDragLeave={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                    setDropColumnId(null);
+                    setColumnDropTarget(null);
+                  }
+                }}
+                onDrop={(event) => {
+                  const sourceColumnId = event.dataTransfer.getData('text/editflow-column') || draggedColumnId;
+                  if (sourceColumnId) {
+                    event.preventDefault();
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    const edge = event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
+                    finishColumnDrag();
+                    void reorderColumn(sourceColumnId, column.id, edge);
+                    return;
+                  }
+                  handleColumnTaskDrop(event, column.id);
+                }}
               >
                 <header className="column-header">
+                  <button
+                    className="column-drag-handle"
+                    draggable
+                    title="Arrastar coluna"
+                    aria-label={`Reordenar ${column.name}`}
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = 'move';
+                      event.dataTransfer.setData('text/editflow-column', column.id);
+                      setDraggedColumnId(column.id);
+                    }}
+                    onDragEnd={finishColumnDrag}
+                  ><GripVertical size={15} /></button>
                   <span className="column-dot" style={{ background: column.color ?? '#8b8fa3' }} />
                   <h2>{column.name}</h2>
                   <span className="column-count">{columnTasks.length}</span>
@@ -312,6 +462,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                       key={task.id}
                       task={task}
                       client={clients.find((client) => client.id === task.client_id)}
+                      assignee={members.find((member) => member.user_id === task.assignee_id)}
                       linkCount={links.filter((link) => link.task_id === task.id).length}
                       onOpen={() => setEditor({ mode: 'edit', task })}
                       onDragStart={(event) => {
@@ -319,7 +470,21 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                         event.dataTransfer.setData('text/editflow-task', task.id);
                         setDraggedTaskId(task.id);
                       }}
+                      onDragEnd={finishTaskDrag}
+                      onDragOver={(event) => {
+                        if (!draggedTaskId && !event.dataTransfer.types.includes('text/editflow-task')) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const bounds = event.currentTarget.getBoundingClientRect();
+                        setTaskDropTarget({ taskId: task.id, edge: event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after' });
+                      }}
+                      onDrop={(event) => {
+                        const bounds = event.currentTarget.getBoundingClientRect();
+                        handleTaskDrop(event, task, event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after');
+                      }}
                       dragging={draggedTaskId === task.id}
+                      dropEdge={taskDropTarget?.taskId === task.id ? taskDropTarget.edge : null}
+                      dragEnabled={!search.trim()}
                     />
                   ))}
                   {!columnTasks.length ? <div className="empty-column">Arraste uma tarefa para cá</div> : null}
@@ -342,6 +507,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           firstColumn={columns.find((column) => column.id === editor.columnId) ?? columns[0]}
           workspace={workspace}
           clients={clients}
+          members={members}
+          columns={columns}
           links={editor.task ? links.filter((link) => link.task_id === editor.task?.id) : []}
           userId={user.id}
           onClose={() => setEditor(null)}
@@ -352,10 +519,23 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
       {editingColumn ? (
         <ColumnEditor
           column={editingColumn}
+          boardId={editingColumn.board_id}
+          initialPosition={editingColumn.position}
           taskCount={tasks.filter((task) => task.column_id === editingColumn.id).length}
           totalColumns={columns.length}
           onClose={() => setEditingColumn(null)}
           onChanged={async () => { await loadBoard(true); setEditingColumn(null); }}
+        />
+      ) : null}
+      {creatingColumn && board ? (
+        <ColumnEditor
+          column={null}
+          boardId={board.id}
+          initialPosition={Math.max(0, ...columns.map((column) => Number(column.position))) + 1000}
+          taskCount={0}
+          totalColumns={columns.length}
+          onClose={() => setCreatingColumn(false)}
+          onChanged={async () => { await loadBoard(true); setCreatingColumn(false); }}
         />
       ) : null}
     </main>
@@ -364,19 +544,23 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 
 function ColumnEditor({
   column,
+  boardId,
+  initialPosition,
   taskCount,
   totalColumns,
   onClose,
   onChanged,
 }: {
-  column: BoardColumn;
+  column: BoardColumn | null;
+  boardId: string;
+  initialPosition: number;
   taskCount: number;
   totalColumns: number;
   onClose: () => void;
   onChanged: () => Promise<void>;
 }) {
-  const [name, setName] = useState(column.name);
-  const [color, setColor] = useState(column.color ?? '#8b8fa3');
+  const [name, setName] = useState(column?.name ?? 'Nova etapa');
+  const [color, setColor] = useState(column?.color ?? '#8b8fa3');
   const [saving, setSaving] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -386,14 +570,16 @@ function ColumnEditor({
     if (!supabase || !name.trim()) return setError('Digite um nome para a coluna.');
     setSaving(true);
     setError(null);
-    const { error: updateError } = await supabase.from('columns').update({ name: name.trim(), color }).eq('id', column.id);
+    const result = column
+      ? await supabase.from('columns').update({ name: name.trim(), color }).eq('id', column.id)
+      : await supabase.from('columns').insert({ board_id: boardId, name: name.trim(), color, position: initialPosition });
     setSaving(false);
-    if (updateError) return setError(updateError.message);
+    if (result.error) return setError(result.error.message);
     await onChanged();
   };
 
   const remove = async () => {
-    if (!supabase) return;
+    if (!supabase || !column) return;
     if (taskCount) return setError(`Mova as ${taskCount} tarefas desta coluna antes de excluí-la.`);
     if (totalColumns === 1) return setError('O quadro precisa ter pelo menos uma coluna.');
     if (!confirmingDelete) return setConfirmingDelete(true);
@@ -406,16 +592,16 @@ function ColumnEditor({
 
   return (
     <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section className="column-editor-modal" role="dialog" aria-modal="true" aria-label="Editar coluna">
-        <header><div><p>CONFIGURAÇÃO DA COLUNA</p><h2>Editar coluna</h2></div><button onClick={onClose} aria-label="Fechar"><X size={19} /></button></header>
+      <section className="column-editor-modal" role="dialog" aria-modal="true" aria-label={column ? 'Editar coluna' : 'Criar coluna'}>
+        <header><div><p>CONFIGURAÇÃO DA COLUNA</p><h2>{column ? 'Editar coluna' : 'Criar coluna'}</h2></div><button onClick={onClose} aria-label="Fechar"><X size={19} /></button></header>
         <form onSubmit={save}>
           <label><span>Nome</span><input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} autoFocus /></label>
           <fieldset><legend>Cor</legend><div className="color-palette">{columnColors.map((option) => <button type="button" key={option} className={color === option ? 'selected' : ''} style={{ background: option }} onClick={() => setColor(option)} aria-label={`Usar cor ${option}`}>{color === option ? '✓' : ''}</button>)}</div></fieldset>
           <div className="column-preview"><i style={{ background: color }} /><span>{name || 'Nome da coluna'}</span></div>
           {error ? <div className="panel-error">{error}</div> : null}
-          <button className="primary-button column-save" type="submit" disabled={saving}>{saving ? <LoaderCircle className="spinner" size={16} /> : null}Salvar coluna</button>
+          <button className="primary-button column-save" type="submit" disabled={saving}>{saving ? <LoaderCircle className="spinner" size={16} /> : null}{column ? 'Salvar coluna' : 'Criar coluna'}</button>
         </form>
-        <div className="column-danger-zone"><div><strong>Excluir coluna</strong><small>{taskCount ? `${taskCount} tarefas precisam ser movidas antes.` : 'Esta ação não pode ser desfeita.'}</small></div><button onClick={() => void remove()} disabled={saving || taskCount > 0}>{confirmingDelete ? 'Confirmar exclusão' : 'Excluir'}</button></div>
+        {column ? <div className="column-danger-zone"><div><strong>Excluir coluna</strong><small>{taskCount ? `${taskCount} tarefas precisam ser movidas antes.` : 'Esta ação não pode ser desfeita.'}</small></div><button onClick={() => void remove()} disabled={saving || taskCount > 0}>{confirmingDelete ? 'Confirmar exclusão' : 'Excluir'}</button></div> : null}
       </section>
     </div>
   );
@@ -424,24 +610,38 @@ function ColumnEditor({
 function TaskCard({
   task,
   client,
+  assignee,
   linkCount,
   onOpen,
   onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDrop,
   dragging,
+  dropEdge,
+  dragEnabled,
 }: {
   task: Task;
   client?: Client;
+  assignee?: WorkspaceMember;
   linkCount: number;
   onOpen: () => void;
   onDragStart: (event: DragEvent<HTMLButtonElement>) => void;
+  onDragEnd: () => void;
+  onDragOver: (event: DragEvent<HTMLButtonElement>) => void;
+  onDrop: (event: DragEvent<HTMLButtonElement>) => void;
   dragging: boolean;
+  dropEdge: 'before' | 'after' | null;
+  dragEnabled: boolean;
 }) {
   return (
     <button
-      className={`task-card ${dragging ? 'dragging' : ''}`}
-      draggable
+      className={`task-card ${dragging ? 'dragging' : ''} ${dropEdge ? `task-drop-${dropEdge}` : ''}`}
+      draggable={dragEnabled}
       onDragStart={onDragStart}
-      onDragEnd={() => undefined}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
       onClick={onOpen}
     >
       <div className="task-card-top"><span className={`priority-badge ${task.priority}`}>{priorityLabel(task.priority)}</span><MoreHorizontal size={16} /></div>
@@ -449,6 +649,7 @@ function TaskCard({
       {task.description ? <p>{task.description}</p> : null}
       <div className="task-meta">
         {client ? <span><UserRound size={14} />{client.name}</span> : null}
+        {assignee ? <span className="task-assignee"><i>{memberInitials(assignee.display_name)}</i>{assignee.display_name}</span> : null}
         {task.due_at ? <span className={isOverdue(task.due_at) ? 'overdue' : ''}><CalendarDays size={14} />{formatDate(task.due_at)}</span> : null}
         {linkCount ? <span><Link2 size={14} />{linkCount}</span> : null}
       </div>
@@ -463,6 +664,8 @@ function TaskEditor({
   firstColumn,
   workspace,
   clients,
+  members,
+  columns,
   links,
   userId,
   onClose,
@@ -475,6 +678,8 @@ function TaskEditor({
   firstColumn: BoardColumn;
   workspace: WorkspaceSummary;
   clients: Client[];
+  members: WorkspaceMember[];
+  columns: BoardColumn[];
   links: TaskLink[];
   userId: string;
   onClose: () => void;
@@ -489,6 +694,26 @@ function TaskEditor({
   const [linkLabel, setLinkLabel] = useState('Arquivos para download');
   const [linkUrl, setLinkUrl] = useState('');
   const [linkCategory, setLinkCategory] = useState<TaskLinkCategory>('download');
+  const [activities, setActivities] = useState<TaskActivity[]>([]);
+  const [activityError, setActivityError] = useState<string | null>(null);
+
+  const loadActivities = useCallback(async () => {
+    if (!supabase || !task) return;
+    const { data, error: loadError } = await supabase
+      .from('task_activities')
+      .select('*')
+      .eq('task_id', task.id)
+      .order('created_at', { ascending: false })
+      .limit(40);
+    if (loadError) {
+      setActivityError(loadError.message);
+      return;
+    }
+    setActivityError(null);
+    setActivities((data ?? []) as TaskActivity[]);
+  }, [task]);
+
+  useEffect(() => { void loadActivities(); }, [loadActivities]);
 
   const saveTask = async (event: FormEvent) => {
     event.preventDefault();
@@ -505,6 +730,7 @@ function TaskEditor({
       priority: draft.priority,
       due_at: draft.due_at ? new Date(`${draft.due_at}T12:00:00`).toISOString() : null,
       client_id: draft.client_id || null,
+      assignee_id: draft.assignee_id || null,
     };
 
     const result = mode === 'new'
@@ -554,13 +780,17 @@ function TaskEditor({
     if (linkError) { setError(linkError.message); return; }
     setLinkUrl('');
     await onLinksChanged();
+    await loadActivities();
   };
 
   const removeLink = async (linkId: string) => {
     if (!supabase) return;
     const { error: removeError } = await supabase.from('task_links').delete().eq('id', linkId);
     if (removeError) setError(removeError.message);
-    else await onLinksChanged();
+    else {
+      await onLinksChanged();
+      await loadActivities();
+    }
   };
 
   const deleteTask = async () => {
@@ -595,6 +825,14 @@ function TaskEditor({
             </div>
           </label>
 
+          <label>
+            <span>Editor responsável</span>
+            <select value={draft.assignee_id} onChange={(event) => setDraft({ ...draft, assignee_id: event.target.value })}>
+              <option value="">Sem responsável</option>
+              {members.map((member) => <option value={member.user_id} key={member.user_id}>{member.display_name} · {roleLabel(member.role)}</option>)}
+            </select>
+          </label>
+
           {showClientForm ? <div className="quick-client"><input value={newClientName} onChange={(event) => setNewClientName(event.target.value)} placeholder="Nome do novo cliente" /><button type="button" onClick={() => void createClient()}>Adicionar</button></div> : null}
 
           {error ? <div className="editor-error" role="alert">{error}</div> : null}
@@ -624,6 +862,25 @@ function TaskEditor({
           </section>
         ) : null}
 
+        {mode === 'edit' && task ? (
+          <section className="activity-section">
+            <div className="section-title"><div><p>HISTÓRICO</p><h3>Atividade do trabalho</h3></div><History size={19} /></div>
+            {activityError ? <div className="editor-error" role="alert">{activityError}</div> : null}
+            <div className="activity-list">
+              {activities.map((activity) => {
+                const actor = members.find((member) => member.user_id === activity.actor_id);
+                return (
+                  <article className="activity-item" key={activity.id}>
+                    <span className="activity-avatar">{memberInitials(actor?.display_name ?? 'Sistema')}</span>
+                    <div><strong>{actor?.display_name || 'Sistema'}</strong><p>{activityDescription(activity, columns, members)}</p><small>{formatActivityDate(activity.created_at)}</small></div>
+                  </article>
+                );
+              })}
+              {!activities.length && !activityError ? <p className="no-links">Nenhuma atividade registrada ainda.</p> : null}
+            </div>
+          </section>
+        ) : null}
+
         {mode === 'edit' ? <button className="delete-task" onClick={() => void deleteTask()}><Trash2 size={16} />Excluir tarefa</button> : null}
       </aside>
     </div>
@@ -637,6 +894,7 @@ function taskToDraft(task: Task): TaskDraft {
     priority: task.priority,
     due_at: task.due_at ? task.due_at.slice(0, 10) : '',
     client_id: task.client_id ?? '',
+    assignee_id: task.assignee_id ?? '',
   };
 }
 
@@ -648,8 +906,46 @@ function linkCategoryLabel(category: TaskLinkCategory) {
   return ({ download: 'Download', briefing: 'Briefing', reference: 'Referência', review: 'Revisão', delivery: 'Entrega' })[category];
 }
 
+function activityDescription(activity: TaskActivity, columns: BoardColumn[], members: WorkspaceMember[]) {
+  if (activity.action === 'created') return 'criou esta tarefa.';
+  if (activity.action === 'updated') return 'atualizou os detalhes da tarefa.';
+  if (activity.action === 'moved') {
+    const from = columns.find((column) => column.id === activity.details.from_column_id)?.name ?? 'outra coluna';
+    const to = columns.find((column) => column.id === activity.details.to_column_id)?.name ?? 'outra coluna';
+    return `moveu a tarefa de ${from} para ${to}.`;
+  }
+  if (activity.action === 'assigned') {
+    const assigneeId = activity.details.to_user_id;
+    if (!assigneeId) return 'removeu o responsável pela tarefa.';
+    const assignee = members.find((member) => member.user_id === assigneeId)?.display_name ?? 'um membro';
+    return `atribuiu a tarefa para ${assignee}.`;
+  }
+  if (activity.action === 'link_added') return `adicionou o link “${activity.details.label ?? 'sem nome'}”.`;
+  return `removeu o link “${activity.details.label ?? 'sem nome'}”.`;
+}
+
+function roleLabel(role: WorkspaceMember['role']) {
+  if (role === 'owner') return 'Proprietário';
+  if (role === 'admin') return 'Administrador';
+  return 'Editor';
+}
+
+function memberInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return `${parts[0]?.[0] ?? 'M'}${parts.length > 1 ? parts.at(-1)?.[0] ?? '' : ''}`.toUpperCase();
+}
+
 function formatDate(date: string) {
   return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short' }).format(new Date(date));
+}
+
+function formatActivityDate(date: string) {
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(date));
 }
 
 function isOverdue(date: string) {
