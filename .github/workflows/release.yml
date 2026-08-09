@@ -54,6 +54,7 @@ jobs:
           $appVersion = (Get-Content package.json | ConvertFrom-Json).version
           gh release create $env:GITHUB_REF_NAME `
             "release/EditFlow-Setup-$appVersion.exe" `
+            "release/EditFlow-Setup-$appVersion.exe.blockmap" `
             "release/latest.yml" `
             --verify-tag `
             --title "EditFlow $env:GITHUB_REF_NAME" `
