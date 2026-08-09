@@ -149,6 +149,10 @@ button { color: inherit; }
 .sign-in-button:active:not(:disabled) { transform: translateY(0); }
 .sign-in-button:disabled { opacity: .7; cursor: wait; }
 
+.auth-switch { position: relative; display: flex; align-items: center; justify-content: center; gap: 6px; margin: 18px 0 0; color: #696978; font-size: 13px; }
+.auth-switch button { padding: 0; border: 0; background: transparent; color: #17136f; font-weight: 750; cursor: pointer; }
+.auth-switch button:hover { text-decoration: underline; }
+
 .continue-label {
   position: relative;
   margin: 30px 0 29px;

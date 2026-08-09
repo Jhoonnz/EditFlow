@@ -4,7 +4,7 @@ import { ArrowLeft, Download, LoaderCircle, RotateCw, X } from 'lucide-react';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 import { AuthenticatedApp } from './features/workspace/AuthenticatedApp';
 
-type AuthMode = 'signin' | 'forgot';
+type AuthMode = 'signin' | 'signup' | 'forgot';
 type Notice = { kind: 'error' | 'success' | 'info'; message: string } | null;
 
 function App() {
@@ -133,8 +133,10 @@ function UpdateNotice() {
 
 function AuthScreen() {
   const [mode, setMode] = useState<AuthMode>('signin');
+  const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
 
@@ -163,6 +165,35 @@ function AuthScreen() {
 
       if (!password) {
         setNotice({ kind: 'error', message: 'Digite sua senha para continuar.' });
+        return;
+      }
+
+      if (mode === 'signup') {
+        if (fullName.trim().length < 2) {
+          setNotice({ kind: 'error', message: 'Digite seu nome para criar a conta.' });
+          return;
+        }
+        if (password.length < 6) {
+          setNotice({ kind: 'error', message: 'A senha precisa ter pelo menos 6 caracteres.' });
+          return;
+        }
+        if (password !== confirmPassword) {
+          setNotice({ kind: 'error', message: 'As senhas não são iguais.' });
+          return;
+        }
+
+        const { data, error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: { data: { full_name: fullName.trim() } },
+        });
+        if (error) throw error;
+        if (!data.session) {
+          setMode('signin');
+          setPassword('');
+          setConfirmPassword('');
+          setNotice({ kind: 'success', message: 'Conta criada. Confirme seu e-mail e depois entre no EditFlow.' });
+        }
         return;
       }
 
@@ -203,15 +234,24 @@ function AuthScreen() {
         ) : null}
 
         <header className="login-heading">
-          <h1>{mode === 'signin' ? 'Welcome Back' : 'Reset Password'}</h1>
+          <h1>{mode === 'signin' ? 'Welcome Back' : mode === 'signup' ? 'Create Account' : 'Reset Password'}</h1>
           <p>
             {mode === 'signin'
               ? 'Sign in to your account to continue'
+              : mode === 'signup'
+                ? 'Create your account to start editing'
               : 'Enter your email to receive instructions'}
           </p>
         </header>
 
         <form className="login-form" onSubmit={handleSubmit} noValidate>
+          {mode === 'signup' ? (
+            <label className="plain-field">
+              <span>Full Name</span>
+              <input type="text" autoComplete="name" value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="Enter your name" />
+            </label>
+          ) : null}
+
           <label className="plain-field">
             <span>Email Address</span>
             <input
@@ -224,12 +264,12 @@ function AuthScreen() {
             />
           </label>
 
-          {mode === 'signin' ? (
+          {mode !== 'forgot' ? (
             <label className="plain-field">
               <span>Password</span>
               <input
                 type="password"
-                autoComplete="current-password"
+                autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="Enter your password"
@@ -237,12 +277,28 @@ function AuthScreen() {
             </label>
           ) : null}
 
+          {mode === 'signup' ? (
+            <label className="plain-field">
+              <span>Confirm Password</span>
+              <input type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Enter your password again" />
+            </label>
+          ) : null}
+
           {notice ? <div className={`notice ${notice.kind}`} role="status">{notice.message}</div> : null}
 
           <button className="sign-in-button" type="submit" disabled={submitting}>
-            {submitting ? <LoaderCircle className="spinner" size={20} /> : mode === 'signin' ? 'Sign In' : 'Send Instructions'}
+            {submitting ? <LoaderCircle className="spinner" size={20} /> : mode === 'signin' ? 'Sign In' : mode === 'signup' ? 'Create Account' : 'Send Instructions'}
           </button>
         </form>
+
+        {mode !== 'forgot' ? (
+          <p className="auth-switch">
+            {mode === 'signin' ? 'Ainda não possui uma conta?' : 'Já possui uma conta?'}
+            <button type="button" onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setNotice(null); setPassword(''); setConfirmPassword(''); }}>
+              {mode === 'signin' ? 'Criar conta' : 'Entrar'}
+            </button>
+          </p>
+        ) : null}
 
         {mode === 'signin' ? (
           <>
@@ -300,6 +356,8 @@ function translateAuthError(message: string) {
   const normalized = message.toLowerCase();
   if (normalized.includes('invalid login credentials')) return 'E-mail ou senha incorretos.';
   if (normalized.includes('email not confirmed')) return 'Confirme seu e-mail antes de entrar.';
+  if (normalized.includes('user already registered')) return 'Já existe uma conta com este e-mail.';
+  if (normalized.includes('password should be')) return 'A senha não atende aos requisitos de segurança.';
   if (normalized.includes('rate limit')) return 'Muitas tentativas. Aguarde um instante e tente novamente.';
   return message;
 }
