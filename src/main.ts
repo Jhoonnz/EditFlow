@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import { autoUpdater, type NsisUpdater } from 'electron-updater';
-import { appendFile, mkdir, writeFile } from 'node:fs/promises';
+import { access, appendFile, mkdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 type UpdateStatus =
@@ -14,6 +14,8 @@ type UpdateStatus =
 let updateVersion: string | undefined;
 let manualUpdateCheck = false;
 let updateDownloadStarted = false;
+let installingUpdate = false;
+let updateSplashWindow: BrowserWindow | null = null;
 
 const sendUpdateStatus = (status: UpdateStatus) => {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -22,6 +24,92 @@ const sendUpdateStatus = (status: UpdateStatus) => {
 };
 
 const updateLogPath = () => path.join(app.getPath('userData'), 'logs', 'updater.log');
+const updateMarkerPath = () => path.join(app.getPath('userData'), 'pending-update.json');
+
+const hasUpdateMarker = async () => {
+  try {
+    await access(updateMarkerPath());
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const clearUpdateMarker = async () => {
+  try {
+    await unlink(updateMarkerPath());
+  } catch {
+    // A missing marker simply means this is a regular startup.
+  }
+};
+
+const createUpdateSplash = (phase: 'installing' | 'finishing') => {
+  if (updateSplashWindow && !updateSplashWindow.isDestroyed()) updateSplashWindow.close();
+
+  const finishing = phase === 'finishing';
+  const splash = new BrowserWindow({
+    width: 390,
+    height: 168,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: false,
+    hasShadow: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  const html = `<!doctype html>
+    <html lang="pt-BR">
+      <head>
+        <meta charset="UTF-8" />
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'" />
+        <style>
+          * { box-sizing: border-box; }
+          html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; font-family: Inter, "Segoe UI", sans-serif; }
+          body { display: grid; place-items: center; padding: 8px; }
+          .card { -webkit-app-region: drag; display: flex; align-items: center; gap: 17px; width: 100%; height: 100%; padding: 23px; border: 1px solid rgba(255,255,255,.13); border-radius: 24px; background: linear-gradient(145deg, rgba(35,33,72,.98), rgba(18,19,35,.98)); color: #fff; box-shadow: 0 22px 60px rgba(14,13,35,.38); }
+          .mark { position: relative; display: grid; place-items: center; flex: 0 0 58px; height: 58px; border-radius: 18px; background: linear-gradient(145deg, #7d72ec, #5147aa); box-shadow: 0 10px 28px rgba(82,70,177,.38); }
+          .ring { width: 27px; height: 27px; border: 3px solid rgba(255,255,255,.28); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; }
+          .copy { display: grid; gap: 7px; min-width: 0; }
+          strong { font-size: 16px; letter-spacing: -.02em; }
+          span { color: #c0bfd3; font-size: 11px; line-height: 1.45; }
+          .dots { display: flex; gap: 5px; margin-top: 3px; }
+          .dots i { width: 5px; height: 5px; border-radius: 50%; background: #9e95ef; animation: pulse 1.2s ease-in-out infinite; }
+          .dots i:nth-child(2) { animation-delay: .16s; }
+          .dots i:nth-child(3) { animation-delay: .32s; }
+          @keyframes spin { to { transform: rotate(360deg); } }
+          @keyframes pulse { 0%, 70%, 100% { opacity: .3; transform: scale(.8); } 35% { opacity: 1; transform: scale(1.15); } }
+        </style>
+      </head>
+      <body>
+        <main class="card">
+          <div class="mark"><div class="ring"></div></div>
+          <div class="copy">
+            <strong>Aplicando atualização</strong>
+            <span>${finishing ? 'Finalizando os últimos ajustes. O EditFlow abrirá em instantes.' : 'O aplicativo será reiniciado automaticamente. Não desligue o computador.'}</span>
+            <div class="dots"><i></i><i></i><i></i></div>
+          </div>
+        </main>
+      </body>
+    </html>`;
+
+  splash.once('ready-to-show', () => splash.show());
+  splash.on('closed', () => {
+    if (updateSplashWindow === splash) updateSplashWindow = null;
+  });
+  void splash.loadURL(`data:text/html;charset=UTF-8,${encodeURIComponent(html)}`);
+  updateSplashWindow = splash;
+  return splash;
+};
 
 const writeUpdateLog = async (event: string, details = '') => {
   try {
@@ -153,6 +241,12 @@ const configureAutoUpdater = () => {
   autoUpdater.on('error', (error) => {
     void writeUpdateLog('Erro do atualizador', error.stack ?? error.message);
     updateDownloadStarted = false;
+    if (installingUpdate) {
+      installingUpdate = false;
+      void clearUpdateMarker();
+      if (updateSplashWindow && !updateSplashWindow.isDestroyed()) updateSplashWindow.close();
+      for (const window of BrowserWindow.getAllWindows()) window.show();
+    }
     sendUpdateStatus({ state: 'error', message: error.message });
     manualUpdateCheck = false;
   });
@@ -162,8 +256,21 @@ const configureAutoUpdater = () => {
     await autoUpdater.checkForUpdates();
     return true;
   });
-  ipcMain.handle('updater:install', () => {
-    autoUpdater.quitAndInstall(false, true);
+  ipcMain.handle('updater:install', async () => {
+    if (installingUpdate) return true;
+    installingUpdate = true;
+    await writeUpdateLog('Aplicando atualização', updateVersion ?? 'versão baixada');
+    await writeFile(updateMarkerPath(), JSON.stringify({ version: updateVersion, startedAt: new Date().toISOString() }), 'utf8');
+
+    const currentWindows = BrowserWindow.getAllWindows();
+    createUpdateSplash('installing');
+    for (const window of currentWindows) window.hide();
+
+    setTimeout(() => {
+      // /S keeps the NSIS installer invisible; force-run reopens the updated app.
+      autoUpdater.quitAndInstall(true, true);
+    }, 900);
+    return true;
   });
 
   setTimeout(() => {
@@ -171,9 +278,22 @@ const configureAutoUpdater = () => {
   }, 4000);
 };
 
-app.whenReady().then(() => {
-  createWindow();
-  configureAutoUpdater();
+app.whenReady().then(async () => {
+  const isFinishingUpdate = app.isPackaged && await hasUpdateMarker();
+
+  if (isFinishingUpdate) {
+    const splash = createUpdateSplash('finishing');
+    void writeUpdateLog('Atualização aplicada', `versão atual ${app.getVersion()}`);
+    setTimeout(() => {
+      createWindow();
+      if (!splash.isDestroyed()) splash.close();
+      void clearUpdateMarker();
+      configureAutoUpdater();
+    }, 1800);
+  } else {
+    createWindow();
+    configureAutoUpdater();
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

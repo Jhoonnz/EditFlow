@@ -103,7 +103,7 @@ function UpdateNotice() {
             <div className="update-progress"><i style={{ width: `${status.percent}%` }} /></div>
           </>
         ) : null}
-        {status.state === 'downloaded' ? <span>Reinicie agora para concluir a instalação.</span> : null}
+        {status.state === 'downloaded' ? <span>Reinicie agora para aplicar a atualização automaticamente.</span> : null}
         {status.state === 'up-to-date' ? <span>Você está usando a versão {status.version}.</span> : null}
         {status.state === 'error' ? (
           <>
