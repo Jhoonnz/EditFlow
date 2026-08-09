@@ -69,6 +69,7 @@ const emptyDraft: TaskDraft = {
 const columnColors = ['#8b8fa3', '#a78bfa', '#60a5fa', '#f59e0b', '#f97316', '#fb7185', '#34d399', '#22c55e'];
 
 export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWorkspacesChanged }: Props) {
+  const canManagePlanning = workspace.role === 'owner' || workspace.role === 'admin';
   const [board, setBoard] = useState<Board | null>(null);
   const [columns, setColumns] = useState<BoardColumn[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -174,6 +175,10 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   }, [loadBoard]);
 
   useEffect(() => {
+    if (!canManagePlanning && view === 'clients') setView('board');
+  }, [canManagePlanning, view]);
+
+  useEffect(() => {
     if (!supabase) return;
     const realtimeClient = supabase;
     let channel: RealtimeChannel | null = null;
@@ -187,7 +192,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         .on('postgres_changes', { event: '*', schema: 'public', table: 'clients', filter: `workspace_id=eq.${workspace.id}` }, scheduleReload)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'task_links' }, scheduleReload)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'columns' }, scheduleReload)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'workspace_members', filter: `workspace_id=eq.${workspace.id}` }, scheduleReload)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'workspace_members', filter: `workspace_id=eq.${workspace.id}` }, () => { scheduleReload(); void onWorkspacesChanged(); })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` }, scheduleReload)
         .subscribe((status) => {
           if (status === 'SUBSCRIBED') setSyncStatus('connected');
@@ -207,7 +212,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
       if (channel) void realtimeClient.removeChannel(channel);
       if (reloadTimer.current) clearTimeout(reloadTimer.current);
     };
-  }, [scheduleReload, user.id, workspace.id]);
+  }, [onWorkspacesChanged, scheduleReload, user.id, workspace.id]);
 
   const filteredTasks = useMemo(() => {
     const term = search.trim().toLocaleLowerCase('pt-BR');
@@ -305,7 +310,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   };
 
   const reorderColumn = async (columnId: string, targetColumnId: string, edge: 'before' | 'after') => {
-    if (!supabase || !board || columnId === targetColumnId) return;
+    if (!supabase || !board || !canManagePlanning || columnId === targetColumnId) return;
     const originalColumns = columns;
     const movingColumn = originalColumns.find((column) => column.id === columnId);
     if (!movingColumn) return;
@@ -379,7 +384,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 
         <nav className="sidebar-nav" aria-label="Navegação principal">
           <button className={`nav-item ${view === 'board' ? 'active' : ''}`} onClick={() => setView('board')}><LayoutDashboard size={18} /><span>Produção</span></button>
-          <button className={`nav-item ${view === 'clients' ? 'active' : ''}`} onClick={() => setView('clients')}><Users size={18} /><span>Clientes</span><small>{clients.length}</small></button>
+          {canManagePlanning ? <button className={`nav-item ${view === 'clients' ? 'active' : ''}`} onClick={() => setView('clients')}><Users size={18} /><span>Clientes</span><small>{clients.length}</small></button> : null}
         </nav>
 
         <div className="sidebar-spacer" />
@@ -414,7 +419,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                 </div>
               ) : null}
             </div>
-            {view === 'board' ? <button className="new-task-button" onClick={() => setEditor({ mode: 'new', task: null, columnId: columns[0]?.id })}><Plus size={18} />Nova tarefa</button> : null}
+            {view === 'board' && canManagePlanning ? <button className="new-task-button" onClick={() => setEditor({ mode: 'new', task: null, columnId: columns[0]?.id })}><Plus size={18} />Nova tarefa</button> : null}
           </div>
         </header>
 
@@ -422,7 +427,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           <label className="board-search"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar trabalhos ou clientes..." /></label>
           <div className="board-toolbar-actions">
             <span className="task-total">{tasks.length} {tasks.length === 1 ? 'trabalho' : 'trabalhos'}</span>
-            <button className="new-column-button" onClick={() => setCreatingColumn(true)}><Columns3 size={16} />Nova coluna</button>
+            {canManagePlanning ? <button className="new-column-button" onClick={() => setCreatingColumn(true)}><Columns3 size={16} />Nova coluna</button> : <span className="editor-scope-label">Somente tarefas atribuídas a você</span>}
           </div>
         </div> : null}
 
@@ -465,7 +470,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                 }}
               >
                 <header className="column-header">
-                  <button
+                  {canManagePlanning ? <button
                     className="column-drag-handle"
                     draggable
                     title="Arrastar coluna"
@@ -476,12 +481,12 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                       setDraggedColumnId(column.id);
                     }}
                     onDragEnd={finishColumnDrag}
-                  ><GripVertical size={15} /></button>
+                  ><GripVertical size={15} /></button> : null}
                   <span className="column-dot" style={{ background: column.color ?? '#8b8fa3' }} />
                   <h2>{column.name}</h2>
                   <span className="column-count">{columnTasks.length}</span>
-                  <button aria-label={`Opções de ${column.name}`} onClick={() => setColumnMenuId((current) => current === column.id ? null : column.id)}><MoreHorizontal size={17} /></button>
-                  {columnMenuId === column.id ? (
+                  {canManagePlanning ? <button aria-label={`Opções de ${column.name}`} onClick={() => setColumnMenuId((current) => current === column.id ? null : column.id)}><MoreHorizontal size={17} /></button> : null}
+                  {canManagePlanning && columnMenuId === column.id ? (
                     <div className="column-menu">
                       <button onClick={() => { setEditingColumn(column); setColumnMenuId(null); }}>Editar nome e cor</button>
                       <button className="danger" onClick={() => { setEditingColumn(column); setColumnMenuId(null); }}>Gerenciar coluna</button>
@@ -523,12 +528,12 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                   {!columnTasks.length ? <div className="empty-column">Arraste uma tarefa para cá</div> : null}
                 </div>
 
-                <button className="column-add" onClick={() => setEditor({ mode: 'new', task: null, columnId: column.id })}><Plus size={16} />Adicionar tarefa</button>
+                {canManagePlanning ? <button className="column-add" onClick={() => setEditor({ mode: 'new', task: null, columnId: column.id })}><Plus size={16} />Adicionar tarefa</button> : null}
               </section>
             );
           })}
         </div> : null}
-        {view === 'clients' ? <ClientsView workspace={workspace} clients={clients} tasks={tasks} onChanged={() => loadBoard(true)} /> : null}
+        {view === 'clients' && canManagePlanning ? <ClientsView workspace={workspace} clients={clients} tasks={tasks} onChanged={() => loadBoard(true)} /> : null}
         {view === 'settings' ? <SettingsView user={user} workspace={workspace} onWorkspacesChanged={onWorkspacesChanged} /> : null}
       </section>
 
@@ -544,12 +549,13 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           columns={columns}
           links={editor.task ? links.filter((link) => link.task_id === editor.task?.id) : []}
           userId={user.id}
+          canManagePlanning={canManagePlanning}
           onClose={() => setEditor(null)}
           onChanged={async () => { await loadBoard(true); setEditor(null); }}
           onLinksChanged={async () => { await loadBoard(true); }}
         />
       ) : null}
-      {editingColumn ? (
+      {editingColumn && canManagePlanning ? (
         <ColumnEditor
           column={editingColumn}
           boardId={editingColumn.board_id}
@@ -560,7 +566,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           onChanged={async () => { await loadBoard(true); setEditingColumn(null); }}
         />
       ) : null}
-      {creatingColumn && board ? (
+      {creatingColumn && board && canManagePlanning ? (
         <ColumnEditor
           column={null}
           boardId={board.id}
@@ -701,6 +707,7 @@ function TaskEditor({
   columns,
   links,
   userId,
+  canManagePlanning,
   onClose,
   onChanged,
   onLinksChanged,
@@ -715,6 +722,7 @@ function TaskEditor({
   columns: BoardColumn[];
   links: TaskLink[];
   userId: string;
+  canManagePlanning: boolean;
   onClose: () => void;
   onChanged: () => Promise<void>;
   onLinksChanged: () => Promise<void>;
@@ -785,6 +793,12 @@ function TaskEditor({
     let normalizedUrl = linkUrl.trim();
     if (normalizedUrl && !normalizedUrl.startsWith('https://')) normalizedUrl = `https://${normalizedUrl}`;
 
+    if (mode === 'new' && !canManagePlanning) {
+      setSaving(false);
+      setError('Somente proprietários e administradores podem criar tarefas.');
+      return;
+    }
+
     const result = mode === 'new'
       ? await supabase.rpc('create_task_with_download_link', {
           workspace_target: workspace.id,
@@ -801,7 +815,7 @@ function TaskEditor({
           download_label: normalizedUrl ? linkLabel.trim() || 'Arquivos para download' : null,
           download_url: normalizedUrl || null,
         })
-      : await supabase.from('tasks').update(payload).eq('id', task!.id);
+      : await supabase.from('tasks').update(canManagePlanning ? payload : { revision_round: payload.revision_round }).eq('id', task!.id);
 
     if (result.error) {
       setError(result.error.message);
@@ -901,26 +915,27 @@ function TaskEditor({
         </header>
 
         <form className="editor-form" onSubmit={saveTask}>
-          <label><span>Título</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="Ex.: Vídeo da campanha de inverno" autoFocus /></label>
-          <label><span>Descrição</span><textarea value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} placeholder="Briefing rápido, formato e observações..." rows={4} /></label>
+          {!canManagePlanning ? <div className="editor-permission-note">Como editor, você pode mover esta tarefa, atualizar a versão, adicionar links e responder aos ajustes. O planejamento é controlado pelos administradores.</div> : null}
+          <label><span>Título</span><input value={draft.title} disabled={!canManagePlanning} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="Ex.: Vídeo da campanha de inverno" autoFocus /></label>
+          <label><span>Descrição</span><textarea value={draft.description} disabled={!canManagePlanning} onChange={(event) => setDraft({ ...draft, description: event.target.value })} placeholder="Briefing rápido, formato e observações..." rows={4} /></label>
 
           <div className="editor-grid">
-            <label><span>Prioridade</span><select value={draft.priority} onChange={(event) => setDraft({ ...draft, priority: event.target.value as TaskPriority })}><option value="low">Baixa</option><option value="normal">Normal</option><option value="high">Alta</option><option value="urgent">Urgente</option></select></label>
-            <label><span>Prazo</span><input type="date" value={draft.due_at} onChange={(event) => setDraft({ ...draft, due_at: event.target.value })} /></label>
+            <label><span>Prioridade</span><select value={draft.priority} disabled={!canManagePlanning} onChange={(event) => setDraft({ ...draft, priority: event.target.value as TaskPriority })}><option value="low">Baixa</option><option value="normal">Normal</option><option value="high">Alta</option><option value="urgent">Urgente</option></select></label>
+            <label><span>Prazo</span><input type="date" value={draft.due_at} disabled={!canManagePlanning} onChange={(event) => setDraft({ ...draft, due_at: event.target.value })} /></label>
           </div>
 
           <label>
             <span>Cliente</span>
             <div className="client-select-row">
-              <select value={draft.client_id} onChange={(event) => setDraft({ ...draft, client_id: event.target.value })}><option value="">Sem cliente</option>{clients.map((client) => <option value={client.id} key={client.id}>{client.name}</option>)}</select>
-              <button type="button" onClick={() => setShowClientForm((show) => !show)} aria-label="Adicionar cliente"><CirclePlus size={19} /></button>
+              <select value={draft.client_id} disabled={!canManagePlanning} onChange={(event) => setDraft({ ...draft, client_id: event.target.value })}><option value="">Sem cliente</option>{clients.map((client) => <option value={client.id} key={client.id}>{client.name}</option>)}</select>
+              {canManagePlanning ? <button type="button" onClick={() => setShowClientForm((show) => !show)} aria-label="Adicionar cliente"><CirclePlus size={19} /></button> : null}
             </div>
           </label>
 
           <div className="editor-grid">
             <label>
               <span>Editor responsável</span>
-              <select value={draft.assignee_id} onChange={(event) => setDraft({ ...draft, assignee_id: event.target.value })}>
+              <select value={draft.assignee_id} disabled={!canManagePlanning} onChange={(event) => setDraft({ ...draft, assignee_id: event.target.value })}>
                 <option value="">Sem responsável</option>
                 {members.map((member) => <option value={member.user_id} key={member.user_id}>{member.display_name} · {roleLabel(member.role)}</option>)}
               </select>
@@ -931,9 +946,9 @@ function TaskEditor({
             </label>
           </div>
 
-          {showClientForm ? <div className="quick-client"><input value={newClientName} onChange={(event) => setNewClientName(event.target.value)} placeholder="Nome do novo cliente" /><button type="button" onClick={() => void createClient()}>Adicionar</button></div> : null}
+          {showClientForm && canManagePlanning ? <div className="quick-client"><input value={newClientName} onChange={(event) => setNewClientName(event.target.value)} placeholder="Nome do novo cliente" /><button type="button" onClick={() => void createClient()}>Adicionar</button></div> : null}
 
-          {mode === 'new' ? (
+          {mode === 'new' && canManagePlanning ? (
             <div className="initial-link-panel">
               <div><Link2 size={17} /><span><strong>Arquivos para download</strong><small>Opcional — você também poderá adicionar depois.</small></span></div>
               <input value={linkLabel} onChange={(event) => setLinkLabel(event.target.value)} placeholder="Nome do link" />
@@ -943,7 +958,7 @@ function TaskEditor({
 
           {error ? <div className="editor-error" role="alert">{error}</div> : null}
 
-          <button className="editor-save" type="submit" disabled={saving}>{saving ? <LoaderCircle className="spinner" size={18} /> : mode === 'new' ? 'Criar tarefa' : 'Salvar alterações'}</button>
+          <button className="editor-save" type="submit" disabled={saving}>{saving ? <LoaderCircle className="spinner" size={18} /> : mode === 'new' ? 'Criar tarefa' : canManagePlanning ? 'Salvar alterações' : 'Salvar versão'}</button>
         </form>
 
         {mode === 'edit' && task ? (
@@ -954,7 +969,7 @@ function TaskEditor({
                 <div className="saved-link" key={link.id}>
                   <button className="link-open" onClick={() => void window.editflow.openExternal(link.url)}><span className={`link-kind ${link.category}`}>{linkCategoryLabel(link.category)}</span><strong>{link.label}</strong><small>{shortHost(link.url)}</small></button>
                   <button className="link-external" onClick={() => void window.editflow.openExternal(link.url)} aria-label="Abrir link"><ExternalLink size={16} /></button>
-                  <button className="link-delete" onClick={() => void removeLink(link.id)} aria-label="Excluir link"><Trash2 size={16} /></button>
+                  {canManagePlanning || link.created_by === userId ? <button className="link-delete" onClick={() => void removeLink(link.id)} aria-label="Excluir link"><Trash2 size={16} /></button> : <span />}
                 </div>
               ))}
               {!links.length ? <p className="no-links">Nenhum link adicionado.</p> : null}
@@ -1014,7 +1029,7 @@ function TaskEditor({
           </section>
         ) : null}
 
-        {mode === 'edit' ? <button className="delete-task" onClick={() => void deleteTask()}><Trash2 size={16} />Excluir tarefa</button> : null}
+        {mode === 'edit' && canManagePlanning ? <button className="delete-task" onClick={() => void deleteTask()}><Trash2 size={16} />Excluir tarefa</button> : null}
       </aside>
     </div>
   );

@@ -13,6 +13,17 @@ export type WorkspaceMember = {
   email?: string;
 };
 
+export type WorkspaceInvitation = {
+  id: string;
+  workspace_id: string;
+  workspace_name: string;
+  email: string;
+  role: Exclude<WorkspaceRole, 'owner'>;
+  status: 'pending' | 'accepted' | 'declined' | 'cancelled';
+  expires_at: string;
+  created_at: string;
+};
+
 export type Board = {
   id: string;
   name: string;

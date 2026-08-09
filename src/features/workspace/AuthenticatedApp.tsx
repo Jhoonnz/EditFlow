@@ -3,12 +3,13 @@ import type { User } from '@supabase/supabase-js';
 import { ArrowLeft, ArrowRight, Building2, LoaderCircle, LogOut, RefreshCw, Sparkles, UserPlus } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { Dashboard } from '../board/Dashboard';
-import type { WorkspaceRole, WorkspaceSummary } from './types';
+import type { WorkspaceInvitation, WorkspaceRole, WorkspaceSummary } from './types';
 
 type Props = { user: User };
 
 export function AuthenticatedApp({ user }: Props) {
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
+  const [invitations, setInvitations] = useState<WorkspaceInvitation[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -17,42 +18,62 @@ export function AuthenticatedApp({ user }: Props) {
     if (!supabase) return;
     setError(null);
 
-    const { data: memberships, error: membershipError } = await supabase
-      .from('workspace_members')
-      .select('workspace_id, role')
-      .eq('user_id', user.id);
+    const [membershipResult, invitationResult] = await Promise.all([
+      supabase.from('workspace_members').select('workspace_id, role').eq('user_id', user.id),
+      supabase
+        .from('workspace_invitations')
+        .select('id, workspace_id, email, role, status, expires_at, created_at')
+        .eq('email', (user.email ?? '').toLowerCase())
+        .eq('status', 'pending')
+        .gt('expires_at', new Date().toISOString())
+        .order('created_at', { ascending: false }),
+    ]);
 
-    if (membershipError) {
-      setError(membershipError.message);
+    const loadError = membershipResult.error ?? invitationResult.error;
+    if (loadError) {
+      setError(loadError.message);
       setLoading(false);
       return;
     }
 
-    if (!memberships?.length) {
-      setWorkspaces([]);
+    const memberships = membershipResult.data ?? [];
+    const invitationRows = invitationResult.data ?? [];
+    const workspaceIds = Array.from(new Set([
+      ...memberships.map((membership) => membership.workspace_id as string),
+      ...invitationRows.map((invitation) => invitation.workspace_id as string),
+    ]));
+
+    const workspaceResult = workspaceIds.length
+      ? await supabase.from('workspaces').select('id, name').in('id', workspaceIds)
+      : { data: [], error: null };
+
+    if (workspaceResult.error) {
+      setError(workspaceResult.error.message);
       setLoading(false);
       return;
     }
 
-    const { data: workspaceRows, error: workspaceError } = await supabase
-      .from('workspaces')
-      .select('id, name')
-      .in('id', memberships.map((membership) => membership.workspace_id));
-
-    if (workspaceError) {
-      setError(workspaceError.message);
-      setLoading(false);
-      return;
-    }
+    const workspaceNames = new Map((workspaceResult.data ?? []).map((workspace) => [workspace.id as string, workspace.name as string]));
 
     const roleByWorkspace = new Map(
       memberships.map((membership) => [membership.workspace_id, membership.role as WorkspaceRole]),
     );
-    const nextWorkspaces = (workspaceRows ?? []).map((workspace) => ({
-      id: workspace.id as string,
-      name: workspace.name as string,
-      role: roleByWorkspace.get(workspace.id as string) ?? 'editor',
+    const nextWorkspaces = memberships.map((membership) => ({
+      id: membership.workspace_id as string,
+      name: workspaceNames.get(membership.workspace_id as string) ?? 'Equipe',
+      role: roleByWorkspace.get(membership.workspace_id as string) ?? 'editor',
     }));
+
+    setInvitations(invitationRows.map((invitation) => ({
+      id: invitation.id as string,
+      workspace_id: invitation.workspace_id as string,
+      workspace_name: workspaceNames.get(invitation.workspace_id as string) ?? 'Equipe EditFlow',
+      email: invitation.email as string,
+      role: invitation.role as WorkspaceInvitation['role'],
+      status: invitation.status as WorkspaceInvitation['status'],
+      expires_at: invitation.expires_at as string,
+      created_at: invitation.created_at as string,
+    })));
 
     setWorkspaces(nextWorkspaces);
     setActiveWorkspaceId((current) =>
@@ -67,6 +88,27 @@ export function AuthenticatedApp({ user }: Props) {
     void loadWorkspaces();
   }, [loadWorkspaces]);
 
+  useEffect(() => {
+    if (!supabase || !user.email) return;
+    const realtimeClient = supabase;
+    const channel = realtimeClient
+      .channel(`editflow-invitations:${user.id}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'workspace_invitations',
+        filter: `email=eq.${user.email.toLowerCase()}`,
+      }, () => void loadWorkspaces())
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'workspace_members',
+        filter: `user_id=eq.${user.id}`,
+      }, () => void loadWorkspaces())
+      .subscribe();
+    return () => { void realtimeClient.removeChannel(channel); };
+  }, [loadWorkspaces, user.email, user.id]);
+
   if (loading) {
     return (
       <main className="app-loading">
@@ -76,13 +118,17 @@ export function AuthenticatedApp({ user }: Props) {
     );
   }
 
+  if (!workspaces.length && invitations.length) {
+    return <InvitationPrompt invitations={invitations} onChanged={loadWorkspaces} fullscreen />;
+  }
+
   if (!workspaces.length) {
     return <WorkspaceOnboarding user={user} onCreated={loadWorkspaces} initialError={error} />;
   }
 
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[0];
 
-  return (
+  return <>
     <Dashboard
       user={user}
       workspace={activeWorkspace}
@@ -90,6 +136,53 @@ export function AuthenticatedApp({ user }: Props) {
       onWorkspaceChange={setActiveWorkspaceId}
       onWorkspacesChanged={loadWorkspaces}
     />
+    {invitations.length ? <InvitationPrompt invitations={invitations} onChanged={loadWorkspaces} /> : null}
+  </>;
+}
+
+function InvitationPrompt({ invitations, onChanged, fullscreen = false }: {
+  invitations: WorkspaceInvitation[];
+  onChanged: () => Promise<void>;
+  fullscreen?: boolean;
+}) {
+  const [submittingId, setSubmittingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const respond = async (invitation: WorkspaceInvitation, accept: boolean) => {
+    if (!supabase) return;
+    setSubmittingId(invitation.id);
+    setError(null);
+    const { error: responseError } = accept
+      ? await supabase.rpc('accept_workspace_invitation', { target_invitation: invitation.id })
+      : await supabase.rpc('decline_workspace_invitation', { target_invitation: invitation.id });
+    setSubmittingId(null);
+    if (responseError) { setError(responseError.message); return; }
+    await onChanged();
+  };
+
+  return (
+    <div className={fullscreen ? 'invitation-page' : 'invitation-backdrop'}>
+      <section className="invitation-dialog" role="dialog" aria-modal={!fullscreen} aria-label="Convites de equipe">
+        <div className="onboarding-icon"><UserPlus size={24} /></div>
+        <p className="onboarding-kicker">CONVITE DE EQUIPE</p>
+        <h1>Você recebeu {invitations.length === 1 ? 'um convite.' : 'novos convites.'}</h1>
+        <p className="onboarding-copy">Aceite somente equipes que você reconhece.</p>
+        <div className="invitation-list">
+          {invitations.map((invitation) => (
+            <article key={invitation.id}>
+              <span>{invitation.workspace_name.slice(0, 1).toUpperCase()}</span>
+              <div><strong>{invitation.workspace_name}</strong><small>Cargo: {invitation.role === 'admin' ? 'Administrador' : 'Editor'} · expira em {formatInviteDate(invitation.expires_at)}</small></div>
+              <div className="invitation-actions">
+                <button className="secondary-button" disabled={submittingId === invitation.id} onClick={() => void respond(invitation, false)}>Recusar</button>
+                <button className="primary-button" disabled={submittingId === invitation.id} onClick={() => void respond(invitation, true)}>{submittingId === invitation.id ? <LoaderCircle className="spinner" size={15} /> : null}Aceitar</button>
+              </div>
+            </article>
+          ))}
+        </div>
+        {error ? <div className="workspace-error" role="alert">{error}</div> : null}
+        {fullscreen ? <button className="onboarding-logout" onClick={() => void supabase?.auth.signOut()}><LogOut size={15} />Sair desta conta</button> : null}
+      </section>
+    </div>
   );
 }
 
@@ -155,7 +248,7 @@ function WorkspaceOnboarding({
         <div className="onboarding-icon">{mode === 'join' ? <UserPlus size={24} /> : <Building2 size={24} />}</div>
         <p className="onboarding-kicker">PRIMEIRO ACESSO</p>
         <h1>{mode === 'choose' ? 'Como você usará o EditFlow?' : mode === 'create' ? 'Crie seu espaço de produção.' : 'Entre na equipe que te convidou.'}</h1>
-        <p className="onboarding-copy">{mode === 'choose' ? 'Você pode criar uma nova equipe ou entrar em um espaço existente.' : mode === 'create' ? 'Ele reunirá clientes, trabalhos, prazos e links da sua equipe.' : 'Peça ao responsável pela equipe para adicionar o e-mail abaixo nas configurações.'}</p>
+        <p className="onboarding-copy">{mode === 'choose' ? 'Você pode criar uma nova equipe ou entrar em um espaço existente.' : mode === 'create' ? 'Ele reunirá clientes, trabalhos, prazos e links da sua equipe.' : 'Peça ao responsável pela equipe para enviar um convite ao e-mail abaixo.'}</p>
 
         {mode === 'choose' ? (
           <div className="onboarding-choices">
@@ -180,7 +273,7 @@ function WorkspaceOnboarding({
         {mode === 'join' ? (
           <div className="join-workspace-panel">
             <div><small>SEU E-MAIL DE CONVITE</small><strong>{user.email}</strong></div>
-            <ol><li>O administrador abre <b>Configurações → Membros</b>.</li><li>Ele adiciona este e-mail como Editor ou Administrador.</li><li>Esta tela entrará automaticamente na equipe.</li></ol>
+            <ol><li>O administrador abre <b>Configurações → Membros</b>.</li><li>Ele envia o convite para este e-mail.</li><li>O convite aparecerá aqui para você aceitar ou recusar.</li></ol>
             {error ? <div className="workspace-error" role="alert">{error}</div> : null}
             <button className="onboarding-submit" onClick={() => void checkMembership()} disabled={checking}>{checking ? <LoaderCircle className="spinner" size={19} /> : <><RefreshCw size={17} />Verificar convite agora</>}</button>
             <p>Aguardando convite… verificando automaticamente.</p>
@@ -193,6 +286,10 @@ function WorkspaceOnboarding({
       </section>
     </main>
   );
+}
+
+function formatInviteDate(date: string) {
+  return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short' }).format(new Date(date));
 }
 
 function translateWorkspaceError(message: string) {

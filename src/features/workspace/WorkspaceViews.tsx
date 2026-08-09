@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { Building2, LoaderCircle, Mail, Pencil, Plus, Save, Trash2, UserPlus, Users } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import type { Client, Task, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
+import type { Client, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
 
 export function ClientsView({
   workspace,
@@ -109,6 +109,7 @@ export function SettingsView({
   const [workspaceName, setWorkspaceName] = useState(workspace.name);
   const [displayName, setDisplayName] = useState(String(user.user_metadata.full_name ?? ''));
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
+  const [pendingInvitations, setPendingInvitations] = useState<WorkspaceInvitation[]>([]);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<Exclude<WorkspaceRole, 'owner'>>('editor');
   const [saving, setSaving] = useState(false);
@@ -121,25 +122,50 @@ export function SettingsView({
 
   const loadMembers = useCallback(async () => {
     if (!supabase) return;
-    const { data: memberships, error: membershipError } = await supabase
-      .from('workspace_members')
-      .select('user_id, role')
-      .eq('workspace_id', workspace.id);
+    const [membershipResult, invitationResult] = await Promise.all([
+      supabase.from('workspace_members').select('user_id, role').eq('workspace_id', workspace.id),
+      canManage
+        ? supabase.from('workspace_invitations').select('id, workspace_id, email, role, status, expires_at, created_at').eq('workspace_id', workspace.id).eq('status', 'pending').order('created_at', { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    const membershipError = membershipResult.error ?? invitationResult.error;
     if (membershipError) return setError(membershipError.message);
-    const ids = (memberships ?? []).map((item) => item.user_id as string);
+    const memberships = membershipResult.data ?? [];
+    const ids = memberships.map((item) => item.user_id as string);
     const profiles = ids.length
       ? await supabase.from('profiles').select('id, display_name').in('id', ids)
       : { data: [], error: null };
     if (profiles.error) return setError(profiles.error.message);
     const names = new Map((profiles.data ?? []).map((profile) => [profile.id as string, profile.display_name as string]));
-    setMembers((memberships ?? []).map((item) => ({
+    setMembers(memberships.map((item) => ({
       user_id: item.user_id as string,
       role: item.role as WorkspaceRole,
       display_name: names.get(item.user_id as string) || (item.user_id === user.id ? user.email || 'Você' : 'Membro'),
     })));
-  }, [user.email, user.id, workspace.id]);
+    setPendingInvitations((invitationResult.data ?? []).map((invitation) => ({
+      id: invitation.id as string,
+      workspace_id: invitation.workspace_id as string,
+      workspace_name: workspace.name,
+      email: invitation.email as string,
+      role: invitation.role as WorkspaceInvitation['role'],
+      status: invitation.status as WorkspaceInvitation['status'],
+      expires_at: invitation.expires_at as string,
+      created_at: invitation.created_at as string,
+    })));
+  }, [canManage, user.email, user.id, workspace.id, workspace.name]);
 
   useEffect(() => { void loadMembers(); }, [loadMembers]);
+
+  useEffect(() => {
+    if (!supabase) return;
+    const realtimeClient = supabase;
+    const channel = realtimeClient
+      .channel(`editflow-team-settings:${workspace.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workspace_invitations', filter: `workspace_id=eq.${workspace.id}` }, () => void loadMembers())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workspace_members', filter: `workspace_id=eq.${workspace.id}` }, () => void loadMembers())
+      .subscribe();
+    return () => { void realtimeClient.removeChannel(channel); };
+  }, [loadMembers, workspace.id]);
 
   const saveGeneral = async (event: FormEvent) => {
     event.preventDefault();
@@ -162,7 +188,7 @@ export function SettingsView({
     if (!supabase || !inviteEmail.trim()) return;
     setSaving(true);
     setError(null);
-    const { error: inviteError } = await supabase.rpc('add_workspace_member', {
+    const { error: inviteError } = await supabase.rpc('invite_workspace_member', {
       target_workspace: workspace.id,
       member_email: inviteEmail.trim(),
       member_role: inviteRole,
@@ -170,6 +196,25 @@ export function SettingsView({
     setSaving(false);
     if (inviteError) return setError(translateMemberError(inviteError.message));
     setInviteEmail('');
+    await loadMembers();
+  };
+
+  const cancelInvitation = async (invitation: WorkspaceInvitation) => {
+    if (!supabase || !window.confirm(`Cancelar o convite enviado para ${invitation.email}?`)) return;
+    const { error: cancelError } = await supabase.rpc('cancel_workspace_invitation', { target_invitation: invitation.id });
+    if (cancelError) return setError(cancelError.message);
+    await loadMembers();
+  };
+
+  const changeMemberRole = async (member: WorkspaceMember, role: Exclude<WorkspaceRole, 'owner'>) => {
+    if (!supabase) return;
+    setError(null);
+    const { error: roleError } = await supabase.rpc('change_workspace_member_role', {
+      target_workspace: workspace.id,
+      target_user: member.user_id,
+      member_role: role,
+    });
+    if (roleError) return setError(roleError.message);
     await loadMembers();
   };
 
@@ -216,20 +261,33 @@ export function SettingsView({
       </section>
 
       <section className="content-card">
-        <div className="content-card-heading"><span className="content-icon"><UserPlus size={18} /></span><div><h2>Membros</h2><p>Convide pessoas que já possuem uma conta no EditFlow.</p></div></div>
+        <div className="content-card-heading"><span className="content-icon"><UserPlus size={18} /></span><div><h2>Membros</h2><p>Envie um convite para a pessoa aceitar ou recusar.</p></div></div>
         {canManage ? (
           <form className="invite-form" onSubmit={addMember}>
             <label><Mail size={16} /><input type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="email@exemplo.com" /></label>
             <select value={inviteRole} onChange={(event) => setInviteRole(event.target.value as Exclude<WorkspaceRole, 'owner'>)}><option value="editor">Editor</option><option value="admin">Administrador</option></select>
-            <button className="primary-button" type="submit" disabled={saving}><Plus size={16} />Adicionar</button>
+            <button className="primary-button" type="submit" disabled={saving}><Plus size={16} />Enviar convite</button>
           </form>
+        ) : null}
+        {canManage && pendingInvitations.length ? (
+          <div className="pending-invitations">
+            <strong>CONVITES PENDENTES</strong>
+            {pendingInvitations.map((invitation) => (
+              <article key={invitation.id}>
+                <span className="client-avatar">{invitation.email.slice(0, 1).toUpperCase()}</span>
+                <div className="client-copy"><strong>{invitation.email}</strong><small>{roleLabel(invitation.role)} · aguardando resposta</small></div>
+                <button className="danger-icon" onClick={() => void cancelInvitation(invitation)} aria-label="Cancelar convite"><Trash2 size={15} /></button>
+              </article>
+            ))}
+          </div>
         ) : null}
         <div className="member-list">
           {members.map((member) => (
             <article className="member-row" key={member.user_id}>
               <span className="client-avatar">{member.display_name.slice(0, 1).toUpperCase()}</span>
               <div className="client-copy"><strong>{member.display_name}{member.user_id === user.id ? ' (você)' : ''}</strong><small>{roleLabel(member.role)}</small></div>
-              {canManage && member.role !== 'owner' ? <button className="danger-icon" onClick={() => void removeMember(member)} aria-label="Remover membro"><Trash2 size={15} /></button> : null}
+              {canManage && member.role !== 'owner' && member.user_id !== user.id ? <select className="member-role-select" value={member.role} onChange={(event) => void changeMemberRole(member, event.target.value as Exclude<WorkspaceRole, 'owner'>)}><option value="editor">Editor</option><option value="admin">Administrador</option></select> : null}
+              {canManage && member.role !== 'owner' && member.user_id !== user.id ? <button className="danger-icon" onClick={() => void removeMember(member)} aria-label="Remover membro"><Trash2 size={15} /></button> : null}
             </article>
           ))}
         </div>
@@ -257,6 +315,7 @@ function roleLabel(role: WorkspaceRole) {
 }
 
 function translateMemberError(message: string) {
-  if (message.toLowerCase().includes('no editflow account')) return 'Essa pessoa precisa criar uma conta no EditFlow antes de ser adicionada.';
+  if (message.toLowerCase().includes('already a workspace member')) return 'Essa pessoa já faz parte da equipe.';
+  if (message.toLowerCase().includes('valid email')) return 'Digite um e-mail válido.';
   return message;
 }

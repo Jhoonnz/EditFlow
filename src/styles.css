@@ -355,6 +355,20 @@ button { color: inherit; }
 .join-workspace-panel ol { display: grid; gap: 9px; margin: 0; padding-left: 20px; color: #696a76; font-size: 10px; line-height: 1.5; }
 .join-workspace-panel .onboarding-submit { margin-top: 0; }
 .join-workspace-panel > p { margin: -5px 0 0; color: #858692; font-size: 9px; text-align: center; }
+.invitation-page, .invitation-backdrop { display: grid; place-items: center; padding: 24px; }
+.invitation-page { min-height: 100vh; background: radial-gradient(circle at 18% 82%, rgba(92,86,220,.42), transparent 40%), radial-gradient(circle at 83% 12%, rgba(250,189,239,.55), transparent 42%), #f5f6f9; }
+.invitation-backdrop { position: fixed; inset: 0; z-index: 90; background: rgba(28,27,44,.34); backdrop-filter: blur(6px); }
+.invitation-dialog { width: min(560px, 100%); max-height: calc(100vh - 48px); padding: 32px; overflow-y: auto; border: 1px solid rgba(255,255,255,.8); border-radius: 23px; background: rgba(255,255,255,.9); box-shadow: 0 24px 70px rgba(37,35,63,.24); }
+.invitation-dialog h1 { margin: 0 0 10px; color: #292936; font-size: 29px; letter-spacing: -.04em; }
+.invitation-dialog .onboarding-copy { margin-bottom: 22px; }
+.invitation-list { display: grid; gap: 9px; }
+.invitation-list > article { display: grid; grid-template-columns: 42px minmax(0,1fr) auto; align-items: center; gap: 11px; padding: 11px; border: 1px solid #e1e1e8; border-radius: 13px; background: #fff; }
+.invitation-list > article > span { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 11px; background: #ece9fb; color: #524b97; font-size: 14px; font-weight: 850; }
+.invitation-list > article > div:not(.invitation-actions) { display: grid; min-width: 0; gap: 4px; }
+.invitation-list strong { color: #484953; font-size: 12px; }
+.invitation-list small { color: #92939d; font-size: 9px; }
+.invitation-actions { display: flex; gap: 6px; }
+.invitation-actions button { height: 34px; padding-inline: 10px; }
 
 /* Dashboard */
 .dashboard-shell { display: grid; grid-template-columns: 238px minmax(0, 1fr); width: 100%; height: 100vh; overflow: hidden; background: #f5f6fa; color: #2b2d38; }
@@ -395,6 +409,7 @@ button { color: inherit; }
 .board-search input { width: 100%; border: 0; outline: 0; background: transparent; color: #3d3e47; font-size: 12px; }
 .board-search input::placeholder { color: #aaaab4; }
 .task-total { color: #9899a3; font-size: 11px; }
+.editor-scope-label { color: #645e9c; font-size: 9px; font-weight: 700; }
 .board-toolbar-actions { display: flex; align-items: center; gap: 13px; }
 .new-column-button { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 11px; border: 1px solid #dedee6; border-radius: 10px; background: #fff; color: #5f6070; font-size: 10px; font-weight: 720; cursor: pointer; }
 .new-column-button:hover { border-color: #c7c3e5; color: #494183; background: #f8f7fd; }
@@ -478,6 +493,8 @@ button { color: inherit; }
 .editor-form input, .editor-form textarea, .editor-form select, .link-form input, .link-form select, .quick-client input { width: 100%; border: 1px solid #dedee6; border-radius: 11px; outline: 0; background: #fff; color: #34353e; font-size: 12px; }
 .editor-form input, .editor-form select, .link-form input, .link-form select, .quick-client input { height: 42px; padding: 0 12px; }
 .editor-form textarea { resize: vertical; min-height: 90px; padding: 11px 12px; line-height: 1.5; }
+.editor-form input:disabled, .editor-form textarea:disabled, .editor-form select:disabled { background: #f1f1f4; color: #777883; cursor: not-allowed; }
+.editor-permission-note { padding: 10px 12px; border: 1px solid #dcd9ee; border-radius: 10px; background: #f1effa; color: #625c91; font-size: 9px; line-height: 1.5; }
 .editor-form input:focus, .editor-form textarea:focus, .editor-form select:focus, .link-form input:focus, .link-form select:focus { border-color: #8b84d8; box-shadow: 0 0 0 3px rgba(139,132,216,.1); }
 .editor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .revision-input { position: relative; }
@@ -569,6 +586,11 @@ button { color: inherit; }
 .primary-button:disabled, .danger-button:disabled { opacity: .6; }
 .panel-error { padding: 10px 12px; border: 1px solid #f0c5cc; border-radius: 10px; background: #fff0f2; color: #aa3f50; font-size: 10px; }
 .client-list, .member-list { display: grid; gap: 7px; }
+.pending-invitations { display: grid; gap: 7px; margin: 0 0 15px; padding: 12px; border: 1px solid #e3e0f0; border-radius: 12px; background: #f6f4fc; }
+.pending-invitations > strong { color: #777293; font-size: 8px; letter-spacing: .1em; }
+.pending-invitations > article { display: flex; align-items: center; gap: 9px; min-height: 52px; padding: 7px; border: 1px solid #e5e3ed; border-radius: 10px; background: #fff; }
+.pending-invitations > article > button { display: grid; place-items: center; width: 31px; height: 31px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: #a24b59; cursor: pointer; }
+.member-role-select { height: 32px; padding: 0 8px; border: 1px solid #dedee5; border-radius: 8px; background: #fff; color: #60616c; font-size: 9px; }
 .client-row, .member-row { display: flex; align-items: center; gap: 10px; min-height: 57px; padding: 8px 9px; border: 1px solid #e7e7ec; border-radius: 11px; }
 .client-avatar { display: grid; place-items: center; flex: 0 0 35px; height: 35px; border-radius: 10px; background: #ebe8fb; color: #4e478e; font-size: 12px; font-weight: 800; }
 .client-copy { display: grid; min-width: 0; flex: 1; gap: 3px; }
