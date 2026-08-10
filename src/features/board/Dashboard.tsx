@@ -92,7 +92,9 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [editingColumn, setEditingColumn] = useState<BoardColumn | null>(null);
   const [creatingColumn, setCreatingColumn] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [liveNotification, setLiveNotification] = useState<AppNotification | null>(null);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notificationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadBoard = useCallback(async (quiet = false) => {
     if (!supabase) return;
@@ -193,7 +195,15 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         .on('postgres_changes', { event: '*', schema: 'public', table: 'task_links' }, scheduleReload)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'columns' }, scheduleReload)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'workspace_members', filter: `workspace_id=eq.${workspace.id}` }, () => { scheduleReload(); void onWorkspacesChanged(); })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` }, scheduleReload)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` }, (payload) => {
+          scheduleReload();
+          if (payload.eventType !== 'INSERT') return;
+          const notification = payload.new as AppNotification;
+          if (notification.workspace_id !== workspace.id) return;
+          setLiveNotification(notification);
+          if (notificationTimer.current) clearTimeout(notificationTimer.current);
+          notificationTimer.current = setTimeout(() => setLiveNotification(null), 6500);
+        })
         .subscribe((status) => {
           if (status === 'SUBSCRIBED') setSyncStatus('connected');
           else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setSyncStatus('error');
@@ -211,6 +221,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
       window.removeEventListener('offline', handleOffline);
       if (channel) void realtimeClient.removeChannel(channel);
       if (reloadTimer.current) clearTimeout(reloadTimer.current);
+      if (notificationTimer.current) clearTimeout(notificationTimer.current);
     };
   }, [onWorkspacesChanged, scheduleReload, user.id, workspace.id]);
 
@@ -576,6 +587,16 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           onClose={() => setCreatingColumn(false)}
           onChanged={async () => { await loadBoard(true); setCreatingColumn(false); }}
         />
+      ) : null}
+      {liveNotification ? (
+        <aside className="live-notification" role="status" aria-live="polite">
+          <span className="live-notification-icon"><Bell size={18} /></span>
+          <button className="live-notification-copy" onClick={() => { setShowNotifications(true); setLiveNotification(null); }}>
+            <strong>Nova notificação</strong>
+            <small>{liveNotification.message}</small>
+          </button>
+          <button className="live-notification-close" aria-label="Fechar notificação" onClick={() => setLiveNotification(null)}><X size={16} /></button>
+        </aside>
       ) : null}
     </main>
   );

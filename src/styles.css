@@ -626,6 +626,14 @@ button { color: inherit; }
 .notification-popover button small { flex: 0 0 auto; color: #9a702d; font-size: 8px; }
 .notification-popover button small.overdue { color: #bb4657; }
 .notification-popover p { margin: 0; padding: 24px 8px; color: #9c9da6; font-size: 10px; text-align: center; }
+.live-notification { position: fixed; top: 22px; right: 22px; z-index: 90; display: flex; align-items: center; gap: 11px; width: min(390px, calc(100vw - 44px)); min-height: 72px; padding: 12px; border: 1px solid rgba(255,255,255,.55); border-radius: 15px; background: rgba(31,30,53,.95); color: #fff; box-shadow: 0 18px 45px rgba(18,18,36,.28); backdrop-filter: blur(18px); animation: notification-in .25s ease; }
+.live-notification-icon { display: grid; place-items: center; flex: 0 0 40px; height: 40px; border-radius: 11px; background: linear-gradient(145deg, #786ee2, #4c438f); }
+.live-notification-copy { display: grid; min-width: 0; flex: 1; gap: 4px; padding: 3px 0; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+.live-notification-copy strong { font-size: 11px; }
+.live-notification-copy small { overflow: hidden; color: #c9c9d7; font-size: 9px; line-height: 1.4; text-overflow: ellipsis; }
+.live-notification-close { display: grid; place-items: center; align-self: flex-start; flex: 0 0 26px; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: #a8a8b8; cursor: pointer; }
+.live-notification-close:hover { background: rgba(255,255,255,.09); color: #fff; }
+@keyframes notification-in { from { transform: translateY(-12px); opacity: 0; } }
 
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes slide-in { from { transform: translateX(30px); opacity: .7; } }

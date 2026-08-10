@@ -134,7 +134,7 @@ export type AppNotification = {
   user_id: string;
   task_id: string | null;
   actor_id: string | null;
-  type: 'assignment' | 'comment' | 'change_request';
+  type: 'assignment' | 'comment' | 'change_request' | 'task_updated' | 'task_moved' | 'invite_accepted';
   message: string;
   read_at: string | null;
   created_at: string;
