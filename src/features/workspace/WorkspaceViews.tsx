@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { Building2, Eye, LoaderCircle, Mail, MonitorCog, Pencil, Plus, Power, Save, Trash2, UserPlus, Users, X } from 'lucide-react';
+import { Building2, Eye, Laptop, LoaderCircle, Mail, MonitorCog, Moon, Palette, Pencil, Plus, Power, Save, Sun, Trash2, UserPlus, Users, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import type { Client, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
 
@@ -251,9 +251,12 @@ export function SettingsView({
     }
   };
 
-  const updateDesktopPreference = async (key: keyof EditFlowDesktopPreferences, enabled: boolean) => {
+  const updateDesktopPreference = async (
+    key: keyof EditFlowDesktopPreferences,
+    value: boolean | EditFlowDesktopPreferences['theme'],
+  ) => {
     if (!desktopPreferences) return;
-    const nextPreferences = { ...desktopPreferences, [key]: enabled };
+    const nextPreferences = { ...desktopPreferences, [key]: value };
     setDesktopPreferences(nextPreferences);
     setDesktopSaving(key);
     setError(null);
@@ -312,6 +315,38 @@ export function SettingsView({
         </div>
       </section>
 
+      <section className="content-card appearance-settings-card">
+        <div className="content-card-heading"><span className="content-icon"><Palette size={18} /></span><div><h2>Aparência</h2><p>Escolha como o EditFlow deve aparecer neste computador.</p></div></div>
+        {desktopPreferences ? (
+          <div className="theme-options" role="radiogroup" aria-label="Tema do aplicativo">
+            <ThemeOption
+              icon={Sun}
+              title="Claro"
+              description="Visual limpo e iluminado."
+              active={desktopPreferences.theme === 'light'}
+              saving={desktopSaving === 'theme'}
+              onClick={() => void updateDesktopPreference('theme', 'light')}
+            />
+            <ThemeOption
+              icon={Moon}
+              title="Escuro"
+              description="Grafite com cores vibrantes."
+              active={desktopPreferences.theme === 'dark'}
+              saving={desktopSaving === 'theme'}
+              onClick={() => void updateDesktopPreference('theme', 'dark')}
+            />
+            <ThemeOption
+              icon={Laptop}
+              title="Automático"
+              description="Acompanha o tema do Windows."
+              active={desktopPreferences.theme === 'system'}
+              saving={desktopSaving === 'theme'}
+              onClick={() => void updateDesktopPreference('theme', 'system')}
+            />
+          </div>
+        ) : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
+      </section>
+
       <section className="content-card desktop-settings-card">
         <div className="content-card-heading"><span className="content-icon"><MonitorCog size={18} /></span><div><h2>Aplicativo no Windows</h2><p>Escolha como o EditFlow se comporta ao iniciar e fechar.</p></div></div>
         {desktopPreferences ? (
@@ -356,6 +391,37 @@ export function SettingsView({
         </section>
       ) : null}
     </div>
+  );
+}
+
+function ThemeOption({
+  icon: Icon,
+  title,
+  description,
+  active,
+  saving,
+  onClick,
+}: {
+  icon: typeof Sun;
+  title: string;
+  description: string;
+  active: boolean;
+  saving: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`theme-option ${active ? 'active' : ''}`}
+      role="radio"
+      aria-checked={active}
+      disabled={saving}
+      onClick={onClick}
+    >
+      <span className="theme-option-preview"><Icon size={21} /></span>
+      <span><strong>{title}</strong><small>{description}</small></span>
+      <i aria-hidden="true" />
+    </button>
   );
 }
 

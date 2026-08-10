@@ -37,6 +37,7 @@ type EditFlowDesktopPreferences = {
   launchAtLogin: boolean;
   closeToTray: boolean;
   showWelcome: boolean;
+  theme: 'light' | 'dark' | 'system';
 };
 
 interface Window {
@@ -49,6 +50,7 @@ interface Window {
     showUpdateLog: () => Promise<boolean>;
     getDesktopPreferences: () => Promise<EditFlowDesktopPreferences>;
     updateDesktopPreferences: (preferences: EditFlowDesktopPreferences) => Promise<EditFlowDesktopPreferences>;
+    onDesktopPreferencesChanged: (callback: (preferences: EditFlowDesktopPreferences) => void) => () => void;
     showNativeNotification: (notification: EditFlowNativeNotification) => Promise<boolean>;
     onNativeNotificationClicked: (callback: (target: EditFlowNativeNotificationTarget) => void) => () => void;
     onUpdateStatus: (callback: (status: EditFlowUpdateStatus) => void) => () => void;

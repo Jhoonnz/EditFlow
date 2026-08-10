@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { ArrowLeft, Download, LoaderCircle, RotateCw, X } from 'lucide-react';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
+import { watchThemePreference } from './lib/theme';
 import { AuthenticatedApp } from './features/workspace/AuthenticatedApp';
 
 type AuthMode = 'signin' | 'signup' | 'forgot';
@@ -10,6 +11,14 @@ type Notice = { kind: 'error' | 'success' | 'info'; message: string } | null;
 function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [sessionLoading, setSessionLoading] = useState(isSupabaseConfigured);
+  const [themePreference, setThemePreference] = useState<EditFlowDesktopPreferences['theme']>('light');
+
+  useEffect(() => {
+    void window.editflow.getDesktopPreferences().then((preferences) => setThemePreference(preferences.theme));
+    return window.editflow.onDesktopPreferencesChanged((preferences) => setThemePreference(preferences.theme));
+  }, []);
+
+  useEffect(() => watchThemePreference(themePreference), [themePreference]);
 
   useEffect(() => {
     if (!supabase) return;

@@ -26,12 +26,14 @@ type DesktopPreferences = {
   launchAtLogin: boolean;
   closeToTray: boolean;
   showWelcome: boolean;
+  theme: 'light' | 'dark' | 'system';
 };
 
 const defaultDesktopPreferences: DesktopPreferences = {
   launchAtLogin: false,
   closeToTray: true,
   showWelcome: true,
+  theme: 'light',
 };
 
 let desktopPreferences = defaultDesktopPreferences;
@@ -296,6 +298,9 @@ ipcMain.handle('desktop:update-preferences', async (_event, value: unknown) => {
   await saveDesktopPreferences();
   applyLaunchAtLogin();
   syncTrayWithPreferences();
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send('desktop:preferences-changed', desktopPreferences);
+  }
   return desktopPreferences;
 });
 ipcMain.handle('notifications:show', (event, value: unknown) => {
@@ -481,9 +486,13 @@ function isNativeNotificationPayload(value: unknown): value is NativeNotificatio
 
 function sanitizeDesktopPreferences(value: unknown): DesktopPreferences {
   const saved = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const theme = saved.theme === 'dark' || saved.theme === 'system' || saved.theme === 'light'
+    ? saved.theme
+    : defaultDesktopPreferences.theme;
   return {
     launchAtLogin: typeof saved.launchAtLogin === 'boolean' ? saved.launchAtLogin : defaultDesktopPreferences.launchAtLogin,
     closeToTray: typeof saved.closeToTray === 'boolean' ? saved.closeToTray : defaultDesktopPreferences.closeToTray,
     showWelcome: typeof saved.showWelcome === 'boolean' ? saved.showWelcome : defaultDesktopPreferences.showWelcome,
+    theme,
   };
 }

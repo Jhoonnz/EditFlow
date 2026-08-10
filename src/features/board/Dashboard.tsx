@@ -1,8 +1,7 @@
-import { DragEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, DragEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RealtimeChannel, User } from '@supabase/supabase-js';
 import {
   Bell,
-  CalendarDays,
   ChevronDown,
   CirclePlus,
   Columns3,
@@ -15,12 +14,12 @@ import {
   LogOut,
   MessageSquare,
   MoreHorizontal,
+  MoreVertical,
   Plus,
   Search,
   Settings,
   Sparkles,
   Trash2,
-  UserRound,
   Users,
   Wifi,
   WifiOff,
@@ -573,6 +572,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                     <TaskCard
                       key={task.id}
                       task={task}
+                      column={column}
+                      progressPercent={Math.round(((columns.findIndex((item) => item.id === column.id) + 1) / Math.max(columns.length, 1)) * 100)}
                       client={clients.find((client) => client.id === task.client_id)}
                       assignee={members.find((member) => member.user_id === task.assignee_id)}
                       linkCount={links.filter((link) => link.task_id === task.id).length}
@@ -732,6 +733,8 @@ function ColumnEditor({
 
 function TaskCard({
   task,
+  column,
+  progressPercent,
   client,
   assignee,
   linkCount,
@@ -745,6 +748,8 @@ function TaskCard({
   dragEnabled,
 }: {
   task: Task;
+  column: BoardColumn;
+  progressPercent: number;
   client?: Client;
   assignee?: WorkspaceMember;
   linkCount: number;
@@ -757,25 +762,46 @@ function TaskCard({
   dropEdge: 'before' | 'after' | null;
   dragEnabled: boolean;
 }) {
+  const countdown = taskCountdown(task.due_at);
+  const subtitle = client?.name || task.description || priorityLabel(task.priority);
+  const cardStyle = {
+    '--task-accent': column.color ?? '#01c3a8',
+    '--task-progress': `${Math.max(0, Math.min(100, progressPercent))}%`,
+  } as CSSProperties;
+
   return (
     <button
       className={`task-card ${dragging ? 'dragging' : ''} ${dropEdge ? `task-drop-${dropEdge}` : ''}`}
+      style={cardStyle}
       draggable={dragEnabled}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
       onDrop={onDrop}
       onClick={onOpen}
+      aria-label={`Abrir tarefa ${task.title}`}
     >
-      <div className="task-card-top"><div><span className={`priority-badge ${task.priority}`}>{priorityLabel(task.priority)}</span><span className="revision-badge">V{task.revision_round ?? 1}</span></div><MoreHorizontal size={16} /></div>
-      <h3>{task.title}</h3>
-      {task.description ? <p>{task.description}</p> : null}
-      <div className="task-meta">
-        {client ? <span><UserRound size={14} />{client.name}</span> : null}
-        {assignee ? <span className="task-assignee"><i>{memberInitials(assignee.display_name)}</i>{assignee.display_name}</span> : null}
-        {task.due_at ? <span className={isOverdue(task.due_at) ? 'overdue' : ''}><CalendarDays size={14} />{formatDate(task.due_at)}</span> : null}
-        {linkCount ? <span><Link2 size={14} />{linkCount}</span> : null}
-      </div>
+      <span className="task-card-surface">
+        <span className="task-card-top">
+          <span className="task-card-date">{task.due_at ? formatCardDate(task.due_at) : 'SEM PRAZO'}</span>
+          <MoreVertical size={15} />
+        </span>
+        <span className="task-card-title-block">
+          <strong>{task.title}</strong>
+          <small>{subtitle}</small>
+        </span>
+        <span className="task-progress-copy"><strong>Progresso</strong><small>{progressPercent}%</small></span>
+        <span className="task-progress-track"><i /></span>
+      </span>
+      <span className="task-card-footer">
+        <span className="task-card-people">
+          {assignee ? <span className="task-card-avatar" title={assignee.display_name}>{memberInitials(assignee.display_name)}</span> : <span className="task-card-avatar empty" title="Sem responsável">?</span>}
+          <span className="task-card-avatar revision" title={`Versão ${task.revision_round ?? 1}`}>V{task.revision_round ?? 1}</span>
+          {linkCount ? <span className="task-card-link-count" title={`${linkCount} links`}><Link2 size={10} />{linkCount}</span> : null}
+          <span className="task-card-add-person" aria-hidden="true"><Plus size={11} /></span>
+        </span>
+        <span className={`task-card-countdown ${countdown.state}`}>{countdown.label}</span>
+      </span>
     </button>
   );
 }
@@ -1175,6 +1201,27 @@ function memberInitials(name: string) {
 
 function formatDate(date: string) {
   return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short' }).format(new Date(date));
+}
+
+function formatCardDate(date: string) {
+  const parsed = new Date(date);
+  const day = String(parsed.getDate()).padStart(2, '0');
+  const month = new Intl.DateTimeFormat('pt-BR', { month: 'short' }).format(parsed).replace('.', '').toUpperCase();
+  return `${day} ${month} ${parsed.getFullYear()}`;
+}
+
+function taskCountdown(date: string | null): { label: string; state: 'neutral' | 'soon' | 'overdue' } {
+  if (!date) return { label: 'Sem prazo', state: 'neutral' };
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = new Date(date);
+  due.setHours(0, 0, 0, 0);
+  const distance = Math.round((due.getTime() - today.getTime()) / 86_400_000);
+
+  if (distance < 0) return { label: `${Math.abs(distance)}d atrasado`, state: 'overdue' };
+  if (distance === 0) return { label: 'Entrega hoje', state: 'soon' };
+  if (distance === 1) return { label: '1 dia restante', state: 'soon' };
+  return { label: `${distance} dias restantes`, state: 'neutral' };
 }
 
 function formatActivityDate(date: string) {
