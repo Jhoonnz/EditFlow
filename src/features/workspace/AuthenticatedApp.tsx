@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { ArrowLeft, ArrowRight, Building2, LoaderCircle, LogOut, RefreshCw, Sparkles, UserPlus } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { Dashboard } from '../board/Dashboard';
-import type { WorkspaceInvitation, WorkspaceRole, WorkspaceSummary } from './types';
+import { WelcomeScreen } from './WelcomeScreen';
+import type { WelcomeStartupAction, WorkspaceInvitation, WorkspaceRole, WorkspaceSummary } from './types';
 
 type Props = { user: User };
 
@@ -13,6 +14,11 @@ export function AuthenticatedApp({ user }: Props) {
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [desktopPreferences, setDesktopPreferences] = useState<EditFlowDesktopPreferences | null>(null);
+  const [welcomeAccess, setWelcomeAccess] = useState<{ isFirstAccess: boolean; previousOpenedAt: string | null } | null>(null);
+  const [welcomeDismissed, setWelcomeDismissed] = useState(false);
+  const [startupAction, setStartupAction] = useState<WelcomeStartupAction | null>(null);
+  const accessRecorded = useRef(false);
 
   const loadWorkspaces = useCallback(async () => {
     if (!supabase) return;
@@ -89,6 +95,40 @@ export function AuthenticatedApp({ user }: Props) {
   }, [loadWorkspaces]);
 
   useEffect(() => {
+    void window.editflow.getDesktopPreferences().then(setDesktopPreferences);
+  }, []);
+
+  useEffect(() => {
+    if (loading || !workspaces.length || accessRecorded.current) return;
+    accessRecorded.current = true;
+
+    const recordAccess = async () => {
+      const localKey = `editflow:last-open:${user.id}`;
+      const localPrevious = window.localStorage.getItem(localKey);
+      let access = {
+        isFirstAccess: localPrevious === null,
+        previousOpenedAt: localPrevious,
+      };
+
+      if (supabase) {
+        const { data, error: accessError } = await supabase.rpc('record_app_open');
+        const row = Array.isArray(data) ? data[0] : null;
+        if (!accessError && row) {
+          access = {
+            isFirstAccess: Boolean(row.is_first_access),
+            previousOpenedAt: row.previous_opened_at as string | null,
+          };
+        }
+      }
+
+      window.localStorage.setItem(localKey, new Date().toISOString());
+      setWelcomeAccess(access);
+    };
+
+    void recordAccess();
+  }, [loading, user.id, workspaces.length]);
+
+  useEffect(() => {
     if (!supabase || !user.email) return;
     const realtimeClient = supabase;
     const channel = realtimeClient
@@ -128,6 +168,34 @@ export function AuthenticatedApp({ user }: Props) {
 
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[0];
 
+  const disableWelcome = async () => {
+    if (!desktopPreferences) return;
+    const updated = await window.editflow.updateDesktopPreferences({ ...desktopPreferences, showWelcome: false });
+    setDesktopPreferences(updated);
+  };
+
+  if (!desktopPreferences || !welcomeAccess) {
+    return <main className="app-loading"><LoaderCircle className="spinner" size={25} /></main>;
+  }
+
+  if (desktopPreferences.showWelcome && !welcomeDismissed) {
+    return (
+      <WelcomeScreen
+        user={user}
+        workspaces={workspaces}
+        invitationCount={invitations.length}
+        isFirstAccess={welcomeAccess.isFirstAccess}
+        previousOpenedAt={welcomeAccess.previousOpenedAt}
+        onDisableWelcome={disableWelcome}
+        onContinue={(action) => {
+          if (action.kind !== 'board' && action.workspaceId) setActiveWorkspaceId(action.workspaceId);
+          setStartupAction(action);
+          setWelcomeDismissed(true);
+        }}
+      />
+    );
+  }
+
   return <>
     <Dashboard
       user={user}
@@ -135,6 +203,8 @@ export function AuthenticatedApp({ user }: Props) {
       workspaces={workspaces}
       onWorkspaceChange={setActiveWorkspaceId}
       onWorkspacesChanged={loadWorkspaces}
+      startupAction={startupAction}
+      onStartupActionHandled={() => setStartupAction(null)}
     />
     {invitations.length ? <InvitationPrompt invitations={invitations} onChanged={loadWorkspaces} /> : null}
   </>;

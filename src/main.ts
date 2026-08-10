@@ -1,6 +1,6 @@
-import { app, BrowserWindow, ipcMain, Notification as ElectronNotification, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification as ElectronNotification, shell, Tray } from 'electron';
 import { autoUpdater, type NsisUpdater } from 'electron-updater';
-import { access, appendFile, mkdir, unlink, writeFile } from 'node:fs/promises';
+import { access, appendFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 type UpdateStatus =
@@ -17,7 +17,24 @@ let updateDownloadStarted = false;
 let installingUpdate = false;
 let updateSplashWindow: BrowserWindow | null = null;
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
+let isQuitting = false;
+let trayExplanationShown = false;
 const activeNativeNotifications = new Set<ElectronNotification>();
+
+type DesktopPreferences = {
+  launchAtLogin: boolean;
+  closeToTray: boolean;
+  showWelcome: boolean;
+};
+
+const defaultDesktopPreferences: DesktopPreferences = {
+  launchAtLogin: false,
+  closeToTray: true,
+  showWelcome: true,
+};
+
+let desktopPreferences = defaultDesktopPreferences;
 
 type NativeNotificationPayload = {
   notificationId: string;
@@ -39,6 +56,70 @@ const sendUpdateStatus = (status: UpdateStatus) => {
 
 const updateLogPath = () => path.join(app.getPath('userData'), 'logs', 'updater.log');
 const updateMarkerPath = () => path.join(app.getPath('userData'), 'pending-update.json');
+const desktopPreferencesPath = () => path.join(app.getPath('userData'), 'desktop-preferences.json');
+
+const readDesktopPreferences = async () => {
+  try {
+    const saved = JSON.parse(await readFile(desktopPreferencesPath(), 'utf8')) as Partial<DesktopPreferences>;
+    return sanitizeDesktopPreferences(saved);
+  } catch {
+    return defaultDesktopPreferences;
+  }
+};
+
+const saveDesktopPreferences = async () => {
+  await writeFile(desktopPreferencesPath(), JSON.stringify(desktopPreferences, null, 2), 'utf8');
+};
+
+const applyLaunchAtLogin = () => {
+  if (!app.isPackaged) return;
+  app.setLoginItemSettings({
+    openAtLogin: desktopPreferences.launchAtLogin,
+    path: app.getPath('exe'),
+  });
+};
+
+const showMainWindow = () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+};
+
+const createTrayImage = () => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><rect width="32" height="32" rx="9" fill="#211b70"/><path d="M16 6.5l1.7 5.8 5.8 1.7-5.8 1.7L16 21.5l-1.7-5.8L8.5 14l5.8-1.7L16 6.5z" fill="white"/><circle cx="23.5" cy="23.5" r="2.5" fill="#a99fff"/></svg>`;
+  return nativeImage.createFromDataURL(`data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`).resize({ width: 16, height: 16 });
+};
+
+const createTray = () => {
+  if (tray || !desktopPreferences.closeToTray) return;
+  tray = new Tray(createTrayImage());
+  tray.setToolTip('EditFlow');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Abrir EditFlow', click: showMainWindow },
+    { type: 'separator' },
+    {
+      label: 'Sair',
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    },
+  ]));
+  tray.on('double-click', showMainWindow);
+};
+
+const syncTrayWithPreferences = () => {
+  if (desktopPreferences.closeToTray) {
+    createTray();
+  } else if (tray) {
+    tray.destroy();
+    tray = null;
+  }
+};
 
 const hasUpdateMarker = async () => {
   try {
@@ -155,6 +236,23 @@ const createWindow = () => {
 
   mainWindow = createdWindow;
   createdWindow.once('ready-to-show', () => createdWindow.show());
+  createdWindow.on('close', (event) => {
+    if (isQuitting || installingUpdate || !desktopPreferences.closeToTray) return;
+    event.preventDefault();
+    createdWindow.hide();
+    createTray();
+    if (!trayExplanationShown && ElectronNotification.isSupported()) {
+      trayExplanationShown = true;
+      const explanation = new ElectronNotification({
+        title: 'EditFlow continua ativo',
+        body: 'O app foi minimizado para os ícones ocultos e continuará recebendo notificações.',
+      });
+      activeNativeNotifications.add(explanation);
+      explanation.on('click', showMainWindow);
+      explanation.on('close', () => activeNativeNotifications.delete(explanation));
+      explanation.show();
+    }
+  });
   createdWindow.on('closed', () => {
     if (mainWindow === createdWindow) mainWindow = null;
   });
@@ -192,6 +290,14 @@ ipcMain.handle('system:open-external', (_event, url: unknown) => {
 });
 
 ipcMain.handle('system:get-version', () => app.getVersion());
+ipcMain.handle('desktop:get-preferences', () => desktopPreferences);
+ipcMain.handle('desktop:update-preferences', async (_event, value: unknown) => {
+  desktopPreferences = sanitizeDesktopPreferences(value);
+  await saveDesktopPreferences();
+  applyLaunchAtLogin();
+  syncTrayWithPreferences();
+  return desktopPreferences;
+});
 ipcMain.handle('notifications:show', (event, value: unknown) => {
   if (!ElectronNotification.isSupported() || !isNativeNotificationPayload(value)) return false;
 
@@ -325,7 +431,16 @@ const configureAutoUpdater = () => {
   }, 4000);
 };
 
-app.whenReady().then(async () => {
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', showMainWindow);
+  app.on('before-quit', () => { isQuitting = true; });
+
+  void app.whenReady().then(async () => {
+  desktopPreferences = await readDesktopPreferences();
+  applyLaunchAtLogin();
   const isFinishingUpdate = app.isPackaged && await hasUpdateMarker();
 
   if (isFinishingUpdate) {
@@ -333,19 +448,22 @@ app.whenReady().then(async () => {
     void writeUpdateLog('Atualização aplicada', `versão atual ${app.getVersion()}`);
     setTimeout(() => {
       createWindow();
+      syncTrayWithPreferences();
       if (!splash.isDestroyed()) splash.close();
       void clearUpdateMarker();
       configureAutoUpdater();
     }, 1800);
   } else {
     createWindow();
+    syncTrayWithPreferences();
     configureAutoUpdater();
   }
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    showMainWindow();
   });
-});
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
@@ -359,4 +477,13 @@ function isNativeNotificationPayload(value: unknown): value is NativeNotificatio
     && typeof payload.body === 'string'
     && (typeof payload.taskId === 'string' || payload.taskId === null)
     && typeof payload.workspaceId === 'string';
+}
+
+function sanitizeDesktopPreferences(value: unknown): DesktopPreferences {
+  const saved = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return {
+    launchAtLogin: typeof saved.launchAtLogin === 'boolean' ? saved.launchAtLogin : defaultDesktopPreferences.launchAtLogin,
+    closeToTray: typeof saved.closeToTray === 'boolean' ? saved.closeToTray : defaultDesktopPreferences.closeToTray,
+    showWelcome: typeof saved.showWelcome === 'boolean' ? saved.showWelcome : defaultDesktopPreferences.showWelcome,
+  };
 }

@@ -7,6 +7,12 @@ contextBridge.exposeInMainWorld('editflow', {
   checkForUpdates: () => ipcRenderer.invoke('updater:check'),
   installUpdate: () => ipcRenderer.invoke('updater:install'),
   showUpdateLog: () => ipcRenderer.invoke('updater:show-log'),
+  getDesktopPreferences: () => ipcRenderer.invoke('desktop:get-preferences'),
+  updateDesktopPreferences: (preferences: {
+    launchAtLogin: boolean;
+    closeToTray: boolean;
+    showWelcome: boolean;
+  }) => ipcRenderer.invoke('desktop:update-preferences', preferences),
   showNativeNotification: (notification: {
     notificationId: string;
     title: string;

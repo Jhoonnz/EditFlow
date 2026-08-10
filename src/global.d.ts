@@ -33,6 +33,12 @@ type EditFlowNativeNotificationTarget = Pick<
   'notificationId' | 'taskId' | 'workspaceId'
 >;
 
+type EditFlowDesktopPreferences = {
+  launchAtLogin: boolean;
+  closeToTray: boolean;
+  showWelcome: boolean;
+};
+
 interface Window {
   editflow: {
     platform: string;
@@ -41,6 +47,8 @@ interface Window {
     checkForUpdates: () => Promise<boolean>;
     installUpdate: () => Promise<void>;
     showUpdateLog: () => Promise<boolean>;
+    getDesktopPreferences: () => Promise<EditFlowDesktopPreferences>;
+    updateDesktopPreferences: (preferences: EditFlowDesktopPreferences) => Promise<EditFlowDesktopPreferences>;
     showNativeNotification: (notification: EditFlowNativeNotification) => Promise<boolean>;
     onNativeNotificationClicked: (callback: (target: EditFlowNativeNotificationTarget) => void) => () => void;
     onUpdateStatus: (callback: (status: EditFlowUpdateStatus) => void) => () => void;

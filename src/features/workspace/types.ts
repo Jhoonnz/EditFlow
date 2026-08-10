@@ -24,6 +24,11 @@ export type WorkspaceInvitation = {
   created_at: string;
 };
 
+export type WelcomeStartupAction =
+  | { kind: 'board' }
+  | { kind: 'notifications'; workspaceId?: string }
+  | { kind: 'task'; taskId: string; workspaceId: string };
+
 export type Board = {
   id: string;
   name: string;

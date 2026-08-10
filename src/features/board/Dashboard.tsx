@@ -43,6 +43,7 @@ import type {
   TaskPriority,
   WorkspaceSummary,
   WorkspaceMember,
+  WelcomeStartupAction,
 } from '../workspace/types';
 
 type Props = {
@@ -51,6 +52,8 @@ type Props = {
   workspaces: WorkspaceSummary[];
   onWorkspaceChange: (id: string) => void;
   onWorkspacesChanged: () => Promise<void>;
+  startupAction: WelcomeStartupAction | null;
+  onStartupActionHandled: () => void;
 };
 
 type SyncStatus = 'connecting' | 'connected' | 'offline' | 'error';
@@ -68,7 +71,7 @@ const emptyDraft: TaskDraft = {
 
 const columnColors = ['#8b8fa3', '#a78bfa', '#60a5fa', '#f59e0b', '#f97316', '#fb7185', '#34d399', '#22c55e'];
 
-export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWorkspacesChanged }: Props) {
+export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWorkspacesChanged, startupAction, onStartupActionHandled }: Props) {
   const canManagePlanning = workspace.role === 'owner' || workspace.role === 'admin';
   const [board, setBoard] = useState<Board | null>(null);
   const [columns, setColumns] = useState<BoardColumn[]>([]);
@@ -419,6 +422,22 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
       window.sessionStorage.removeItem('editflow:pending-notification');
     }
   }, [tasks, workspace.id]);
+
+  useEffect(() => {
+    if (!startupAction || loading) return;
+    if (startupAction.kind === 'notifications') {
+      setShowNotifications(true);
+      onStartupActionHandled();
+      return;
+    }
+    if (startupAction.kind === 'task') {
+      const targetTask = tasks.find((task) => task.id === startupAction.taskId);
+      if (!targetTask) return;
+      setView('board');
+      setEditor({ mode: 'edit', task: targetTask });
+    }
+    onStartupActionHandled();
+  }, [loading, onStartupActionHandled, startupAction, tasks]);
 
   if (loading) {
     return <main className="app-loading"><LoaderCircle className="spinner" size={26} /></main>;

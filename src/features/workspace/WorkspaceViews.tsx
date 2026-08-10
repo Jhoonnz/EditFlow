@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { Building2, LoaderCircle, Mail, Pencil, Plus, Save, Trash2, UserPlus, Users } from 'lucide-react';
+import { Building2, Eye, LoaderCircle, Mail, MonitorCog, Pencil, Plus, Power, Save, Trash2, UserPlus, Users, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import type { Client, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
 
@@ -115,10 +115,13 @@ export function SettingsView({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState('...');
+  const [desktopPreferences, setDesktopPreferences] = useState<EditFlowDesktopPreferences | null>(null);
+  const [desktopSaving, setDesktopSaving] = useState<keyof EditFlowDesktopPreferences | null>(null);
   const canManage = workspace.role === 'owner' || workspace.role === 'admin';
 
   useEffect(() => setWorkspaceName(workspace.name), [workspace.id, workspace.name]);
   useEffect(() => { void window.editflow.getVersion().then(setAppVersion); }, []);
+  useEffect(() => { void window.editflow.getDesktopPreferences().then(setDesktopPreferences); }, []);
 
   const loadMembers = useCallback(async () => {
     if (!supabase) return;
@@ -248,6 +251,22 @@ export function SettingsView({
     }
   };
 
+  const updateDesktopPreference = async (key: keyof EditFlowDesktopPreferences, enabled: boolean) => {
+    if (!desktopPreferences) return;
+    const nextPreferences = { ...desktopPreferences, [key]: enabled };
+    setDesktopPreferences(nextPreferences);
+    setDesktopSaving(key);
+    setError(null);
+    try {
+      setDesktopPreferences(await window.editflow.updateDesktopPreferences(nextPreferences));
+    } catch {
+      setDesktopPreferences(desktopPreferences);
+      setError('Não foi possível salvar essa preferência do Windows.');
+    } finally {
+      setDesktopSaving(null);
+    }
+  };
+
   return (
     <div className="settings-view">
       {error ? <div className="panel-error">{error}</div> : null}
@@ -293,6 +312,38 @@ export function SettingsView({
         </div>
       </section>
 
+      <section className="content-card desktop-settings-card">
+        <div className="content-card-heading"><span className="content-icon"><MonitorCog size={18} /></span><div><h2>Aplicativo no Windows</h2><p>Escolha como o EditFlow se comporta ao iniciar e fechar.</p></div></div>
+        {desktopPreferences ? (
+          <div className="desktop-preference-list">
+            <DesktopPreference
+              icon={Power}
+              title="Iniciar com o Windows"
+              description="Abre o EditFlow automaticamente quando você entrar no computador."
+              checked={desktopPreferences.launchAtLogin}
+              saving={desktopSaving === 'launchAtLogin'}
+              onChange={(checked) => void updateDesktopPreference('launchAtLogin', checked)}
+            />
+            <DesktopPreference
+              icon={X}
+              title="Manter ativo ao clicar no X"
+              description="Esconde a janela nos ícones ocultos para continuar recebendo notificações."
+              checked={desktopPreferences.closeToTray}
+              saving={desktopSaving === 'closeToTray'}
+              onChange={(checked) => void updateDesktopPreference('closeToTray', checked)}
+            />
+            <DesktopPreference
+              icon={Eye}
+              title="Mostrar resumo ao abrir"
+              description="Exibe a tela de boas-vindas com tarefas, mensagens e prazos."
+              checked={desktopPreferences.showWelcome}
+              saving={desktopSaving === 'showWelcome'}
+              onChange={(checked) => void updateDesktopPreference('showWelcome', checked)}
+            />
+          </div>
+        ) : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
+      </section>
+
       <section className="content-card update-settings-row">
         <div><h2>Atualizações</h2><p>Versão instalada: {appVersion}. O EditFlow também verifica automaticamente ao abrir.</p></div>
         <button className="secondary-button" onClick={() => void checkForUpdates()}>Verificar atualizações</button>
@@ -305,6 +356,31 @@ export function SettingsView({
         </section>
       ) : null}
     </div>
+  );
+}
+
+function DesktopPreference({
+  icon: Icon,
+  title,
+  description,
+  checked,
+  saving,
+  onChange,
+}: {
+  icon: typeof Power;
+  title: string;
+  description: string;
+  checked: boolean;
+  saving: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="desktop-preference-row">
+      <span className="desktop-preference-icon"><Icon size={17} /></span>
+      <span className="desktop-preference-copy"><strong>{title}</strong><small>{description}</small></span>
+      <input type="checkbox" checked={checked} disabled={saving} onChange={(event) => onChange(event.target.checked)} />
+      <span className="settings-switch" aria-hidden="true"><i /></span>
+    </label>
   );
 }
 
