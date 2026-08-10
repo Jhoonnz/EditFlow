@@ -5,6 +5,7 @@ import {
   ChevronDown,
   CirclePlus,
   Columns3,
+  Download,
   ExternalLink,
   GripVertical,
   History,
@@ -91,6 +92,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [editor, setEditor] = useState<{ mode: 'new' | 'edit'; task: Task | null; columnId?: string } | null>(null);
   const [view, setView] = useState<DashboardView>('board');
   const [columnMenuId, setColumnMenuId] = useState<string | null>(null);
+  const [expandedTaskByColumn, setExpandedTaskByColumn] = useState<Record<string, string>>({});
   const [editingColumn, setEditingColumn] = useState<BoardColumn | null>(null);
   const [creatingColumn, setCreatingColumn] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -576,7 +578,9 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                       progressPercent={Math.round(((columns.findIndex((item) => item.id === column.id) + 1) / Math.max(columns.length, 1)) * 100)}
                       client={clients.find((client) => client.id === task.client_id)}
                       assignee={members.find((member) => member.user_id === task.assignee_id)}
-                      linkCount={links.filter((link) => link.task_id === task.id).length}
+                      taskLinks={links.filter((link) => link.task_id === task.id)}
+                      compact={columnTasks.length > 1 && expandedTaskByColumn[column.id] !== task.id}
+                      onExpand={() => setExpandedTaskByColumn((current) => ({ ...current, [column.id]: task.id }))}
                       onOpen={() => setEditor({ mode: 'edit', task })}
                       onDragStart={(event) => {
                         event.dataTransfer.effectAllowed = 'move';
@@ -737,7 +741,9 @@ function TaskCard({
   progressPercent,
   client,
   assignee,
-  linkCount,
+  taskLinks,
+  compact,
+  onExpand,
   onOpen,
   onDragStart,
   onDragEnd,
@@ -752,57 +758,115 @@ function TaskCard({
   progressPercent: number;
   client?: Client;
   assignee?: WorkspaceMember;
-  linkCount: number;
+  taskLinks: TaskLink[];
+  compact: boolean;
+  onExpand: () => void;
   onOpen: () => void;
-  onDragStart: (event: DragEvent<HTMLButtonElement>) => void;
+  onDragStart: (event: DragEvent<HTMLDivElement>) => void;
   onDragEnd: () => void;
-  onDragOver: (event: DragEvent<HTMLButtonElement>) => void;
-  onDrop: (event: DragEvent<HTMLButtonElement>) => void;
+  onDragOver: (event: DragEvent<HTMLDivElement>) => void;
+  onDrop: (event: DragEvent<HTMLDivElement>) => void;
   dragging: boolean;
   dropEdge: 'before' | 'after' | null;
   dragEnabled: boolean;
 }) {
+  const [showProfile, setShowProfile] = useState(false);
+  const [showLinks, setShowLinks] = useState(false);
   const countdown = taskCountdown(task.due_at);
   const subtitle = client?.name || task.description || priorityLabel(task.priority);
+  const downloadLinks = taskLinks.filter((link) => link.category === 'download');
   const cardStyle = {
     '--task-accent': column.color ?? '#01c3a8',
     '--task-progress': `${Math.max(0, Math.min(100, progressPercent))}%`,
   } as CSSProperties;
 
+  const handleMainClick = () => {
+    setShowProfile(false);
+    setShowLinks(false);
+    if (compact) onExpand();
+    else onOpen();
+  };
+
+  const handleDownloadClick = async () => {
+    setShowProfile(false);
+    if (downloadLinks.length === 1) {
+      await window.editflow.openExternal(downloadLinks[0].url);
+      return;
+    }
+    setShowLinks((show) => !show);
+  };
+
   return (
-    <button
-      className={`task-card ${dragging ? 'dragging' : ''} ${dropEdge ? `task-drop-${dropEdge}` : ''}`}
+    <div
+      className={`task-card ${compact ? 'compact' : 'expanded'} ${dragging ? 'dragging' : ''} ${dropEdge ? `task-drop-${dropEdge}` : ''}`}
       style={cardStyle}
       draggable={dragEnabled}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      onClick={onOpen}
-      aria-label={`Abrir tarefa ${task.title}`}
     >
-      <span className="task-card-surface">
-        <span className="task-card-top">
-          <span className="task-card-date">{task.due_at ? formatCardDate(task.due_at) : 'SEM PRAZO'}</span>
-          <MoreVertical size={15} />
+      <button
+        type="button"
+        className="task-card-open"
+        onClick={handleMainClick}
+        aria-label={compact ? `Expandir tarefa ${task.title}` : `Abrir detalhes de ${task.title}`}
+      >
+        <span className="task-card-surface">
+          <span className="task-card-top">
+            <span className="task-card-date">{task.due_at ? formatCardDate(task.due_at) : 'SEM PRAZO'}</span>
+            <MoreVertical size={15} />
+          </span>
+          <span className="task-card-title-block">
+            <strong>{task.title}</strong>
+            <small>{subtitle}</small>
+          </span>
+          <span className="task-progress-copy"><strong>Progresso</strong><small>{progressPercent}%</small></span>
+          <span className="task-progress-track"><i /></span>
         </span>
-        <span className="task-card-title-block">
-          <strong>{task.title}</strong>
-          <small>{subtitle}</small>
-        </span>
-        <span className="task-progress-copy"><strong>Progresso</strong><small>{progressPercent}%</small></span>
-        <span className="task-progress-track"><i /></span>
-      </span>
+      </button>
       <span className="task-card-footer">
         <span className="task-card-people">
-          {assignee ? <span className="task-card-avatar" title={assignee.display_name}>{memberInitials(assignee.display_name)}</span> : <span className="task-card-avatar empty" title="Sem responsável">?</span>}
+          {assignee ? (
+            <button
+              type="button"
+              className="task-card-avatar"
+              title={`Ver perfil de ${assignee.display_name}`}
+              aria-label={`Ver perfil de ${assignee.display_name}`}
+              onClick={() => { setShowLinks(false); setShowProfile((show) => !show); }}
+            >{memberInitials(assignee.display_name)}</button>
+          ) : <span className="task-card-avatar empty" title="Sem responsável">?</span>}
           <span className="task-card-avatar revision" title={`Versão ${task.revision_round ?? 1}`}>V{task.revision_round ?? 1}</span>
-          {linkCount ? <span className="task-card-link-count" title={`${linkCount} links`}><Link2 size={10} />{linkCount}</span> : null}
+          {downloadLinks.length ? (
+            <button
+              type="button"
+              className="task-card-download"
+              title={downloadLinks.length === 1 ? `Abrir ${downloadLinks[0].label}` : `Ver ${downloadLinks.length} links de download`}
+              aria-label={downloadLinks.length === 1 ? `Abrir ${downloadLinks[0].label}` : `Ver links de download`}
+              onClick={() => void handleDownloadClick()}
+            ><Download size={11} />{downloadLinks.length > 1 ? downloadLinks.length : null}</button>
+          ) : null}
           <span className="task-card-add-person" aria-hidden="true"><Plus size={11} /></span>
         </span>
         <span className={`task-card-countdown ${countdown.state}`}>{countdown.label}</span>
       </span>
-    </button>
+      {showProfile && assignee ? (
+        <aside className="task-profile-popover" aria-label={`Perfil de ${assignee.display_name}`}>
+          <span>{memberInitials(assignee.display_name)}</span>
+          <div><strong>{assignee.display_name}</strong><small>{roleLabel(assignee.role)} · perfil completo em breve</small></div>
+        </aside>
+      ) : null}
+      {showLinks && downloadLinks.length > 1 ? (
+        <aside className="task-download-popover" aria-label="Links de download">
+          <strong>ARQUIVOS PARA DOWNLOAD</strong>
+          {downloadLinks.map((link) => (
+            <button type="button" key={link.id} onClick={() => { setShowLinks(false); void window.editflow.openExternal(link.url); }}>
+              <Download size={12} /><span>{link.label}</span><ExternalLink size={11} />
+            </button>
+          ))}
+        </aside>
+      ) : null}
+    </div>
   );
 }
 
