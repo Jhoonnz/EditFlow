@@ -199,6 +199,13 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           scheduleReload();
           if (payload.eventType !== 'INSERT') return;
           const notification = payload.new as AppNotification;
+          void window.editflow.showNativeNotification({
+            notificationId: notification.id,
+            title: nativeNotificationTitle(notification.type),
+            body: notification.message,
+            taskId: notification.task_id,
+            workspaceId: notification.workspace_id,
+          });
           if (notification.workspace_id !== workspace.id) return;
           setLiveNotification(notification);
           if (notificationTimer.current) clearTimeout(notificationTimer.current);
@@ -375,6 +382,43 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     setInboxNotifications((current) => current.map((item) => ({ ...item, read_at: item.read_at ?? readAt })));
     await supabase.from('notifications').update({ read_at: readAt }).eq('workspace_id', workspace.id).eq('user_id', user.id).is('read_at', null);
   };
+
+  useEffect(() => window.editflow.onNativeNotificationClicked((target) => {
+    if (target.workspaceId !== workspace.id) {
+      window.sessionStorage.setItem('editflow:pending-notification', JSON.stringify(target));
+      onWorkspaceChange(target.workspaceId);
+      return;
+    }
+
+    const notification = inboxNotifications.find((item) => item.id === target.notificationId);
+    if (notification) {
+      void openInboxNotification(notification);
+      return;
+    }
+
+    const notificationTask = tasks.find((task) => task.id === target.taskId);
+    if (notificationTask) {
+      setView('board');
+      setEditor({ mode: 'edit', task: notificationTask });
+    }
+  }), [inboxNotifications, onWorkspaceChange, tasks, workspace.id]);
+
+  useEffect(() => {
+    const storedTarget = window.sessionStorage.getItem('editflow:pending-notification');
+    if (!storedTarget) return;
+
+    try {
+      const target = JSON.parse(storedTarget) as EditFlowNativeNotificationTarget;
+      if (target.workspaceId !== workspace.id) return;
+      const notificationTask = tasks.find((task) => task.id === target.taskId);
+      if (!notificationTask) return;
+      window.sessionStorage.removeItem('editflow:pending-notification');
+      setView('board');
+      setEditor({ mode: 'edit', task: notificationTask });
+    } catch {
+      window.sessionStorage.removeItem('editflow:pending-notification');
+    }
+  }, [tasks, workspace.id]);
 
   if (loading) {
     return <main className="app-loading"><LoaderCircle className="spinner" size={26} /></main>;
@@ -1136,4 +1180,13 @@ function syncLabel(status: SyncStatus) {
   if (status === 'offline') return 'Sem conexão';
   if (status === 'error') return 'Falha na sincronização';
   return 'Conectando...';
+}
+
+function nativeNotificationTitle(type: AppNotification['type']) {
+  if (type === 'assignment') return 'Nova tarefa atribuída';
+  if (type === 'comment') return 'Novo comentário';
+  if (type === 'change_request') return 'Novo ajuste solicitado';
+  if (type === 'task_moved') return 'Tarefa movimentada';
+  if (type === 'invite_accepted') return 'Convite aceito';
+  return 'Tarefa atualizada';
 }

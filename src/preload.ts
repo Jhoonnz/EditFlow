@@ -7,6 +7,26 @@ contextBridge.exposeInMainWorld('editflow', {
   checkForUpdates: () => ipcRenderer.invoke('updater:check'),
   installUpdate: () => ipcRenderer.invoke('updater:install'),
   showUpdateLog: () => ipcRenderer.invoke('updater:show-log'),
+  showNativeNotification: (notification: {
+    notificationId: string;
+    title: string;
+    body: string;
+    taskId: string | null;
+    workspaceId: string;
+  }) => ipcRenderer.invoke('notifications:show', notification),
+  onNativeNotificationClicked: (callback: (target: {
+    notificationId: string;
+    taskId: string | null;
+    workspaceId: string;
+  }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, target: {
+      notificationId: string;
+      taskId: string | null;
+      workspaceId: string;
+    }) => callback(target);
+    ipcRenderer.on('notifications:clicked', listener);
+    return () => ipcRenderer.removeListener('notifications:clicked', listener);
+  },
   onUpdateStatus: (callback: (status: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, status: unknown) => callback(status);
     ipcRenderer.on('updater:status', listener);

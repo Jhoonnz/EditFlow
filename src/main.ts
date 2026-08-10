@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification as ElectronNotification, shell } from 'electron';
 import { autoUpdater, type NsisUpdater } from 'electron-updater';
 import { access, appendFile, mkdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -16,6 +16,20 @@ let manualUpdateCheck = false;
 let updateDownloadStarted = false;
 let installingUpdate = false;
 let updateSplashWindow: BrowserWindow | null = null;
+let mainWindow: BrowserWindow | null = null;
+const activeNativeNotifications = new Set<ElectronNotification>();
+
+type NativeNotificationPayload = {
+  notificationId: string;
+  title: string;
+  body: string;
+  taskId: string | null;
+  workspaceId: string;
+};
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.editflow.desktop');
+}
 
 const sendUpdateStatus = (status: UpdateStatus) => {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -122,7 +136,7 @@ const writeUpdateLog = async (event: string, details = '') => {
 };
 
 const createWindow = () => {
-  const mainWindow = new BrowserWindow({
+  const createdWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 980,
@@ -139,20 +153,26 @@ const createWindow = () => {
     },
   });
 
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow = createdWindow;
+  createdWindow.once('ready-to-show', () => createdWindow.show());
+  createdWindow.on('closed', () => {
+    if (mainWindow === createdWindow) mainWindow = null;
+  });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  createdWindow.webContents.setWindowOpenHandler(({ url }) => {
     void openSafeExternal(url);
     return { action: 'deny' };
   });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    void mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+    void createdWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   } else {
-    void mainWindow.loadFile(
+    void createdWindow.loadFile(
       path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
     );
   }
+
+  return createdWindow;
 };
 
 const openSafeExternal = async (rawUrl: string) => {
@@ -172,6 +192,33 @@ ipcMain.handle('system:open-external', (_event, url: unknown) => {
 });
 
 ipcMain.handle('system:get-version', () => app.getVersion());
+ipcMain.handle('notifications:show', (event, value: unknown) => {
+  if (!ElectronNotification.isSupported() || !isNativeNotificationPayload(value)) return false;
+
+  const targetWindow = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+  const notification = new ElectronNotification({
+    title: value.title.slice(0, 120),
+    body: value.body.slice(0, 500),
+  });
+  activeNativeNotifications.add(notification);
+
+  notification.on('click', () => {
+    if (targetWindow && !targetWindow.isDestroyed()) {
+      if (targetWindow.isMinimized()) targetWindow.restore();
+      targetWindow.show();
+      targetWindow.focus();
+      targetWindow.webContents.send('notifications:clicked', {
+        notificationId: value.notificationId,
+        taskId: value.taskId,
+        workspaceId: value.workspaceId,
+      });
+    }
+  });
+  notification.on('close', () => activeNativeNotifications.delete(notification));
+
+  notification.show();
+  return true;
+});
 ipcMain.handle('updater:show-log', async () => {
   const logPath = updateLogPath();
   await mkdir(path.dirname(logPath), { recursive: true });
@@ -303,3 +350,13 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
+function isNativeNotificationPayload(value: unknown): value is NativeNotificationPayload {
+  if (!value || typeof value !== 'object') return false;
+  const payload = value as Record<string, unknown>;
+  return typeof payload.notificationId === 'string'
+    && typeof payload.title === 'string'
+    && typeof payload.body === 'string'
+    && (typeof payload.taskId === 'string' || payload.taskId === null)
+    && typeof payload.workspaceId === 'string';
+}

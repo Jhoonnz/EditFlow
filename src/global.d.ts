@@ -20,6 +20,19 @@ type EditFlowUpdateStatus =
   | { state: 'up-to-date'; version: string }
   | { state: 'error'; message: string };
 
+type EditFlowNativeNotification = {
+  notificationId: string;
+  title: string;
+  body: string;
+  taskId: string | null;
+  workspaceId: string;
+};
+
+type EditFlowNativeNotificationTarget = Pick<
+  EditFlowNativeNotification,
+  'notificationId' | 'taskId' | 'workspaceId'
+>;
+
 interface Window {
   editflow: {
     platform: string;
@@ -28,6 +41,8 @@ interface Window {
     checkForUpdates: () => Promise<boolean>;
     installUpdate: () => Promise<void>;
     showUpdateLog: () => Promise<boolean>;
+    showNativeNotification: (notification: EditFlowNativeNotification) => Promise<boolean>;
+    onNativeNotificationClicked: (callback: (target: EditFlowNativeNotificationTarget) => void) => () => void;
     onUpdateStatus: (callback: (status: EditFlowUpdateStatus) => void) => () => void;
   };
 }
