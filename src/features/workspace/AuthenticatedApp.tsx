@@ -105,8 +105,13 @@ export function AuthenticatedApp({ user }: Props) {
     const recordAccess = async () => {
       const localKey = `editflow:last-open:${user.id}`;
       const localPrevious = window.localStorage.getItem(localKey);
+      const openedAt = new Date().toISOString();
+      window.localStorage.setItem(localKey, openedAt);
+
       let access = {
-        isFirstAccess: localPrevious === null,
+        // A temporary server/cache failure must never turn a returning user
+        // into a first-time user. The server can positively confirm it below.
+        isFirstAccess: false,
         previousOpenedAt: localPrevious,
       };
 
@@ -114,14 +119,14 @@ export function AuthenticatedApp({ user }: Props) {
         const { data, error: accessError } = await supabase.rpc('record_app_open');
         const row = Array.isArray(data) ? data[0] : null;
         if (!accessError && row) {
+          const serverPrevious = row.previous_opened_at as string | null;
           access = {
-            isFirstAccess: Boolean(row.is_first_access),
-            previousOpenedAt: row.previous_opened_at as string | null,
+            isFirstAccess: Boolean(row.is_first_access) && localPrevious === null,
+            previousOpenedAt: serverPrevious ?? localPrevious,
           };
         }
       }
 
-      window.localStorage.setItem(localKey, new Date().toISOString());
       setWelcomeAccess(access);
     };
 
