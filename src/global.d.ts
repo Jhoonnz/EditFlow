@@ -40,11 +40,20 @@ type EditFlowDesktopPreferences = {
   theme: 'light' | 'dark' | 'system';
 };
 
+type EditFlowUsdBrlRate = {
+  rate: number;
+  fetchedAt: string;
+  sourceUpdatedAt: string;
+  source: 'AwesomeAPI';
+  stale: boolean;
+};
+
 interface Window {
   editflow: {
     platform: string;
     openExternal: (url: string) => Promise<boolean>;
     getVersion: () => Promise<string>;
+    getUsdBrlRate: () => Promise<EditFlowUsdBrlRate>;
     checkForUpdates: () => Promise<boolean>;
     installUpdate: () => Promise<void>;
     showUpdateLog: () => Promise<boolean>;

@@ -44,6 +44,7 @@ export type BoardColumn = {
   name: string;
   position: number;
   color: string | null;
+  is_completion: boolean;
 };
 
 export type Client = {
@@ -68,9 +69,56 @@ export type Task = {
   priority: TaskPriority;
   position: number;
   due_at: string | null;
+  completed_at: string | null;
   created_by: string;
   created_at: string;
   updated_at: string;
+};
+
+export type BillingPricingModel = 'per_video' | 'bundle';
+
+export type ClientBillingSetting = {
+  client_id: string;
+  workspace_id: string;
+  currency: 'USD';
+  pricing_model: BillingPricingModel;
+  amount_usd: number;
+  bundle_size: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type EarningStatus = 'pending' | 'received';
+
+export type Earning = {
+  id: string;
+  workspace_id: string;
+  client_id: string | null;
+  source_type: BillingPricingModel | 'manual';
+  description: string;
+  item_count: number;
+  amount_usd: number;
+  status: EarningStatus;
+  earned_at: string;
+  received_at: string | null;
+  exchange_rate_brl: number | null;
+  amount_brl: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type EarningEvent = {
+  id: string;
+  workspace_id: string;
+  client_id: string;
+  task_id: string | null;
+  task_title: string;
+  completed_at: string;
+  pricing_model: BillingPricingModel;
+  amount_usd: number;
+  bundle_size: number;
+  earning_id: string | null;
+  created_at: string;
 };
 
 export type TaskLinkCategory = 'download' | 'briefing' | 'reference' | 'review' | 'delivery';

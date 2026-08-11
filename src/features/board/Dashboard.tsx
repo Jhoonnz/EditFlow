@@ -27,11 +27,13 @@ import {
   Sparkles,
   Trash2,
   Users,
+  WalletCards,
   Wifi,
   WifiOff,
   X,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { FinanceView } from '../finance/FinanceView';
 import { ClientsView, SettingsView } from '../workspace/WorkspaceViews';
 import type {
   AppNotification,
@@ -63,7 +65,7 @@ type Props = {
 };
 
 type SyncStatus = 'connecting' | 'connected' | 'offline' | 'error';
-type DashboardView = 'board' | 'clients' | 'settings';
+type DashboardView = 'board' | 'clients' | 'finance' | 'settings';
 
 const emptyDraft: TaskDraft = {
   title: '',
@@ -211,6 +213,10 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   useEffect(() => {
     if (!canManagePlanning && view === 'clients') setView('board');
   }, [canManagePlanning, view]);
+
+  useEffect(() => {
+    if (workspace.role !== 'owner' && view === 'finance') setView('board');
+  }, [view, workspace.role]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -489,6 +495,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         <nav className="sidebar-nav" aria-label="Navegação principal">
           <button className={`nav-item ${view === 'board' ? 'active' : ''}`} onClick={() => setView('board')}><LayoutDashboard size={18} /><span>Produção</span></button>
           {canManagePlanning ? <button className={`nav-item ${view === 'clients' ? 'active' : ''}`} onClick={() => setView('clients')}><Users size={18} /><span>Clientes</span><small>{clients.length}</small></button> : null}
+          {workspace.role === 'owner' ? <button className={`nav-item ${view === 'finance' ? 'active' : ''}`} onClick={() => setView('finance')}><WalletCards size={18} /><span>Ganhos</span></button> : null}
         </nav>
 
         <div className="sidebar-spacer" />
@@ -508,7 +515,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         <header className="dashboard-header">
           <div>
             <p>ESPAÇO DE TRABALHO</p>
-            <h1>{view === 'board' ? board?.name ?? 'Produção' : view === 'clients' ? 'Clientes' : 'Configurações'}</h1>
+            <h1>{view === 'board' ? board?.name ?? 'Produção' : view === 'clients' ? 'Clientes' : view === 'finance' ? 'Ganhos' : 'Configurações'}</h1>
           </div>
           <div className="header-actions">
             <div className="notification-wrap">
@@ -641,6 +648,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           })}
         </div> : null}
         {view === 'clients' && canManagePlanning ? <ClientsView workspace={workspace} clients={clients} tasks={tasks} onChanged={() => loadBoard(true)} /> : null}
+        {view === 'finance' && workspace.role === 'owner' ? <FinanceView workspace={workspace} clients={clients} /> : null}
         {view === 'settings' ? <SettingsView user={user} workspace={workspace} onWorkspacesChanged={onWorkspacesChanged} onMemberProfile={setProfileMemberId} /> : null}
       </section>
 

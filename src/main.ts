@@ -46,6 +46,14 @@ type NativeNotificationPayload = {
   workspaceId: string;
 };
 
+type UsdBrlRate = {
+  rate: number;
+  fetchedAt: string;
+  sourceUpdatedAt: string;
+  source: 'AwesomeAPI';
+  stale: boolean;
+};
+
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.editflow.desktop');
 }
@@ -59,6 +67,54 @@ const sendUpdateStatus = (status: UpdateStatus) => {
 const updateLogPath = () => path.join(app.getPath('userData'), 'logs', 'updater.log');
 const updateMarkerPath = () => path.join(app.getPath('userData'), 'pending-update.json');
 const desktopPreferencesPath = () => path.join(app.getPath('userData'), 'desktop-preferences.json');
+const currencyRateCachePath = () => path.join(app.getPath('userData'), 'usd-brl-rate.json');
+
+const readCachedUsdBrlRate = async (): Promise<UsdBrlRate | null> => {
+  try {
+    const cached = JSON.parse(await readFile(currencyRateCachePath(), 'utf8')) as Partial<UsdBrlRate>;
+    if (typeof cached.rate !== 'number' || !Number.isFinite(cached.rate) || cached.rate <= 0 || typeof cached.fetchedAt !== 'string') return null;
+    return {
+      rate: cached.rate,
+      fetchedAt: cached.fetchedAt,
+      sourceUpdatedAt: typeof cached.sourceUpdatedAt === 'string' ? cached.sourceUpdatedAt : cached.fetchedAt,
+      source: 'AwesomeAPI',
+      stale: false,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const getUsdBrlRate = async (): Promise<UsdBrlRate> => {
+  const cached = await readCachedUsdBrlRate();
+  if (cached && Date.now() - new Date(cached.fetchedAt).getTime() < 15 * 60 * 1000) return cached;
+
+  try {
+    const response = await fetch('https://economia.awesomeapi.com.br/json/last/USD-BRL', {
+      headers: { 'User-Agent': `EditFlow/${app.getVersion()}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) throw new Error(`Currency service returned ${response.status}`);
+    const payload = await response.json() as { USDBRL?: { bid?: string; timestamp?: string; create_date?: string } };
+    const rate = Number(payload.USDBRL?.bid);
+    if (!Number.isFinite(rate) || rate <= 0) throw new Error('Currency service returned an invalid rate');
+    const timestamp = Number(payload.USDBRL?.timestamp);
+    const freshRate: UsdBrlRate = {
+      rate,
+      fetchedAt: new Date().toISOString(),
+      sourceUpdatedAt: Number.isFinite(timestamp) && timestamp > 0
+        ? new Date(timestamp * 1000).toISOString()
+        : (payload.USDBRL?.create_date ?? new Date().toISOString()),
+      source: 'AwesomeAPI',
+      stale: false,
+    };
+    await writeFile(currencyRateCachePath(), JSON.stringify(freshRate, null, 2), 'utf8');
+    return freshRate;
+  } catch (error) {
+    if (cached) return { ...cached, stale: true };
+    throw error;
+  }
+};
 
 const readDesktopPreferences = async () => {
   try {
@@ -292,6 +348,7 @@ ipcMain.handle('system:open-external', (_event, url: unknown) => {
 });
 
 ipcMain.handle('system:get-version', () => app.getVersion());
+ipcMain.handle('system:get-usd-brl-rate', () => getUsdBrlRate());
 ipcMain.handle('desktop:get-preferences', () => desktopPreferences);
 ipcMain.handle('desktop:update-preferences', async (_event, value: unknown) => {
   desktopPreferences = sanitizeDesktopPreferences(value);
