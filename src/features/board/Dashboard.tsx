@@ -92,7 +92,6 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [editor, setEditor] = useState<{ mode: 'new' | 'edit'; task: Task | null; columnId?: string } | null>(null);
   const [view, setView] = useState<DashboardView>('board');
   const [columnMenuId, setColumnMenuId] = useState<string | null>(null);
-  const [expandedTaskByColumn, setExpandedTaskByColumn] = useState<Record<string, string>>({});
   const [editingColumn, setEditingColumn] = useState<BoardColumn | null>(null);
   const [creatingColumn, setCreatingColumn] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -579,8 +578,6 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                       client={clients.find((client) => client.id === task.client_id)}
                       assignee={members.find((member) => member.user_id === task.assignee_id)}
                       taskLinks={links.filter((link) => link.task_id === task.id)}
-                      compact={columnTasks.length > 1 && expandedTaskByColumn[column.id] !== task.id}
-                      onExpand={() => setExpandedTaskByColumn((current) => ({ ...current, [column.id]: task.id }))}
                       onOpen={() => setEditor({ mode: 'edit', task })}
                       onDragStart={(event) => {
                         event.dataTransfer.effectAllowed = 'move';
@@ -742,8 +739,6 @@ function TaskCard({
   client,
   assignee,
   taskLinks,
-  compact,
-  onExpand,
   onOpen,
   onDragStart,
   onDragEnd,
@@ -759,8 +754,6 @@ function TaskCard({
   client?: Client;
   assignee?: WorkspaceMember;
   taskLinks: TaskLink[];
-  compact: boolean;
-  onExpand: () => void;
   onOpen: () => void;
   onDragStart: (event: DragEvent<HTMLDivElement>) => void;
   onDragEnd: () => void;
@@ -783,8 +776,7 @@ function TaskCard({
   const handleMainClick = () => {
     setShowProfile(false);
     setShowLinks(false);
-    if (compact) onExpand();
-    else onOpen();
+    onOpen();
   };
 
   const handleDownloadClick = async () => {
@@ -798,7 +790,7 @@ function TaskCard({
 
   return (
     <div
-      className={`task-card ${compact ? 'compact' : 'expanded'} ${dragging ? 'dragging' : ''} ${dropEdge ? `task-drop-${dropEdge}` : ''}`}
+      className={`task-card compact ${dragging ? 'dragging' : ''} ${dropEdge ? `task-drop-${dropEdge}` : ''}`}
       style={cardStyle}
       draggable={dragEnabled}
       onDragStart={onDragStart}
@@ -810,7 +802,7 @@ function TaskCard({
         type="button"
         className="task-card-open"
         onClick={handleMainClick}
-        aria-label={compact ? `Expandir tarefa ${task.title}` : `Abrir detalhes de ${task.title}`}
+        aria-label={`Abrir detalhes de ${task.title}`}
       >
         <span className="task-card-surface">
           <span className="task-card-top">

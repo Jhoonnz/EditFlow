@@ -522,11 +522,11 @@ button { color: inherit; }
 .task-progress-copy strong,.task-progress-copy small { color: #40414c; font-size: 9px; font-weight: 790; }
 .task-progress-track { position: relative; z-index: 1; display: block; width: 100%; height: 4px; overflow: hidden; border-radius: 99px; background: #dedfe4; }
 .task-progress-track i { display: block; width: var(--task-progress); height: 100%; border-radius: inherit; background: var(--task-accent); box-shadow: 0 0 11px color-mix(in srgb,var(--task-accent) 46%,transparent); transition: width .35s ease; }
-.task-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 50px; padding: 8px 12px 8px 16px; border-top: 1px solid #dfe0e6; border-radius: 0 0 21px 21px; background: #f1f1f5; }
+.task-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 50px; padding: 8px 12px 8px 16px; border-top: 1px solid #dfe0e6; border-radius: 0 0 21px 21px; background: #f1f1f5; cursor: default; }
 .task-card-people { display: flex; align-items: center; min-width: 0; }
 .task-card-avatar,.task-card-add-person { display: grid; place-items: center; flex: 0 0 23px; width: 23px; height: 23px; margin-left: -5px; padding: 0; border: 2px solid #f1f1f5; border-radius: 50%; background: #34333d; color: #fff; font-size: 7px; font-weight: 850; }
 .task-card-avatar:is(button) { cursor: pointer; transition: transform .15s ease,box-shadow .15s ease; }
-.task-card-avatar:is(button):hover { z-index: 2; transform: translateY(-2px) scale(1.08); box-shadow: 0 4px 10px rgba(25,25,36,.22); }
+.task-card-avatar:is(button):hover { z-index: 2; transform: translateY(-4px) scale(1.07); box-shadow: 0 6px 12px rgba(25,25,36,.24); }
 .task-card-avatar:first-child { margin-left: 0; background: linear-gradient(145deg,color-mix(in srgb,var(--task-accent) 76%,#423e67),#292832); }
 .task-card-avatar.empty { background: #aaaab3; }
 .task-card-avatar.revision { background: #5e5a68; font-size: 6px; }
