@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { Building2, Eye, Laptop, LoaderCircle, Mail, MonitorCog, Moon, Palette, Pencil, Plus, Power, Save, Sun, Trash2, UserPlus, Users, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import type { Client, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
+import type { Client, MemberAvailability, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
 
 export function ClientsView({
   workspace,
@@ -101,10 +101,12 @@ export function SettingsView({
   user,
   workspace,
   onWorkspacesChanged,
+  onMemberProfile,
 }: {
   user: User;
   workspace: WorkspaceSummary;
   onWorkspacesChanged: () => Promise<void>;
+  onMemberProfile: (memberId: string) => void;
 }) {
   const [workspaceName, setWorkspaceName] = useState(workspace.name);
   const [displayName, setDisplayName] = useState(String(user.user_metadata.full_name ?? ''));
@@ -135,15 +137,35 @@ export function SettingsView({
     if (membershipError) return setError(membershipError.message);
     const memberships = membershipResult.data ?? [];
     const ids = memberships.map((item) => item.user_id as string);
-    const profiles = ids.length
-      ? await supabase.from('profiles').select('id, display_name').in('id', ids)
+    const profileResult = ids.length
+      ? await supabase.rpc('get_workspace_member_profiles', { target_workspace: workspace.id })
       : { data: [], error: null };
-    if (profiles.error) return setError(profiles.error.message);
-    const names = new Map((profiles.data ?? []).map((profile) => [profile.id as string, profile.display_name as string]));
+    let profileRows = (profileResult.data ?? []) as Array<{
+      user_id: string;
+      display_name: string;
+      email: string | null;
+      avatar_url: string | null;
+      availability: MemberAvailability;
+    }>;
+    if (profileResult.error && ids.length) {
+      const fallbackProfiles = await supabase.from('profiles').select('id, display_name, avatar_url').in('id', ids);
+      if (fallbackProfiles.error) return setError(fallbackProfiles.error.message);
+      profileRows = (fallbackProfiles.data ?? []).map((profile) => ({
+        user_id: profile.id as string,
+        display_name: profile.display_name as string,
+        email: null,
+        avatar_url: profile.avatar_url as string | null,
+        availability: 'available',
+      }));
+    }
+    const profilesById = new Map(profileRows.map((profile) => [profile.user_id, profile]));
     setMembers(memberships.map((item) => ({
       user_id: item.user_id as string,
       role: item.role as WorkspaceRole,
-      display_name: names.get(item.user_id as string) || (item.user_id === user.id ? user.email || 'Você' : 'Membro'),
+      display_name: profilesById.get(item.user_id as string)?.display_name || (item.user_id === user.id ? user.email || 'Você' : 'Membro'),
+      email: profilesById.get(item.user_id as string)?.email ?? undefined,
+      avatar_url: profilesById.get(item.user_id as string)?.avatar_url ?? null,
+      availability: profilesById.get(item.user_id as string)?.availability ?? 'available',
     })));
     setPendingInvitations((invitationResult.data ?? []).map((invitation) => ({
       id: invitation.id as string,
@@ -166,6 +188,7 @@ export function SettingsView({
       .channel(`editflow-team-settings:${workspace.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workspace_invitations', filter: `workspace_id=eq.${workspace.id}` }, () => void loadMembers())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workspace_members', filter: `workspace_id=eq.${workspace.id}` }, () => void loadMembers())
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, () => void loadMembers())
       .subscribe();
     return () => { void realtimeClient.removeChannel(channel); };
   }, [loadMembers, workspace.id]);
@@ -306,8 +329,10 @@ export function SettingsView({
         <div className="member-list">
           {members.map((member) => (
             <article className="member-row" key={member.user_id}>
-              <span className="client-avatar">{member.display_name.slice(0, 1).toUpperCase()}</span>
-              <div className="client-copy"><strong>{member.display_name}{member.user_id === user.id ? ' (você)' : ''}</strong><small>{roleLabel(member.role)}</small></div>
+              <button type="button" className="client-avatar member-avatar-button" onClick={() => onMemberProfile(member.user_id)} aria-label={`Abrir perfil de ${member.display_name}`}>
+                {member.avatar_url ? <img src={member.avatar_url} alt="" /> : member.display_name.slice(0, 1).toUpperCase()}
+              </button>
+              <div className="client-copy"><strong>{member.display_name}{member.user_id === user.id ? ' (você)' : ''}</strong><small>{roleLabel(member.role)} · {availabilityLabel(member.availability)}</small></div>
               {canManage && member.role !== 'owner' && member.user_id !== user.id ? <select className="member-role-select" value={member.role} onChange={(event) => void changeMemberRole(member, event.target.value as Exclude<WorkspaceRole, 'owner'>)}><option value="editor">Editor</option><option value="admin">Administrador</option></select> : null}
               {canManage && member.role !== 'owner' && member.user_id !== user.id ? <button className="danger-icon" onClick={() => void removeMember(member)} aria-label="Remover membro"><Trash2 size={15} /></button> : null}
             </article>
@@ -454,6 +479,12 @@ function roleLabel(role: WorkspaceRole) {
   if (role === 'owner') return 'Proprietário';
   if (role === 'admin') return 'Administrador';
   return 'Editor';
+}
+
+function availabilityLabel(availability: MemberAvailability) {
+  if (availability === 'busy') return 'Ocupado';
+  if (availability === 'away') return 'Ausente';
+  return 'Disponível';
 }
 
 function translateMemberError(message: string) {

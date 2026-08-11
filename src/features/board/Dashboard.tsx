@@ -1,8 +1,11 @@
 import { type CSSProperties, DragEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RealtimeChannel, User } from '@supabase/supabase-js';
 import {
+  AlertTriangle,
   Bell,
+  CalendarClock,
   ChevronDown,
+  CheckCircle2,
   CirclePlus,
   Columns3,
   Download,
@@ -13,12 +16,14 @@ import {
   Link2,
   LoaderCircle,
   LogOut,
+  Mail,
   MessageSquare,
   MoreHorizontal,
   MoreVertical,
   Plus,
   Search,
   Settings,
+  ShieldCheck,
   Sparkles,
   Trash2,
   Users,
@@ -43,6 +48,7 @@ import type {
   TaskPriority,
   WorkspaceSummary,
   WorkspaceMember,
+  MemberAvailability,
   WelcomeStartupAction,
 } from '../workspace/types';
 
@@ -96,6 +102,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [creatingColumn, setCreatingColumn] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [liveNotification, setLiveNotification] = useState<AppNotification | null>(null);
+  const [profileMemberId, setProfileMemberId] = useState<string | null>(null);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notificationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -136,19 +143,39 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 
     const nextTasks = (taskResult.data ?? []) as Task[];
     const memberIds = (membershipResult.data ?? []).map((membership) => membership.user_id as string);
-    const profileResult = memberIds.length
-      ? await supabase.from('profiles').select('id, display_name').in('id', memberIds)
+    const memberProfileResult = memberIds.length
+      ? await supabase.rpc('get_workspace_member_profiles', { target_workspace: workspace.id })
       : { data: [], error: null };
-    if (profileResult.error) {
-      setError(profileResult.error.message);
-      setLoading(false);
-      return;
+    let memberProfiles = (memberProfileResult.data ?? []) as Array<{
+      user_id: string;
+      display_name: string;
+      email: string | null;
+      avatar_url: string | null;
+      availability: MemberAvailability;
+    }>;
+    if (memberProfileResult.error && memberIds.length) {
+      const fallbackProfiles = await supabase.from('profiles').select('id, display_name, avatar_url').in('id', memberIds);
+      if (fallbackProfiles.error) {
+        setError(fallbackProfiles.error.message);
+        setLoading(false);
+        return;
+      }
+      memberProfiles = (fallbackProfiles.data ?? []).map((profile) => ({
+        user_id: profile.id as string,
+        display_name: profile.display_name as string,
+        email: null,
+        avatar_url: profile.avatar_url as string | null,
+        availability: 'available',
+      }));
     }
-    const memberNames = new Map((profileResult.data ?? []).map((profile) => [profile.id as string, profile.display_name as string]));
+    const profilesById = new Map(memberProfiles.map((profile) => [profile.user_id, profile]));
     const nextMembers = (membershipResult.data ?? []).map((membership) => ({
       user_id: membership.user_id as string,
       role: membership.role as WorkspaceMember['role'],
-      display_name: memberNames.get(membership.user_id as string) || 'Membro',
+      display_name: profilesById.get(membership.user_id as string)?.display_name || 'Membro',
+      email: profilesById.get(membership.user_id as string)?.email ?? undefined,
+      avatar_url: profilesById.get(membership.user_id as string)?.avatar_url ?? null,
+      availability: profilesById.get(membership.user_id as string)?.availability ?? 'available',
     }));
     let nextLinks: TaskLink[] = [];
     if (nextTasks.length) {
@@ -179,6 +206,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     void loadBoard();
   }, [loadBoard]);
 
+  useEffect(() => setProfileMemberId(null), [workspace.id]);
+
   useEffect(() => {
     if (!canManagePlanning && view === 'clients') setView('board');
   }, [canManagePlanning, view]);
@@ -197,6 +226,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         .on('postgres_changes', { event: '*', schema: 'public', table: 'clients', filter: `workspace_id=eq.${workspace.id}` }, scheduleReload)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'task_links' }, scheduleReload)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'columns' }, scheduleReload)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, scheduleReload)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'workspace_members', filter: `workspace_id=eq.${workspace.id}` }, () => { scheduleReload(); void onWorkspacesChanged(); })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` }, (payload) => {
           scheduleReload();
@@ -579,6 +609,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                       assignee={members.find((member) => member.user_id === task.assignee_id)}
                       taskLinks={links.filter((link) => link.task_id === task.id)}
                       onOpen={() => setEditor({ mode: 'edit', task })}
+                      onOpenProfile={(memberId) => setProfileMemberId(memberId)}
                       onDragStart={(event) => {
                         event.dataTransfer.effectAllowed = 'move';
                         event.dataTransfer.setData('text/editflow-task', task.id);
@@ -610,7 +641,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           })}
         </div> : null}
         {view === 'clients' && canManagePlanning ? <ClientsView workspace={workspace} clients={clients} tasks={tasks} onChanged={() => loadBoard(true)} /> : null}
-        {view === 'settings' ? <SettingsView user={user} workspace={workspace} onWorkspacesChanged={onWorkspacesChanged} /> : null}
+        {view === 'settings' ? <SettingsView user={user} workspace={workspace} onWorkspacesChanged={onWorkspacesChanged} onMemberProfile={setProfileMemberId} /> : null}
       </section>
 
       {editor && board && columns[0] ? (
@@ -629,6 +660,21 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           onClose={() => setEditor(null)}
           onChanged={async () => { await loadBoard(true); setEditor(null); }}
           onLinksChanged={async () => { await loadBoard(true); }}
+        />
+      ) : null}
+      {profileMemberId && members.find((member) => member.user_id === profileMemberId) ? (
+        <MemberProfilePanel
+          member={members.find((member) => member.user_id === profileMemberId)!}
+          currentUserId={user.id}
+          workspace={workspace}
+          tasks={tasks}
+          columns={columns}
+          clients={clients}
+          canManage={canManagePlanning}
+          onClose={() => setProfileMemberId(null)}
+          onOpenTask={(task) => { setProfileMemberId(null); setView('board'); setEditor({ mode: 'edit', task }); }}
+          onChanged={async () => { await loadBoard(true); await onWorkspacesChanged(); }}
+          onRemoved={async () => { setProfileMemberId(null); await loadBoard(true); await onWorkspacesChanged(); }}
         />
       ) : null}
       {editingColumn && canManagePlanning ? (
@@ -740,6 +786,7 @@ function TaskCard({
   assignee,
   taskLinks,
   onOpen,
+  onOpenProfile,
   onDragStart,
   onDragEnd,
   onDragOver,
@@ -755,6 +802,7 @@ function TaskCard({
   assignee?: WorkspaceMember;
   taskLinks: TaskLink[];
   onOpen: () => void;
+  onOpenProfile: (memberId: string) => void;
   onDragStart: (event: DragEvent<HTMLDivElement>) => void;
   onDragEnd: () => void;
   onDragOver: (event: DragEvent<HTMLDivElement>) => void;
@@ -763,7 +811,6 @@ function TaskCard({
   dropEdge: 'before' | 'after' | null;
   dragEnabled: boolean;
 }) {
-  const [showProfile, setShowProfile] = useState(false);
   const [showLinks, setShowLinks] = useState(false);
   const countdown = taskCountdown(task.due_at);
   const subtitle = client?.name || task.description || priorityLabel(task.priority);
@@ -774,13 +821,11 @@ function TaskCard({
   } as CSSProperties;
 
   const handleMainClick = () => {
-    setShowProfile(false);
     setShowLinks(false);
     onOpen();
   };
 
   const handleDownloadClick = async () => {
-    setShowProfile(false);
     if (downloadLinks.length === 1) {
       await window.editflow.openExternal(downloadLinks[0].url);
       return;
@@ -825,8 +870,8 @@ function TaskCard({
               className="task-card-avatar"
               title={`Ver perfil de ${assignee.display_name}`}
               aria-label={`Ver perfil de ${assignee.display_name}`}
-              onClick={() => { setShowLinks(false); setShowProfile((show) => !show); }}
-            >{memberInitials(assignee.display_name)}</button>
+              onClick={() => { setShowLinks(false); onOpenProfile(assignee.user_id); }}
+            >{assignee.avatar_url ? <img src={assignee.avatar_url} alt="" /> : memberInitials(assignee.display_name)}</button>
           ) : <span className="task-card-avatar empty" title="Sem responsável">?</span>}
           <span className="task-card-avatar revision" title={`Versão ${task.revision_round ?? 1}`}>V{task.revision_round ?? 1}</span>
           {downloadLinks.length ? (
@@ -842,12 +887,6 @@ function TaskCard({
         </span>
         <span className={`task-card-countdown ${countdown.state}`}>{countdown.label}</span>
       </span>
-      {showProfile && assignee ? (
-        <aside className="task-profile-popover" aria-label={`Perfil de ${assignee.display_name}`}>
-          <span>{memberInitials(assignee.display_name)}</span>
-          <div><strong>{assignee.display_name}</strong><small>{roleLabel(assignee.role)} · perfil completo em breve</small></div>
-        </aside>
-      ) : null}
       {showLinks && downloadLinks.length > 1 ? (
         <aside className="task-download-popover" aria-label="Links de download">
           <strong>ARQUIVOS PARA DOWNLOAD</strong>
@@ -858,6 +897,163 @@ function TaskCard({
           ))}
         </aside>
       ) : null}
+    </div>
+  );
+}
+
+function MemberProfilePanel({
+  member,
+  currentUserId,
+  workspace,
+  tasks,
+  columns,
+  clients,
+  canManage,
+  onClose,
+  onOpenTask,
+  onChanged,
+  onRemoved,
+}: {
+  member: WorkspaceMember;
+  currentUserId: string;
+  workspace: WorkspaceSummary;
+  tasks: Task[];
+  columns: BoardColumn[];
+  clients: Client[];
+  canManage: boolean;
+  onClose: () => void;
+  onOpenTask: (task: Task) => void;
+  onChanged: () => Promise<void>;
+  onRemoved: () => Promise<void>;
+}) {
+  const [saving, setSaving] = useState<'availability' | 'role' | 'remove' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const isCurrentUser = member.user_id === currentUserId;
+  const completedColumnIds = useMemo(() => new Set(columns
+    .filter((column) => normalizeText(column.name).includes('entregue'))
+    .map((column) => column.id)), [columns]);
+  const assignedTasks = useMemo(() => tasks
+    .filter((task) => task.assignee_id === member.user_id)
+    .sort((first, second) => taskSortValue(first) - taskSortValue(second)), [member.user_id, tasks]);
+  const activeTasks = assignedTasks.filter((task) => !completedColumnIds.has(task.column_id));
+  const overdueTasks = activeTasks.filter((task) => task.due_at && isOverdue(task.due_at));
+  const nextDeadline = activeTasks.find((task) => task.due_at && !isOverdue(task.due_at));
+  const visibleTasks = activeTasks.slice(0, 6);
+
+  const updateAvailability = async (availability: MemberAvailability) => {
+    if (!supabase || !isCurrentUser) return;
+    setSaving('availability');
+    setError(null);
+    const { error: updateError } = await supabase
+      .from('profiles')
+      .update({ availability })
+      .eq('id', currentUserId);
+    setSaving(null);
+    if (updateError) return setError(updateError.message);
+    await onChanged();
+  };
+
+  const updateRole = async (role: Exclude<WorkspaceMember['role'], 'owner'>) => {
+    if (!supabase || !canManage || member.role === 'owner' || isCurrentUser) return;
+    setSaving('role');
+    setError(null);
+    const { error: roleError } = await supabase.rpc('change_workspace_member_role', {
+      target_workspace: workspace.id,
+      target_user: member.user_id,
+      member_role: role,
+    });
+    setSaving(null);
+    if (roleError) return setError(roleError.message);
+    await onChanged();
+  };
+
+  const removeMember = async () => {
+    if (!supabase || !canManage || member.role === 'owner' || isCurrentUser) return;
+    if (!window.confirm(`Remover ${member.display_name} desta equipe? As tarefas atribuídas ficarão sem responsável.`)) return;
+    setSaving('remove');
+    setError(null);
+    const { error: removeError } = await supabase.rpc('remove_workspace_member', {
+      target_workspace: workspace.id,
+      target_user: member.user_id,
+    });
+    setSaving(null);
+    if (removeError) return setError(removeError.message);
+    await onRemoved();
+  };
+
+  return (
+    <div className="member-profile-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <aside className="member-profile-panel" role="dialog" aria-modal="true" aria-label={`Perfil de ${member.display_name}`}>
+        <div className="member-profile-glow" aria-hidden="true" />
+        <header className="member-profile-header">
+          <div><p>PERFIL DO COLABORADOR</p><span>Informações e carga de trabalho</span></div>
+          <button type="button" onClick={onClose} aria-label="Fechar perfil"><X size={19} /></button>
+        </header>
+
+        <section className="member-profile-identity">
+          <div className="member-profile-avatar">
+            {member.avatar_url ? <img src={member.avatar_url} alt="" /> : <span>{memberInitials(member.display_name)}</span>}
+            <i className={member.availability} title={availabilityLabel(member.availability)} />
+          </div>
+          <div className="member-profile-name">
+            <span className={`member-availability-pill ${member.availability}`}>{availabilityLabel(member.availability)}</span>
+            <h2>{member.display_name}</h2>
+            <p><ShieldCheck size={14} />{roleLabel(member.role)}</p>
+            {member.email ? <p><Mail size={14} />{member.email}</p> : null}
+          </div>
+        </section>
+
+        {isCurrentUser ? (
+          <label className="member-availability-control">
+            <span>Sua disponibilidade</span>
+            <select
+              value={member.availability}
+              disabled={saving === 'availability'}
+              onChange={(event) => void updateAvailability(event.target.value as MemberAvailability)}
+            >
+              <option value="available">Disponível</option>
+              <option value="busy">Ocupado</option>
+              <option value="away">Ausente</option>
+            </select>
+          </label>
+        ) : null}
+
+        <section className="member-profile-stats" aria-label="Resumo de tarefas">
+          <article><span><CheckCircle2 size={16} /></span><strong>{activeTasks.length}</strong><small>Em andamento</small></article>
+          <article className={overdueTasks.length ? 'warning' : ''}><span><AlertTriangle size={16} /></span><strong>{overdueTasks.length}</strong><small>Atrasadas</small></article>
+          <article><span><CalendarClock size={16} /></span><strong>{nextDeadline?.due_at ? formatDate(nextDeadline.due_at) : '—'}</strong><small>Próximo prazo</small></article>
+        </section>
+
+        <section className="member-profile-tasks">
+          <div className="member-profile-section-heading"><div><p>TRABALHOS ATUAIS</p><h3>Tarefas atribuídas</h3></div><span>{activeTasks.length}</span></div>
+          <div className="member-profile-task-list">
+            {visibleTasks.map((task) => {
+              const column = columns.find((item) => item.id === task.column_id);
+              const client = clients.find((item) => item.id === task.client_id);
+              const countdown = taskCountdown(task.due_at);
+              return (
+                <button type="button" key={task.id} onClick={() => onOpenTask(task)}>
+                  <i style={{ background: column?.color ?? '#8b8fa3' }} />
+                  <span><strong>{task.title}</strong><small>{client?.name || column?.name || 'Produção'}</small></span>
+                  <em className={countdown.state}>{countdown.label}</em>
+                </button>
+              );
+            })}
+            {!visibleTasks.length ? <div className="member-profile-empty"><CheckCircle2 size={21} /><span>Nenhuma tarefa ativa no momento.</span></div> : null}
+          </div>
+          {activeTasks.length > visibleTasks.length ? <p className="member-profile-more">Mais {activeTasks.length - visibleTasks.length} tarefas no quadro</p> : null}
+        </section>
+
+        {canManage && member.role !== 'owner' && !isCurrentUser ? (
+          <section className="member-profile-admin">
+            <div className="member-profile-section-heading"><div><p>ADMINISTRAÇÃO</p><h3>Acesso à equipe</h3></div><Settings size={17} /></div>
+            <label><span>Cargo</span><select value={member.role} disabled={saving !== null} onChange={(event) => void updateRole(event.target.value as 'admin' | 'editor')}><option value="editor">Editor</option><option value="admin">Administrador</option></select></label>
+            <button type="button" className="danger-button" disabled={saving !== null} onClick={() => void removeMember()}>{saving === 'remove' ? <LoaderCircle className="spinner" size={15} /> : <Trash2 size={15} />}Remover da equipe</button>
+          </section>
+        ) : null}
+
+        {error ? <div className="panel-error member-profile-error">{error}</div> : null}
+      </aside>
     </div>
   );
 }
@@ -1253,6 +1449,20 @@ function roleLabel(role: WorkspaceMember['role']) {
 function memberInitials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   return `${parts[0]?.[0] ?? 'M'}${parts.length > 1 ? parts.at(-1)?.[0] ?? '' : ''}`.toUpperCase();
+}
+
+function availabilityLabel(availability: MemberAvailability) {
+  if (availability === 'busy') return 'Ocupado';
+  if (availability === 'away') return 'Ausente';
+  return 'Disponível';
+}
+
+function normalizeText(value: string) {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
+}
+
+function taskSortValue(task: Task) {
+  return task.due_at ? new Date(task.due_at).getTime() : Number.MAX_SAFE_INTEGER;
 }
 
 function formatDate(date: string) {
