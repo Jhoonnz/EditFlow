@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { Building2, CircleDollarSign, Eye, Laptop, LoaderCircle, Mail, MonitorCog, Moon, PackageCheck, Palette, Pencil, Plus, Power, Save, Sun, Trash2, UserPlus, Users, Video, X } from 'lucide-react';
+import { Building2, CircleDollarSign, Eye, ExternalLink, Laptop, LoaderCircle, Mail, MonitorCog, Moon, PackageCheck, Palette, Pencil, Plus, Power, RefreshCw, Save, Sun, Trash2, UserPlus, Users, Video, X, Youtube } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { estimateNetUsd, paymentFeeRule, paymentFeeRules, paymentMethodLabel } from '../finance/paymentFees';
 import type { BillingPricingModel, Client, ClientBillingSetting, MemberAvailability, PaymentMethod, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
@@ -17,8 +17,10 @@ export function ClientsView({
   onChanged: () => Promise<void>;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [youtubeChannelUrl, setYoutubeChannelUrl] = useState('');
   const [billingSettings, setBillingSettings] = useState<ClientBillingSetting[]>([]);
   const [billingAvailable, setBillingAvailable] = useState(true);
   const [billingLoading, setBillingLoading] = useState(workspace.role === 'owner');
@@ -30,6 +32,7 @@ export function ClientsView({
   const [feeFixedUsd, setFeeFixedUsd] = useState('0');
   const [conversionSpreadPercent, setConversionSpreadPercent] = useState('0');
   const [saving, setSaving] = useState(false);
+  const [syncingClientId, setSyncingClientId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const isOwner = workspace.role === 'owner';
 
@@ -61,11 +64,18 @@ export function ClientsView({
     setEditingId(null);
     setName('');
     setEmail('');
+    setYoutubeChannelUrl('');
     setBillingMode('none');
     setAmountUsd('');
     setBundleSize('5');
     applyPaymentMethod('none');
     setError(null);
+    setFormOpen(false);
+  };
+
+  const openCreateForm = () => {
+    resetForm();
+    setFormOpen(true);
   };
 
   const applyPaymentMethod = (method: PaymentMethod) => {
@@ -76,9 +86,30 @@ export function ClientsView({
     setConversionSpreadPercent(String(rule.conversionSpreadPercent));
   };
 
+  const syncYoutubeChannel = async (clientId: string) => {
+    if (!supabase) return 'O Supabase não está configurado.';
+    const { error: syncError } = await supabase.functions.invoke('sync-youtube-channel', {
+      body: { clientId },
+    });
+    return syncError ? await edgeFunctionErrorMessage(syncError) : null;
+  };
+
+  const refreshYoutubeChannel = async (client: Client) => {
+    if (!client.youtube_channel_url || syncingClientId) return;
+    setSyncingClientId(client.id);
+    setError(null);
+    const syncError = await syncYoutubeChannel(client.id);
+    setSyncingClientId(null);
+    if (syncError) return setError(syncError);
+    await onChanged();
+  };
+
   const saveClient = async (event: FormEvent) => {
     event.preventDefault();
     if (!supabase || !name.trim()) return setError('Digite o nome do cliente.');
+    if (youtubeChannelUrl.trim() && !isSupportedYoutubeChannelUrl(youtubeChannelUrl.trim())) {
+      return setError('Use o link no formato youtube.com/@canal ou youtube.com/channel/UC...');
+    }
     const parsedAmount = Number(amountUsd.replace(',', '.'));
     const parsedBundleSize = billingMode === 'bundle' ? Number(bundleSize) : 1;
     const parsedFeePercent = Number(feePercent.replace(',', '.'));
@@ -90,7 +121,20 @@ export function ClientsView({
 
     setSaving(true);
     setError(null);
-    const payload = { name: name.trim(), email: email.trim() || null };
+    const channelUrl = youtubeChannelUrl.trim() || null;
+    const payload = {
+      name: name.trim(),
+      email: email.trim() || null,
+      youtube_channel_url: channelUrl,
+      youtube_channel_id: null,
+      youtube_channel_title: null,
+      youtube_thumbnail_url: null,
+      youtube_subscriber_count: null,
+      youtube_average_views: null,
+      youtube_uploads_per_month: null,
+      youtube_video_count: null,
+      youtube_last_synced_at: null,
+    };
     let clientId = editingId;
     let createdClientId: string | null = null;
     if (editingId) {
@@ -147,6 +191,17 @@ export function ClientsView({
       }
     }
 
+    if (clientId && channelUrl) {
+      const youtubeError = await syncYoutubeChannel(clientId);
+      if (youtubeError) {
+        setSaving(false);
+        setEditingId(clientId);
+        setFormOpen(true);
+        await onChanged();
+        return setError(`Cliente salvo, mas o canal não foi atualizado: ${youtubeError}`);
+      }
+    }
+
     setSaving(false);
     resetForm();
     await loadBillingSettings();
@@ -155,8 +210,10 @@ export function ClientsView({
 
   const editClient = (client: Client) => {
     setEditingId(client.id);
+    setFormOpen(true);
     setName(client.name);
     setEmail(client.email ?? '');
+    setYoutubeChannelUrl(client.youtube_channel_url ?? '');
     const setting = billingSettings.find((item) => item.client_id === client.id);
     setBillingMode(setting?.pricing_model ?? 'none');
     setAmountUsd(setting ? String(setting.amount_usd) : '');
@@ -181,15 +238,22 @@ export function ClientsView({
   };
 
   return (
-    <div className="content-view">
-      <section className="content-card client-form-card">
+    <div className={`content-view clients-view ${formOpen ? 'form-open' : ''}`}>
+      {!formOpen && error ? <div className="panel-error client-page-error">{error}</div> : null}
+      {formOpen ? <section className="content-card client-form-card">
         <div className="content-card-heading">
           <span className="content-icon"><Plus size={18} /></span>
           <div><h2>{editingId ? 'Editar cliente' : 'Novo cliente'}</h2><p>Organize os trabalhos por cliente.</p></div>
+          <button type="button" className="client-form-close" onClick={resetForm} aria-label="Fechar formulário"><X size={16} /></button>
         </div>
         <form className="settings-form" onSubmit={saveClient}>
           <label><span>Nome</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome do cliente" /></label>
           <label><span>E-mail</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="contato@cliente.com" /></label>
+          <label className="youtube-channel-field">
+            <span>Canal do YouTube</span>
+            <div><Youtube size={16} /><input type="url" value={youtubeChannelUrl} onChange={(event) => setYoutubeChannelUrl(event.target.value)} placeholder="https://youtube.com/@canal" /></div>
+            <small>A foto, inscritos, média de views e frequência serão atualizados pelos 12 vídeos mais recentes.</small>
+          </label>
           {isOwner && billingAvailable ? (
             <fieldset className="client-payment-panel">
               <legend><CircleDollarSign size={15} /><span><strong>Pagamento do cliente</strong><small>O valor será contabilizado quando o trabalho for entregue.</small></span></legend>
@@ -223,18 +287,38 @@ export function ClientsView({
             <button className="primary-button" type="submit" disabled={saving}>{saving ? <LoaderCircle className="spinner" size={16} /> : <Save size={16} />}{editingId ? 'Salvar' : 'Adicionar cliente'}</button>
           </div>
         </form>
-      </section>
+      </section> : null}
 
       <section className="content-card client-list-card">
-        <div className="content-card-heading"><span className="content-icon"><Users size={18} /></span><div><h2>Seus clientes</h2><p>{clients.length} cadastrados</p></div></div>
+        <div className="content-card-heading client-list-heading">
+          <span className="content-icon"><Users size={18} /></span>
+          <div><h2>Seus clientes</h2><p>{clients.length} cadastrados</p></div>
+          <button type="button" className="primary-button client-create-button" onClick={openCreateForm}><Plus size={16} />Novo cliente</button>
+        </div>
         <div className="client-list">
           {clients.map((client) => {
             const taskCount = tasks.filter((task) => task.client_id === client.id).length;
             const setting = billingSettings.find((item) => item.client_id === client.id);
             return (
-              <article className="client-row" key={client.id}>
-                <span className="client-avatar">{client.name.slice(0, 1).toUpperCase()}</span>
-                <div className="client-copy"><strong>{client.name}</strong><small>{client.email || 'Sem e-mail'} · {taskCount} {taskCount === 1 ? 'trabalho' : 'trabalhos'}{isOwner ? ` · ${setting ? billingDescription(setting) : 'sem pagamento automático'}` : ''}</small></div>
+              <article className={`client-row ${client.youtube_channel_id ? 'has-youtube' : ''}`} key={client.id}>
+                <span className="client-avatar">{client.youtube_thumbnail_url ? <img src={client.youtube_thumbnail_url} alt="" /> : client.name.slice(0, 1).toUpperCase()}</span>
+                <div className="client-copy">
+                  <strong>{client.name}</strong>
+                  <small>{client.email || 'Sem e-mail'} · {taskCount} {taskCount === 1 ? 'trabalho' : 'trabalhos'}{isOwner ? ` · ${setting ? billingDescription(setting) : 'sem pagamento automático'}` : ''}</small>
+                  {client.youtube_channel_url ? (
+                    <div className="client-youtube-summary">
+                      <button type="button" onClick={() => void window.editflow.openExternal(client.youtube_channel_url!)} title="Abrir canal no YouTube"><Youtube size={13} /><b>{client.youtube_channel_title || 'Canal conectado'}</b><ExternalLink size={10} /></button>
+                      {client.youtube_last_synced_at ? (
+                        <span>
+                          <i>{client.youtube_subscriber_count === null ? 'Inscritos ocultos' : `${compactNumber(client.youtube_subscriber_count)} inscritos`}</i>
+                          <i>{client.youtube_average_views === null ? 'Sem média' : `${compactNumber(client.youtube_average_views)} views em média`}</i>
+                          <i>{postingFrequency(client.youtube_uploads_per_month)}</i>
+                        </span>
+                      ) : <span><i>Aguardando sincronização</i></span>}
+                    </div>
+                  ) : null}
+                </div>
+                {client.youtube_channel_url ? <button disabled={syncingClientId !== null} onClick={() => void refreshYoutubeChannel(client)} aria-label={`Atualizar canal de ${client.name}`} title="Atualizar dados do canal">{syncingClientId === client.id ? <LoaderCircle className="spinner" size={15} /> : <RefreshCw size={15} />}</button> : null}
                 <button disabled={isOwner && billingLoading} onClick={() => editClient(client)} aria-label={`Editar ${client.name}`}><Pencil size={15} /></button>
                 <button className="danger-icon" onClick={() => void deleteClient(client)} aria-label={`Excluir ${client.name}`}><Trash2 size={15} /></button>
               </article>
@@ -635,6 +719,46 @@ function availabilityLabel(availability: MemberAvailability) {
   if (availability === 'busy') return 'Ocupado';
   if (availability === 'away') return 'Ausente';
   return 'Disponível';
+}
+
+function isSupportedYoutubeChannelUrl(value: string) {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase().replace(/^(www|m|music)[.]/, '');
+    const segments = url.pathname.split('/').filter(Boolean);
+    return url.protocol === 'https:'
+      && hostname === 'youtube.com'
+      && (segments[0]?.startsWith('@') || (['channel', 'user'].includes(segments[0]) && Boolean(segments[1])));
+  } catch {
+    return false;
+  }
+}
+
+async function edgeFunctionErrorMessage(error: unknown) {
+  const functionError = error as { message?: string; context?: Response };
+  try {
+    if (functionError.context) {
+      const payload = await functionError.context.clone().json() as { error?: string };
+      if (payload.error) return payload.error;
+    }
+  } catch {
+    // Fall back to the SDK error below when the response is not JSON.
+  }
+  return functionError.message || 'Não foi possível consultar o canal do YouTube.';
+}
+
+function compactNumber(value: number) {
+  return new Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+}
+
+function postingFrequency(uploadsPerMonth: number | null) {
+  if (!uploadsPerMonth || uploadsPerMonth <= 0) return 'Frequência indisponível';
+  if (uploadsPerMonth >= 3.5) {
+    const weekly = uploadsPerMonth / 4.345;
+    return `${new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 }).format(weekly)} por semana`;
+  }
+  if (uploadsPerMonth < 1) return `a cada ${Math.max(1, Math.round(30.4375 / uploadsPerMonth))} dias`;
+  return `${new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 }).format(uploadsPerMonth)} por mês`;
 }
 
 function normalizeBillingSetting(row: Record<string, unknown>) {

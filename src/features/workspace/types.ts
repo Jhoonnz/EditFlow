@@ -52,6 +52,15 @@ export type Client = {
   workspace_id: string;
   name: string;
   email: string | null;
+  youtube_channel_url: string | null;
+  youtube_channel_id: string | null;
+  youtube_channel_title: string | null;
+  youtube_thumbnail_url: string | null;
+  youtube_subscriber_count: number | null;
+  youtube_average_views: number | null;
+  youtube_uploads_per_month: number | null;
+  youtube_video_count: number | null;
+  youtube_last_synced_at: string | null;
 };
 
 export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
