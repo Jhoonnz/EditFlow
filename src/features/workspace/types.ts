@@ -215,8 +215,38 @@ export type AppNotification = {
   user_id: string;
   task_id: string | null;
   actor_id: string | null;
-  type: 'assignment' | 'comment' | 'change_request' | 'task_updated' | 'task_moved' | 'invite_accepted';
+  type: 'assignment' | 'comment' | 'change_request' | 'task_updated' | 'task_moved' | 'invite_accepted' | 'chat_message';
+  conversation_id: string | null;
   message: string;
   read_at: string | null;
+  created_at: string;
+};
+
+export type ChatConversation = {
+  id: string;
+  workspace_id: string;
+  kind: 'general' | 'direct';
+  title: string | null;
+  direct_key: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ChatConversationMember = {
+  conversation_id: string;
+  workspace_id: string;
+  user_id: string;
+  last_read_at: string | null;
+  joined_at: string;
+};
+
+export type ChatMessage = {
+  id: string;
+  conversation_id: string;
+  workspace_id: string;
+  sender_id: string;
+  body: string;
+  edited_at: string | null;
   created_at: string;
 };

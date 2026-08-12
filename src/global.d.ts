@@ -25,12 +25,13 @@ type EditFlowNativeNotification = {
   title: string;
   body: string;
   taskId: string | null;
+  conversationId: string | null;
   workspaceId: string;
 };
 
 type EditFlowNativeNotificationTarget = Pick<
   EditFlowNativeNotification,
-  'notificationId' | 'taskId' | 'workspaceId'
+  'notificationId' | 'taskId' | 'conversationId' | 'workspaceId'
 >;
 
 type EditFlowDesktopPreferences = {

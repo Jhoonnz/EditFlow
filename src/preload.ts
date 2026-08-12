@@ -39,16 +39,19 @@ contextBridge.exposeInMainWorld('editflow', {
     title: string;
     body: string;
     taskId: string | null;
+    conversationId: string | null;
     workspaceId: string;
   }) => ipcRenderer.invoke('notifications:show', notification),
   onNativeNotificationClicked: (callback: (target: {
     notificationId: string;
     taskId: string | null;
+    conversationId: string | null;
     workspaceId: string;
   }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, target: {
       notificationId: string;
       taskId: string | null;
+      conversationId: string | null;
       workspaceId: string;
     }) => callback(target);
     ipcRenderer.on('notifications:clicked', listener);

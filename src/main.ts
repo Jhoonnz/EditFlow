@@ -45,6 +45,7 @@ type NativeNotificationPayload = {
   title: string;
   body: string;
   taskId: string | null;
+  conversationId: string | null;
   workspaceId: string;
 };
 
@@ -385,6 +386,7 @@ ipcMain.handle('notifications:show', (event, value: unknown) => {
       targetWindow.webContents.send('notifications:clicked', {
         notificationId: value.notificationId,
         taskId: value.taskId,
+        conversationId: value.conversationId,
         workspaceId: value.workspaceId,
       });
     }
@@ -545,6 +547,7 @@ function isNativeNotificationPayload(value: unknown): value is NativeNotificatio
     && typeof payload.title === 'string'
     && typeof payload.body === 'string'
     && (typeof payload.taskId === 'string' || payload.taskId === null)
+    && (typeof payload.conversationId === 'string' || payload.conversationId === null)
     && typeof payload.workspaceId === 'string';
 }
 

@@ -847,8 +847,8 @@ export function SettingsView({
         {activeTab === 'notifications' ? <section className="content-card settings-page-card">
           <div className="content-card-heading"><span className="content-icon"><Bell size={18} /></span><div><h2>Notificações</h2><p>Controle os alertas exibidos pelo Windows.</p></div></div>
           {desktopPreferences ? <div className="desktop-preference-list">
-            <DesktopPreference icon={Bell} title="Notificações do Windows" description="Mostra alertas de novas tarefas, comentários, ajustes e movimentações." checked={desktopPreferences.nativeNotifications} saving={desktopSaving === 'nativeNotifications'} onChange={(checked) => void updateDesktopPreference('nativeNotifications', checked)} />
-            <div className="notification-events-card"><strong>Eventos acompanhados</strong><div><span>Tarefas atribuídas</span><span>Comentários e ajustes</span><span>Mudanças no fluxo</span><span>Convites aceitos</span></div><small>Os avisos continuam disponíveis dentro do EditFlow mesmo quando os alertas do Windows estiverem desativados.</small></div>
+            <DesktopPreference icon={Bell} title="Notificações do Windows" description="Mostra alertas de mensagens, novas tarefas, comentários, ajustes e movimentações." checked={desktopPreferences.nativeNotifications} saving={desktopSaving === 'nativeNotifications'} onChange={(checked) => void updateDesktopPreference('nativeNotifications', checked)} />
+            <div className="notification-events-card"><strong>Eventos acompanhados</strong><div><span>Mensagens da equipe</span><span>Tarefas atribuídas</span><span>Comentários e ajustes</span><span>Mudanças no fluxo</span><span>Convites aceitos</span></div><small>Os avisos continuam disponíveis dentro do EditFlow mesmo quando os alertas do Windows estiverem desativados.</small></div>
           </div> : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
         </section> : null}
 

@@ -33,6 +33,7 @@ import {
   X,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { ChatPanel, type ChatOpenRequest } from '../chat/ChatPanel';
 import { FinanceView } from '../finance/FinanceView';
 import { ClientsView, SettingsView, TeamView } from '../workspace/WorkspaceViews';
 import type {
@@ -92,6 +93,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(navigator.onLine ? 'connecting' : 'offline');
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [dropColumnId, setDropColumnId] = useState<string | null>(null);
   const [taskDropTarget, setTaskDropTarget] = useState<{ taskId: string; edge: 'before' | 'after' } | null>(null);
@@ -105,10 +107,12 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [showNotifications, setShowNotifications] = useState(false);
   const [liveNotification, setLiveNotification] = useState<AppNotification | null>(null);
   const [profileMemberId, setProfileMemberId] = useState<string | null>(null);
+  const [chatRequest, setChatRequest] = useState<ChatOpenRequest | null>(null);
   const [presenceActivity, setPresenceActivity] = useState<Record<string, 'active' | 'away'>>({});
   const [presenceReady, setPresenceReady] = useState(false);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notificationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleChatRequestHandled = useCallback(() => setChatRequest(null), []);
 
   const loadBoard = useCallback(async (quiet = false) => {
     if (!supabase) return;
@@ -125,6 +129,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 
     if (boardError || !boardRow) {
       setError(boardError?.message ?? 'Nenhum quadro foi encontrado neste espaço.');
+      setSyncStatus(navigator.onLine ? 'error' : 'offline');
       setLoading(false);
       return;
     }
@@ -141,6 +146,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     const firstError = columnResult.error ?? taskResult.error ?? clientResult.error ?? membershipResult.error ?? notificationResult.error;
     if (firstError) {
       setError(firstError.message);
+      setSyncStatus(navigator.onLine ? 'error' : 'offline');
       setLoading(false);
       return;
     }
@@ -163,6 +169,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
       const fallbackProfiles = await supabase.from('profiles').select('id, display_name, avatar_url').in('id', memberIds);
       if (fallbackProfiles.error) {
         setError(fallbackProfiles.error.message);
+        setSyncStatus(navigator.onLine ? 'error' : 'offline');
         setLoading(false);
         return;
       }
@@ -204,6 +211,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     setMembers(nextMembers);
     setLinks(nextLinks);
     setInboxNotifications((notificationResult.data ?? []) as AppNotification[]);
+    setLastSyncedAt(new Date().toISOString());
+    if (navigator.onLine) setSyncStatus('connected');
     setLoading(false);
   }, [user.id, workspace.id]);
 
@@ -229,19 +238,71 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   useEffect(() => {
     if (!supabase) return;
     const realtimeClient = supabase;
-    let channel: RealtimeChannel | null = null;
+    let channels: RealtimeChannel[] = [];
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let disposed = false;
+    let generation = 0;
+    let coreSubscribed = false;
+
+    const removeChannels = () => {
+      const previousChannels = channels;
+      channels = [];
+      previousChannels.forEach((channel) => void realtimeClient.removeChannel(channel));
+    };
+
+    const scheduleReconnect = () => {
+      if (disposed || !navigator.onLine || reconnectTimer) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, 2_000);
+    };
 
     const connect = () => {
+      if (disposed) return;
+      generation += 1;
+      const connectionGeneration = generation;
+      coreSubscribed = false;
       setSyncStatus(navigator.onLine ? 'connecting' : 'offline');
-      if (channel) void realtimeClient.removeChannel(channel);
-      channel = realtimeClient
-        .channel(`editflow:${workspace.id}`)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `workspace_id=eq.${workspace.id}` }, scheduleReload)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'clients', filter: `workspace_id=eq.${workspace.id}` }, scheduleReload)
+      removeChannels();
+
+      const channelName = (scope: string) => `editflow-${scope}:${workspace.id}:${user.id}:${generation}`;
+      const subscribe = (channel: RealtimeChannel, core = false) => {
+        channels.push(channel);
+        channel.subscribe((status) => {
+          if (disposed || connectionGeneration !== generation) return;
+          if (core && status === 'SUBSCRIBED') {
+            coreSubscribed = true;
+            setSyncStatus('connected');
+            scheduleReload();
+          } else if (core && (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED')) {
+            coreSubscribed = false;
+            setSyncStatus(navigator.onLine ? 'error' : 'offline');
+            scheduleReconnect();
+          }
+        });
+      };
+
+      subscribe(realtimeClient
+        .channel(channelName('tasks'))
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `workspace_id=eq.${workspace.id}` }, scheduleReload), true);
+
+      subscribe(realtimeClient
+        .channel(channelName('clients'))
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'clients', filter: `workspace_id=eq.${workspace.id}` }, scheduleReload));
+
+      subscribe(realtimeClient
+        .channel(channelName('board-support'))
         .on('postgres_changes', { event: '*', schema: 'public', table: 'task_links' }, scheduleReload)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'columns' }, scheduleReload)
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, scheduleReload)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'workspace_members', filter: `workspace_id=eq.${workspace.id}` }, () => { scheduleReload(); void onWorkspacesChanged(); })
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, scheduleReload));
+
+      subscribe(realtimeClient
+        .channel(channelName('members'))
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'workspace_members', filter: `workspace_id=eq.${workspace.id}` }, () => { scheduleReload(); void onWorkspacesChanged(); }));
+
+      subscribe(realtimeClient
+        .channel(channelName('notifications'))
         .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` }, (payload) => {
           scheduleReload();
           if (payload.eventType !== 'INSERT') return;
@@ -251,29 +312,38 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
             title: nativeNotificationTitle(notification.type),
             body: notification.message,
             taskId: notification.task_id,
+            conversationId: notification.conversation_id,
             workspaceId: notification.workspace_id,
           });
           if (notification.workspace_id !== workspace.id) return;
           setLiveNotification(notification);
           if (notificationTimer.current) clearTimeout(notificationTimer.current);
           notificationTimer.current = setTimeout(() => setLiveNotification(null), 6500);
-        })
-        .subscribe((status) => {
-          if (status === 'SUBSCRIBED') setSyncStatus('connected');
-          else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setSyncStatus('error');
-        });
+        }));
     };
 
     const handleOnline = () => { connect(); scheduleReload(); };
     const handleOffline = () => setSyncStatus('offline');
+    const handleFocus = () => {
+      scheduleReload();
+      if (!coreSubscribed && navigator.onLine) connect();
+    };
     connect();
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    window.addEventListener('focus', handleFocus);
+    const reconciliationTimer = window.setInterval(() => {
+      if (navigator.onLine && document.visibilityState === 'visible') scheduleReload();
+    }, 5_000);
 
     return () => {
+      disposed = true;
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
-      if (channel) void realtimeClient.removeChannel(channel);
+      window.removeEventListener('focus', handleFocus);
+      window.clearInterval(reconciliationTimer);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      removeChannels();
       if (reloadTimer.current) clearTimeout(reloadTimer.current);
       if (notificationTimer.current) clearTimeout(notificationTimer.current);
     };
@@ -474,6 +544,9 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const unreadNotifications = inboxNotifications.filter((notification) => !notification.read_at);
 
   const openInboxNotification = async (notification: AppNotification) => {
+    if (notification.conversation_id) {
+      setChatRequest({ token: Date.now(), conversationId: notification.conversation_id });
+    }
     const notificationTask = tasks.find((task) => task.id === notification.task_id);
     if (notificationTask) {
       setView('board');
@@ -506,6 +579,11 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
       return;
     }
 
+    if (target.conversationId) {
+      setChatRequest({ token: Date.now(), conversationId: target.conversationId });
+      return;
+    }
+
     const notificationTask = tasks.find((task) => task.id === target.taskId);
     if (notificationTask) {
       setView('board');
@@ -520,6 +598,11 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     try {
       const target = JSON.parse(storedTarget) as EditFlowNativeNotificationTarget;
       if (target.workspaceId !== workspace.id) return;
+      if (target.conversationId) {
+        window.sessionStorage.removeItem('editflow:pending-notification');
+        setChatRequest({ token: Date.now(), conversationId: target.conversationId });
+        return;
+      }
       const notificationTask = tasks.find((task) => task.id === target.taskId);
       if (!notificationTask) return;
       window.sessionStorage.removeItem('editflow:pending-notification');
@@ -571,10 +654,10 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         </nav>
 
         <div className="sidebar-spacer" />
-        <div className={`sync-pill ${syncStatus}`}>
+        <button type="button" className={`sync-pill ${syncStatus}`} onClick={scheduleReload} title={syncStatusTitle(syncStatus, lastSyncedAt)}>
           {syncStatus === 'offline' || syncStatus === 'error' ? <WifiOff size={14} /> : <Wifi size={14} />}
           <span>{syncLabel(syncStatus)}</span>
-        </div>
+        </button>
         <button className={`nav-item ${view === 'settings' ? 'active' : ''}`} onClick={() => setView('settings')}><Settings size={18} /><span>Configurações</span></button>
         <button className="account-row" onClick={() => void supabase?.auth.signOut()} title="Sair da conta">
           <span className="user-avatar">{(user.email?.[0] ?? 'U').toUpperCase()}</span>
@@ -753,6 +836,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           clients={clients}
           canManage={canManagePlanning}
           onClose={() => setProfileMemberId(null)}
+          onMessage={(memberId) => { setProfileMemberId(null); setChatRequest({ token: Date.now(), memberId }); }}
           onOpenTask={(task) => { setProfileMemberId(null); setView('board'); setEditor({ mode: 'edit', task }); }}
           onChanged={async () => { await loadBoard(true); await onWorkspacesChanged(); }}
           onRemoved={async () => { setProfileMemberId(null); await loadBoard(true); await onWorkspacesChanged(); }}
@@ -780,10 +864,17 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           onChanged={async () => { await loadBoard(true); setCreatingColumn(false); }}
         />
       ) : null}
+      <ChatPanel
+        workspace={workspace}
+        currentUserId={user.id}
+        members={liveMembers}
+        request={chatRequest}
+        onRequestHandled={handleChatRequestHandled}
+      />
       {liveNotification ? (
         <aside className="live-notification" role="status" aria-live="polite">
           <span className="live-notification-icon"><Bell size={18} /></span>
-          <button className="live-notification-copy" onClick={() => { setShowNotifications(true); setLiveNotification(null); }}>
+          <button className="live-notification-copy" onClick={() => { void openInboxNotification(liveNotification); setLiveNotification(null); }}>
             <strong>Nova notificação</strong>
             <small>{liveNotification.message}</small>
           </button>
@@ -991,6 +1082,7 @@ function MemberProfilePanel({
   clients,
   canManage,
   onClose,
+  onMessage,
   onOpenTask,
   onChanged,
   onRemoved,
@@ -1003,6 +1095,7 @@ function MemberProfilePanel({
   clients: Client[];
   canManage: boolean;
   onClose: () => void;
+  onMessage: (memberId: string) => void;
   onOpenTask: (task: Task) => void;
   onChanged: () => Promise<void>;
   onRemoved: () => Promise<void>;
@@ -1071,6 +1164,8 @@ function MemberProfilePanel({
         {member.bio ? <p className="member-profile-bio">{member.bio}</p> : null}
 
         <div className="member-presence-explanation"><Wifi size={15} /><span><strong>{availabilityLabel(member.availability)}</strong><small>{availabilityDescription(member.availability, activeTasks.length)}</small></span></div>
+
+        {!isCurrentUser ? <button type="button" className="member-profile-message-button" onClick={() => onMessage(member.user_id)}><MessageSquare size={15} />Enviar mensagem</button> : null}
 
         <section className="member-profile-stats" aria-label="Resumo de tarefas">
           <article><span><CheckCircle2 size={16} /></span><strong>{activeTasks.length}</strong><small>Em andamento</small></article>
@@ -1576,7 +1671,16 @@ function syncLabel(status: SyncStatus) {
   return 'Conectando...';
 }
 
+function syncStatusTitle(status: SyncStatus, lastSyncedAt: string | null) {
+  if (status === 'offline') return 'Sem conexão com a internet. Clique para tentar novamente.';
+  if (status === 'error') return 'O canal em tempo real falhou. Clique para sincronizar os dados agora.';
+  if (!lastSyncedAt) return 'Conectando ao Supabase Realtime...';
+  const time = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(lastSyncedAt));
+  return `Última sincronização às ${time}. Clique para atualizar agora.`;
+}
+
 function nativeNotificationTitle(type: AppNotification['type']) {
+  if (type === 'chat_message') return 'Nova mensagem';
   if (type === 'assignment') return 'Nova tarefa atribuída';
   if (type === 'comment') return 'Novo comentário';
   if (type === 'change_request') return 'Novo ajuste solicitado';
