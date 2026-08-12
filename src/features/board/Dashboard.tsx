@@ -105,6 +105,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [showNotifications, setShowNotifications] = useState(false);
   const [liveNotification, setLiveNotification] = useState<AppNotification | null>(null);
   const [profileMemberId, setProfileMemberId] = useState<string | null>(null);
+  const [presenceActivity, setPresenceActivity] = useState<Record<string, 'active' | 'away'>>({});
+  const [presenceReady, setPresenceReady] = useState(false);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notificationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -154,6 +156,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
       email: string | null;
       avatar_url: string | null;
       availability: MemberAvailability;
+      specialty?: string;
+      bio?: string;
     }>;
     if (memberProfileResult.error && memberIds.length) {
       const fallbackProfiles = await supabase.from('profiles').select('id, display_name, avatar_url').in('id', memberIds);
@@ -168,6 +172,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         email: null,
         avatar_url: profile.avatar_url as string | null,
         availability: 'available',
+        specialty: '',
+        bio: '',
       }));
     }
     const profilesById = new Map(memberProfiles.map((profile) => [profile.user_id, profile]));
@@ -178,6 +184,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
       email: profilesById.get(membership.user_id as string)?.email ?? undefined,
       avatar_url: profilesById.get(membership.user_id as string)?.avatar_url ?? null,
       availability: profilesById.get(membership.user_id as string)?.availability ?? 'available',
+      specialty: profilesById.get(membership.user_id as string)?.specialty ?? '',
+      bio: profilesById.get(membership.user_id as string)?.bio ?? '',
     }));
     let nextLinks: TaskLink[] = [];
     if (nextTasks.length) {
@@ -271,15 +279,78 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     };
   }, [onWorkspacesChanged, scheduleReload, user.id, workspace.id]);
 
+  useEffect(() => {
+    if (!supabase) return;
+    const realtimeClient = supabase;
+    let lastActivity: 'active' | 'away' | null = null;
+    let disposed = false;
+    const presenceChannel = realtimeClient.channel(`editflow-presence:${workspace.id}`, {
+      config: { presence: { key: user.id } },
+    });
+
+    const readPresence = () => {
+      const presenceState = presenceChannel.presenceState() as unknown as Record<string, Array<{ activity?: string }>>;
+      const nextPresence: Record<string, 'active' | 'away'> = {};
+      for (const [memberId, sessions] of Object.entries(presenceState)) {
+        if (sessions.some((session) => session.activity === 'active')) nextPresence[memberId] = 'active';
+        else if (sessions.length) nextPresence[memberId] = 'away';
+      }
+      setPresenceActivity(nextPresence);
+      setPresenceReady(true);
+    };
+
+    const publishActivity = async (force = false) => {
+      if (disposed) return;
+      const activity = await window.editflow.getUserActivity();
+      if (!force && activity === lastActivity) return;
+      lastActivity = activity;
+      await presenceChannel.track({ user_id: user.id, activity, changed_at: new Date().toISOString() });
+    };
+
+    presenceChannel
+      .on('presence', { event: 'sync' }, readPresence)
+      .on('presence', { event: 'join' }, readPresence)
+      .on('presence', { event: 'leave' }, readPresence)
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') void publishActivity(true);
+      });
+
+    const activityTimer = window.setInterval(() => void publishActivity(), 15_000);
+    const handleVisibility = () => { if (document.visibilityState === 'visible') void publishActivity(); };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(activityTimer);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      setPresenceActivity({});
+      setPresenceReady(false);
+      void presenceChannel.untrack().finally(() => realtimeClient.removeChannel(presenceChannel));
+    };
+  }, [user.id, workspace.id]);
+
+  const liveMembers = useMemo(() => members.map((member) => {
+    if (!presenceReady) return member;
+    const activity = presenceActivity[member.user_id];
+    const availability: MemberAvailability = !activity
+      ? 'offline'
+      : activity === 'away'
+        ? 'away'
+        : tasks.some((task) => task.assignee_id === member.user_id && !task.completed_at)
+          ? 'busy'
+          : 'available';
+    return { ...member, availability };
+  }), [members, presenceActivity, presenceReady, tasks]);
+
   const filteredTasks = useMemo(() => {
     const term = search.trim().toLocaleLowerCase('pt-BR');
     if (!term) return tasks;
     return tasks.filter((task) => {
       const client = clients.find((item) => item.id === task.client_id);
-      const assignee = members.find((item) => item.user_id === task.assignee_id);
+      const assignee = liveMembers.find((item) => item.user_id === task.assignee_id);
       return `${task.title} ${task.description} ${client?.name ?? ''} ${assignee?.display_name ?? ''}`.toLocaleLowerCase('pt-BR').includes(term);
     });
-  }, [clients, members, search, tasks]);
+  }, [clients, liveMembers, search, tasks]);
 
   const tasksByColumn = useMemo(() => {
     const grouped = new Map<string, Task[]>();
@@ -495,7 +566,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         <nav className="sidebar-nav" aria-label="Navegação principal">
           <button className={`nav-item ${view === 'board' ? 'active' : ''}`} onClick={() => setView('board')}><LayoutDashboard size={18} /><span>Produção</span></button>
           {canManagePlanning ? <button className={`nav-item ${view === 'clients' ? 'active' : ''}`} onClick={() => setView('clients')}><Users size={18} /><span>Clientes</span><small>{clients.length}</small></button> : null}
-          <button className={`nav-item ${view === 'team' ? 'active' : ''}`} onClick={() => setView('team')}><Users size={18} /><span>Equipe</span><small>{members.length}</small></button>
+          <button className={`nav-item ${view === 'team' ? 'active' : ''}`} onClick={() => setView('team')}><Users size={18} /><span>Equipe</span><small>{liveMembers.length}</small></button>
           {workspace.role === 'owner' ? <button className={`nav-item ${view === 'finance' ? 'active' : ''}`} onClick={() => setView('finance')}><WalletCards size={18} /><span>Ganhos</span></button> : null}
         </nav>
 
@@ -614,7 +685,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                       column={column}
                       progressPercent={Math.round(((columns.findIndex((item) => item.id === column.id) + 1) / Math.max(columns.length, 1)) * 100)}
                       client={clients.find((client) => client.id === task.client_id)}
-                      assignee={members.find((member) => member.user_id === task.assignee_id)}
+                      assignee={liveMembers.find((member) => member.user_id === task.assignee_id)}
                       taskLinks={links.filter((link) => link.task_id === task.id)}
                       onOpen={() => setEditor({ mode: 'edit', task })}
                       onOpenProfile={(memberId) => setProfileMemberId(memberId)}
@@ -649,9 +720,9 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           })}
         </div> : null}
         {view === 'clients' && canManagePlanning ? <ClientsView workspace={workspace} clients={clients} tasks={tasks} onChanged={() => loadBoard(true)} /> : null}
-        {view === 'team' ? <TeamView userId={user.id} workspace={workspace} members={members} tasks={tasks} onChanged={() => loadBoard(true)} onMemberProfile={setProfileMemberId} onMemberTasks={(member) => { setSearch(member.display_name); setView('board'); }} /> : null}
-        {view === 'finance' && workspace.role === 'owner' ? <FinanceView workspace={workspace} clients={clients} /> : null}
-        {view === 'settings' ? <SettingsView user={user} workspace={workspace} onWorkspacesChanged={onWorkspacesChanged} /> : null}
+        {view === 'team' ? <TeamView userId={user.id} workspace={workspace} members={liveMembers} tasks={tasks} onChanged={() => loadBoard(true)} onMemberProfile={setProfileMemberId} onMemberTasks={(member) => { setSearch(member.display_name); setView('board'); }} /> : null}
+        {view === 'finance' && workspace.role === 'owner' ? <FinanceView workspace={workspace} clients={clients} tasks={tasks} /> : null}
+        {view === 'settings' ? <SettingsView user={user} workspace={workspace} tasks={tasks} currentAvailability={liveMembers.find((member) => member.user_id === user.id)?.availability ?? 'offline'} onWorkspacesChanged={onWorkspacesChanged} onProfileChanged={() => loadBoard(true)} /> : null}
       </section>
 
       {editor && board && columns[0] ? (
@@ -662,7 +733,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           firstColumn={columns.find((column) => column.id === editor.columnId) ?? columns[0]}
           workspace={workspace}
           clients={clients}
-          members={members}
+          members={liveMembers}
           columns={columns}
           links={editor.task ? links.filter((link) => link.task_id === editor.task?.id) : []}
           userId={user.id}
@@ -672,9 +743,9 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           onLinksChanged={async () => { await loadBoard(true); }}
         />
       ) : null}
-      {profileMemberId && members.find((member) => member.user_id === profileMemberId) ? (
+      {profileMemberId && liveMembers.find((member) => member.user_id === profileMemberId) ? (
         <MemberProfilePanel
-          member={members.find((member) => member.user_id === profileMemberId)!}
+          member={liveMembers.find((member) => member.user_id === profileMemberId)!}
           currentUserId={user.id}
           workspace={workspace}
           tasks={tasks}
@@ -936,32 +1007,16 @@ function MemberProfilePanel({
   onChanged: () => Promise<void>;
   onRemoved: () => Promise<void>;
 }) {
-  const [saving, setSaving] = useState<'availability' | 'role' | 'remove' | null>(null);
+  const [saving, setSaving] = useState<'role' | 'remove' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const isCurrentUser = member.user_id === currentUserId;
-  const completedColumnIds = useMemo(() => new Set(columns
-    .filter((column) => normalizeText(column.name).includes('entregue'))
-    .map((column) => column.id)), [columns]);
   const assignedTasks = useMemo(() => tasks
     .filter((task) => task.assignee_id === member.user_id)
     .sort((first, second) => taskSortValue(first) - taskSortValue(second)), [member.user_id, tasks]);
-  const activeTasks = assignedTasks.filter((task) => !completedColumnIds.has(task.column_id));
+  const activeTasks = assignedTasks.filter((task) => !task.completed_at);
   const overdueTasks = activeTasks.filter((task) => task.due_at && isOverdue(task.due_at));
   const nextDeadline = activeTasks.find((task) => task.due_at && !isOverdue(task.due_at));
   const visibleTasks = activeTasks.slice(0, 6);
-
-  const updateAvailability = async (availability: MemberAvailability) => {
-    if (!supabase || !isCurrentUser) return;
-    setSaving('availability');
-    setError(null);
-    const { error: updateError } = await supabase
-      .from('profiles')
-      .update({ availability })
-      .eq('id', currentUserId);
-    setSaving(null);
-    if (updateError) return setError(updateError.message);
-    await onChanged();
-  };
 
   const updateRole = async (role: Exclude<WorkspaceMember['role'], 'owner'>) => {
     if (!supabase || !canManage || member.role === 'owner' || isCurrentUser) return;
@@ -1008,25 +1063,14 @@ function MemberProfilePanel({
           <div className="member-profile-name">
             <span className={`member-availability-pill ${member.availability}`}>{availabilityLabel(member.availability)}</span>
             <h2>{member.display_name}</h2>
-            <p><ShieldCheck size={14} />{roleLabel(member.role)}</p>
+            <p><ShieldCheck size={14} />{member.specialty || roleLabel(member.role)}</p>
             {member.email ? <p><Mail size={14} />{member.email}</p> : null}
           </div>
         </section>
 
-        {isCurrentUser ? (
-          <label className="member-availability-control">
-            <span>Sua disponibilidade</span>
-            <select
-              value={member.availability}
-              disabled={saving === 'availability'}
-              onChange={(event) => void updateAvailability(event.target.value as MemberAvailability)}
-            >
-              <option value="available">Disponível</option>
-              <option value="busy">Ocupado</option>
-              <option value="away">Ausente</option>
-            </select>
-          </label>
-        ) : null}
+        {member.bio ? <p className="member-profile-bio">{member.bio}</p> : null}
+
+        <div className="member-presence-explanation"><Wifi size={15} /><span><strong>{availabilityLabel(member.availability)}</strong><small>{availabilityDescription(member.availability, activeTasks.length)}</small></span></div>
 
         <section className="member-profile-stats" aria-label="Resumo de tarefas">
           <article><span><CheckCircle2 size={16} /></span><strong>{activeTasks.length}</strong><small>Em andamento</small></article>
@@ -1464,7 +1508,15 @@ function memberInitials(name: string) {
 function availabilityLabel(availability: MemberAvailability) {
   if (availability === 'busy') return 'Ocupado';
   if (availability === 'away') return 'Ausente';
+  if (availability === 'offline') return 'Offline';
   return 'Disponível';
+}
+
+function availabilityDescription(availability: MemberAvailability, activeTasks: number) {
+  if (availability === 'offline') return 'O EditFlow está fechado ou sem conexão.';
+  if (availability === 'away') return 'Computador inativo ou bloqueado há pelo menos 5 minutos.';
+  if (availability === 'busy') return `Online com ${activeTasks} ${activeTasks === 1 ? 'trabalho ativo' : 'trabalhos ativos'}.`;
+  return 'Online e sem trabalhos ativos.';
 }
 
 function normalizeText(value: string) {

@@ -55,6 +55,7 @@ interface Window {
     openExternal: (url: string) => Promise<boolean>;
     getVersion: () => Promise<string>;
     getUsdBrlRate: () => Promise<EditFlowUsdBrlRate>;
+    getUserActivity: () => Promise<'active' | 'away'>;
     checkForUpdates: () => Promise<boolean>;
     installUpdate: () => Promise<void>;
     showUpdateLog: () => Promise<boolean>;

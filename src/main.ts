@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification as ElectronNotification, shell, Tray } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification as ElectronNotification, powerMonitor, shell, Tray } from 'electron';
 import { autoUpdater, type NsisUpdater } from 'electron-updater';
 import { access, appendFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -291,6 +291,7 @@ const createWindow = () => {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      backgroundThrottling: false,
     },
   });
 
@@ -351,6 +352,10 @@ ipcMain.handle('system:open-external', (_event, url: unknown) => {
 
 ipcMain.handle('system:get-version', () => app.getVersion());
 ipcMain.handle('system:get-usd-brl-rate', () => getUsdBrlRate());
+ipcMain.handle('system:get-user-activity', () => {
+  const state = powerMonitor.getSystemIdleState(300);
+  return state === 'idle' || state === 'locked' ? 'away' : 'active';
+});
 ipcMain.handle('desktop:get-preferences', () => desktopPreferences);
 ipcMain.handle('desktop:update-preferences', async (_event, value: unknown) => {
   desktopPreferences = sanitizeDesktopPreferences(value);

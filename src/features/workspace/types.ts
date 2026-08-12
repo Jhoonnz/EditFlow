@@ -1,5 +1,5 @@
 export type WorkspaceRole = 'owner' | 'admin' | 'editor';
-export type MemberAvailability = 'available' | 'busy' | 'away';
+export type MemberAvailability = 'available' | 'busy' | 'away' | 'offline';
 
 export type WorkspaceSummary = {
   id: string;
@@ -14,6 +14,8 @@ export type WorkspaceMember = {
   email?: string;
   avatar_url?: string | null;
   availability: MemberAvailability;
+  specialty?: string;
+  bio?: string;
 };
 
 export type WorkspaceInvitation = {

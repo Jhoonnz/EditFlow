@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { AppWindow, Bell, Building2, CircleDollarSign, Eye, ExternalLink, KeyRound, Laptop, ListVideo, LoaderCircle, LockKeyhole, Mail, MonitorCog, Moon, MoreHorizontal, PackageCheck, Palette, Pencil, Plus, Power, RefreshCw, Save, Search, ShieldCheck, Sun, Trash2, UserPlus, UserRound, Users, Video, X, Youtube } from 'lucide-react';
+import { AlertTriangle, AppWindow, Bell, BriefcaseBusiness, Building2, CalendarClock, Camera, CheckCircle2, CircleDollarSign, Eye, ExternalLink, KeyRound, Laptop, ListVideo, LoaderCircle, LockKeyhole, Mail, MonitorCog, Moon, MoreHorizontal, PackageCheck, Palette, Pencil, Plus, Power, RefreshCw, Save, Search, ShieldCheck, Sun, Trash2, UserPlus, UserRound, Users, Video, X, Youtube } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { estimateNetUsd, paymentFeeRule, paymentFeeRules, paymentMethodLabel } from '../finance/paymentFees';
 import type { BillingPricingModel, Client, ClientBillingSetting, PaymentMethod, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
@@ -393,7 +393,7 @@ export function TeamView({
       || (filter === 'available' && member.availability === 'available')
       || (filter === 'admins' && (member.role === 'owner' || member.role === 'admin'));
     const term = search.trim().toLocaleLowerCase('pt-BR');
-    return matchesFilter && (!term || `${member.display_name} ${member.email ?? ''} ${teamRoleLabel(member.role)}`.toLocaleLowerCase('pt-BR').includes(term));
+    return matchesFilter && (!term || `${member.display_name} ${member.email ?? ''} ${member.specialty ?? ''} ${teamRoleLabel(member.role)}`.toLocaleLowerCase('pt-BR').includes(term));
   });
 
   const inviteMember = async (event: FormEvent) => {
@@ -479,7 +479,7 @@ export function TeamView({
             <span className={`team-presence ${member.availability}`} title={teamAvailabilityLabel(member.availability)} />
             {canManageMember ? <div className="team-card-menu-wrap"><button className="team-card-menu-button" onClick={() => setMemberMenuId((current) => current === member.user_id ? null : member.user_id)} aria-label={`Gerenciar ${member.display_name}`}><MoreHorizontal size={17} /></button>{memberMenuId === member.user_id ? <div className="team-card-menu"><label><span>Cargo</span><select value={member.role} disabled={saving} onChange={(event) => void changeMemberRole(member, event.target.value as Exclude<WorkspaceRole, 'owner'>)}><option value="editor">Editor</option><option value="admin">Administrador</option></select></label><button onClick={() => void removeMember(member)}><Trash2 size={13} />Remover da equipe</button></div> : null}</div> : null}
             <button className="team-card-avatar" onClick={() => onMemberProfile(member.user_id)} aria-label={`Abrir perfil de ${member.display_name}`}>{member.avatar_url ? <img src={member.avatar_url} alt="" /> : <span>{member.display_name.slice(0,1).toUpperCase()}</span>}</button>
-            <div className="team-card-copy"><h3>{member.display_name}{member.user_id === userId ? <small>você</small> : null}</h3><p>{teamRoleLabel(member.role)}</p><span>{activeTasks} {activeTasks === 1 ? 'trabalho ativo' : 'trabalhos ativos'} · {deliveredTasks} entregues</span><em className={member.availability}>{teamAvailabilityLabel(member.availability)}</em></div>
+            <div className="team-card-copy"><h3>{member.display_name}{member.user_id === userId ? <small>você</small> : null}</h3><p>{member.specialty || teamRoleLabel(member.role)}</p><span>{activeTasks} {activeTasks === 1 ? 'trabalho ativo' : 'trabalhos ativos'} · {deliveredTasks} entregues</span><em className={member.availability}>{teamAvailabilityLabel(member.availability)}</em></div>
             <footer><button onClick={() => onMemberProfile(member.user_id)}><UserRound size={15} />Perfil</button><button onClick={() => onMemberTasks(member)}><ListVideo size={15} />Trabalhos</button></footer>
           </article>;
         })}
@@ -504,15 +504,31 @@ const settingsTabs: Array<{ id: SettingsTab; label: string; icon: typeof Buildin
 export function SettingsView({
   user,
   workspace,
+  tasks,
+  currentAvailability,
   onWorkspacesChanged,
+  onProfileChanged,
 }: {
   user: User;
   workspace: WorkspaceSummary;
+  tasks: Task[];
+  currentAvailability: WorkspaceMember['availability'];
   onWorkspacesChanged: () => Promise<void>;
+  onProfileChanged: () => Promise<void>;
 }) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const [workspaceName, setWorkspaceName] = useState(workspace.name);
   const [displayName, setDisplayName] = useState(String(user.user_metadata.full_name ?? ''));
+  const [specialty, setSpecialty] = useState('');
+  const [bio, setBio] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileSnapshot, setProfileSnapshot] = useState({ displayName: '', specialty: '', bio: '' });
+  const [avatarSaving, setAvatarSaving] = useState(false);
+  const [cropSource, setCropSource] = useState<string | null>(null);
+  const [cropZoom, setCropZoom] = useState(1);
+  const [cropX, setCropX] = useState(0);
+  const [cropY, setCropY] = useState(0);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [saving, setSaving] = useState(false);
@@ -526,6 +542,68 @@ export function SettingsView({
   useEffect(() => setWorkspaceName(workspace.name), [workspace.id, workspace.name]);
   useEffect(() => { void window.editflow.getVersion().then(setAppVersion); }, []);
   useEffect(() => { void window.editflow.getDesktopPreferences().then(setDesktopPreferences); }, []);
+  useEffect(() => {
+    if (!supabase) return setProfileLoading(false);
+    let active = true;
+    void (async () => {
+      setProfileLoading(true);
+      let result = await supabase
+        .from('profiles')
+        .select('display_name, avatar_url, availability, specialty, bio')
+        .eq('id', user.id)
+        .single();
+      if (result.error && /specialty|bio/i.test(result.error.message)) {
+        result = await supabase
+          .from('profiles')
+          .select('display_name, avatar_url, availability')
+          .eq('id', user.id)
+          .single();
+      }
+      if (!active) return;
+      if (result.error) {
+        setError(result.error.message);
+        setProfileLoading(false);
+        return;
+      }
+      const profile = result.data as {
+        display_name?: string;
+        avatar_url?: string | null;
+        specialty?: string;
+        bio?: string;
+      };
+      const nextProfile = {
+        displayName: profile.display_name || String(user.user_metadata.full_name ?? ''),
+        specialty: profile.specialty ?? '',
+        bio: profile.bio ?? '',
+      };
+      setDisplayName(nextProfile.displayName);
+      setSpecialty(nextProfile.specialty);
+      setBio(nextProfile.bio);
+      setAvatarUrl(profile.avatar_url ?? null);
+      setProfileSnapshot(nextProfile);
+      setProfileLoading(false);
+    })();
+    return () => { active = false; };
+  }, [user.id, user.user_metadata.full_name]);
+
+  const profileDirty = !profileLoading && (
+    displayName.trim() !== profileSnapshot.displayName
+    || specialty.trim() !== profileSnapshot.specialty
+    || bio.trim() !== profileSnapshot.bio
+  );
+  useEffect(() => {
+    if (!profileDirty) return;
+    const warnBeforeClose = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener('beforeunload', warnBeforeClose);
+    return () => window.removeEventListener('beforeunload', warnBeforeClose);
+  }, [profileDirty]);
+  const userTasks = tasks.filter((task) => task.assignee_id === user.id);
+  const activeUserTasks = userTasks.filter((task) => !task.completed_at);
+  const completedUserTasks = userTasks.filter((task) => Boolean(task.completed_at));
+  const overdueUserTasks = activeUserTasks.filter((task) => task.due_at && new Date(task.due_at).getTime() < Date.now());
+  const nextDeadline = activeUserTasks
+    .filter((task) => Boolean(task.due_at))
+    .sort((left, right) => new Date(left.due_at!).getTime() - new Date(right.due_at!).getTime())[0];
 
   const saveWorkspace = async (event: FormEvent) => {
     event.preventDefault();
@@ -545,14 +623,91 @@ export function SettingsView({
   const saveProfile = async (event: FormEvent) => {
     event.preventDefault();
     if (!supabase || !displayName.trim()) return setError('Digite seu nome de exibição.');
+    if (displayName.trim().length > 80) return setError('O nome de exibição deve ter no máximo 80 caracteres.');
+    if (specialty.trim().length > 80) return setError('A especialidade deve ter no máximo 80 caracteres.');
+    if (bio.trim().length > 500) return setError('A apresentação deve ter no máximo 500 caracteres.');
     setSaving(true);
     setError(null);
     setSuccess(null);
-    const { error: profileError } = await supabase.from('profiles').update({ display_name: displayName.trim() }).eq('id', user.id);
+    const profileValues = {
+      display_name: displayName.trim(),
+      specialty: specialty.trim(),
+      bio: bio.trim(),
+    };
+    const { error: profileError } = await supabase.from('profiles').update(profileValues).eq('id', user.id);
     if (!profileError) await supabase.auth.updateUser({ data: { full_name: displayName.trim() } });
     setSaving(false);
     if (profileError) return setError(profileError.message);
+    setProfileSnapshot({ displayName: profileValues.display_name, specialty: profileValues.specialty, bio: profileValues.bio });
+    await onProfileChanged();
     setSuccess('Seu perfil foi atualizado.');
+  };
+
+  const chooseAvatar = (file: File | undefined) => {
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) return setError('Escolha uma imagem JPG, PNG ou WebP.');
+    if (file.size > 5 * 1024 * 1024) return setError('A foto deve ter no máximo 5 MB.');
+    setError(null);
+    const reader = new FileReader();
+    reader.onload = () => {
+      setCropSource(String(reader.result));
+      setCropZoom(1);
+      setCropX(0);
+      setCropY(0);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const saveCroppedAvatar = async () => {
+    if (!supabase || !cropSource) return;
+    setAvatarSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const avatarBlob = await cropProfileImage(cropSource, cropZoom, cropX, cropY);
+      const avatarPath = `${user.id}/avatar-${Date.now()}.webp`;
+      const uploadResult = await supabase.storage.from('profile-avatars').upload(avatarPath, avatarBlob, { contentType: 'image/webp', upsert: false });
+      if (uploadResult.error) throw uploadResult.error;
+      const publicUrl = supabase.storage.from('profile-avatars').getPublicUrl(avatarPath).data.publicUrl;
+      const oldAvatarPath = profileAvatarPath(avatarUrl);
+      const updateResult = await supabase.from('profiles').update({ avatar_url: publicUrl }).eq('id', user.id);
+      if (updateResult.error) {
+        await supabase.storage.from('profile-avatars').remove([avatarPath]);
+        throw updateResult.error;
+      }
+      setAvatarUrl(publicUrl);
+      setCropSource(null);
+      if (oldAvatarPath) await supabase.storage.from('profile-avatars').remove([oldAvatarPath]);
+      await onProfileChanged();
+      setSuccess('Foto de perfil atualizada.');
+    } catch (avatarError) {
+      setError(avatarError instanceof Error ? avatarError.message : 'Não foi possível salvar a foto.');
+    } finally {
+      setAvatarSaving(false);
+    }
+  };
+
+  const removeAvatar = async () => {
+    if (!supabase || !avatarUrl) return;
+    setAvatarSaving(true);
+    setError(null);
+    setSuccess(null);
+    const oldAvatarPath = profileAvatarPath(avatarUrl);
+    const { error: profileError } = await supabase.from('profiles').update({ avatar_url: null }).eq('id', user.id);
+    if (!profileError && oldAvatarPath) await supabase.storage.from('profile-avatars').remove([oldAvatarPath]);
+    setAvatarSaving(false);
+    if (profileError) return setError(profileError.message);
+    setAvatarUrl(null);
+    await onProfileChanged();
+    setSuccess('Foto de perfil removida.');
+  };
+
+  const changeSettingsTab = (nextTab: SettingsTab) => {
+    if (activeTab === 'profile' && nextTab !== 'profile' && profileDirty
+      && !window.confirm('Você possui alterações não salvas no perfil. Deseja sair sem salvar?')) return;
+    setActiveTab(nextTab);
+    setError(null);
+    setSuccess(null);
   };
 
   const changePassword = async (event: FormEvent) => {
@@ -620,7 +775,7 @@ export function SettingsView({
             aria-selected={activeTab === id}
             className={activeTab === id ? 'active' : ''}
             key={id}
-            onClick={() => { setActiveTab(id); setError(null); setSuccess(null); }}
+            onClick={() => changeSettingsTab(id)}
           ><Icon size={15} /><span>{label}</span></button>
         ))}
       </nav>
@@ -641,14 +796,43 @@ export function SettingsView({
           {workspace.role === 'owner' ? <section className="content-card danger-zone"><div><h2>Excluir equipe</h2><p>Remove permanentemente clientes, quadros, tarefas e links desta equipe.</p></div><button className="danger-button" onClick={() => void deleteWorkspace()} disabled={saving}><Trash2 size={16} />Excluir equipe</button></section> : null}
         </> : null}
 
-        {activeTab === 'profile' ? <section className="content-card settings-page-card">
-          <div className="content-card-heading"><span className="content-icon"><UserRound size={18} /></span><div><h2>Meu perfil</h2><p>Defina como seu nome aparece para os outros membros.</p></div></div>
-          <div className="settings-profile-hero"><span>{displayName.trim().slice(0, 1).toUpperCase() || user.email?.slice(0, 1).toUpperCase() || 'U'}</span><div><strong>{displayName || 'Seu perfil'}</strong><small>{user.email}</small></div></div>
-          <form className="settings-form settings-profile-form" onSubmit={saveProfile}>
-            <label><span>Nome de exibição</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Como você quer aparecer" /></label>
-            <label><span>E-mail da conta</span><input value={user.email ?? ''} disabled /></label>
-            <div className="form-actions"><button className="primary-button" type="submit" disabled={saving}>{saving ? <LoaderCircle className="spinner" size={16} /> : <Save size={16} />}Salvar perfil</button></div>
-          </form>
+        {activeTab === 'profile' ? <section className="profile-settings-layout">
+          <div className="content-card settings-page-card profile-editor-card">
+            <div className="content-card-heading"><span className="content-icon"><UserRound size={18} /></span><div><h2>Editar meu perfil</h2><p>Estas informações aparecem para as pessoas da sua equipe.</p></div>{profileDirty ? <span className="profile-unsaved">Alterações não salvas</span> : null}</div>
+            {profileLoading ? <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando seu perfil…</div> : <>
+              <div className="profile-avatar-editor">
+                <div className="profile-avatar-large">{avatarUrl ? <img src={avatarUrl} alt="Sua foto de perfil" /> : <span>{displayName.trim().slice(0, 1).toUpperCase() || user.email?.slice(0, 1).toUpperCase() || 'U'}</span>}<i className={currentAvailability} /></div>
+                <div><strong>Foto de perfil</strong><p>JPG, PNG ou WebP. Tamanho máximo de 5 MB.</p><div><label className="profile-photo-button"><Camera size={14} />{avatarUrl ? 'Trocar foto' : 'Adicionar foto'}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { chooseAvatar(event.target.files?.[0]); event.currentTarget.value = ''; }} /></label>{avatarUrl ? <button type="button" className="profile-photo-remove" disabled={avatarSaving} onClick={() => void removeAvatar()}><Trash2 size={13} />Remover</button> : null}</div></div>
+              </div>
+
+              <form className="settings-form profile-details-form" onSubmit={saveProfile}>
+                <div className="profile-form-grid">
+                  <label><span>Nome de exibição</span><input maxLength={80} value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Como você quer aparecer" /></label>
+                  <label><span>Especialidade</span><div className="profile-icon-input"><BriefcaseBusiness size={15} /><input maxLength={80} value={specialty} onChange={(event) => setSpecialty(event.target.value)} placeholder="Ex.: Editor de vídeo" /></div></label>
+                  <label><span>Presença automática</span><div className="profile-presence-readonly"><i className={currentAvailability} /><span><strong>{teamAvailabilityLabel(currentAvailability)}</strong><small>{profilePresenceDescription(currentAvailability, activeUserTasks.length)}</small></span></div></label>
+                  <label><span>E-mail da conta</span><input value={user.email ?? ''} disabled /></label>
+                </div>
+                <label className="profile-bio-field"><span>Apresentação</span><textarea maxLength={500} value={bio} onChange={(event) => setBio(event.target.value)} placeholder="Conte brevemente à equipe sobre você e seu trabalho…" /><small>{bio.length}/500</small></label>
+                <div className="form-actions profile-form-actions"><span>{profileDirty ? 'Revise a prévia antes de salvar.' : 'Seu perfil está atualizado.'}</span><button className="primary-button" type="submit" disabled={saving || !profileDirty}>{saving ? <LoaderCircle className="spinner" size={16} /> : <Save size={16} />}Salvar perfil</button></div>
+              </form>
+            </>}
+          </div>
+
+          <aside className="profile-preview-column">
+            <span className="profile-preview-label">PRÉVIA PARA A EQUIPE</span>
+            <article className="profile-preview-card">
+              <div className="profile-preview-glow" />
+              <div className="profile-preview-avatar">{avatarUrl ? <img src={avatarUrl} alt="" /> : <span>{displayName.trim().slice(0, 1).toUpperCase() || 'U'}</span>}<i className={currentAvailability} /></div>
+              <span className={`member-availability-pill ${currentAvailability}`}>{teamAvailabilityLabel(currentAvailability)}</span>
+              <h3>{displayName.trim() || 'Seu nome'}</h3>
+              <p className="profile-preview-specialty">{specialty.trim() || teamRoleLabel(workspace.role)}</p>
+              <p className={`profile-preview-bio ${bio.trim() ? '' : 'empty'}`}>{bio.trim() || 'Sua apresentação aparecerá aqui para os outros membros.'}</p>
+              <div className="profile-preview-stats"><article><CheckCircle2 size={15} /><strong>{activeUserTasks.length}</strong><small>Ativos</small></article><article className={overdueUserTasks.length ? 'warning' : ''}><AlertTriangle size={15} /><strong>{overdueUserTasks.length}</strong><small>Atrasados</small></article><article><CalendarClock size={15} /><strong>{nextDeadline?.due_at ? new Date(nextDeadline.due_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) : '—'}</strong><small>Próximo prazo</small></article></div>
+              <footer><span><CheckCircle2 size={14} />{completedUserTasks.length} {completedUserTasks.length === 1 ? 'trabalho concluído' : 'trabalhos concluídos'}</span></footer>
+            </article>
+          </aside>
+
+          {cropSource ? <div className="profile-crop-backdrop" role="dialog" aria-modal="true" aria-label="Recortar foto de perfil" onMouseDown={(event) => { if (event.target === event.currentTarget && !avatarSaving) setCropSource(null); }}><section className="profile-crop-modal"><header><div><strong>Ajustar foto</strong><small>Centralize seu rosto dentro do quadro.</small></div><button type="button" disabled={avatarSaving} onClick={() => setCropSource(null)} aria-label="Fechar"><X size={17} /></button></header><div className="profile-crop-preview"><img src={cropSource} alt="Prévia do recorte" style={{ transform: `translate(${cropX * .45}px, ${cropY * .45}px) scale(${cropZoom})` }} /></div><div className="profile-crop-controls"><label><span>Zoom</span><input type="range" min="1" max="3" step="0.05" value={cropZoom} onChange={(event) => setCropZoom(Number(event.target.value))} /></label><label><span>Horizontal</span><input type="range" min="-100" max="100" value={cropX} onChange={(event) => setCropX(Number(event.target.value))} /></label><label><span>Vertical</span><input type="range" min="-100" max="100" value={cropY} onChange={(event) => setCropY(Number(event.target.value))} /></label></div><footer><button type="button" className="secondary-button" disabled={avatarSaving} onClick={() => setCropSource(null)}>Cancelar</button><button type="button" className="primary-button" disabled={avatarSaving} onClick={() => void saveCroppedAvatar()}>{avatarSaving ? <LoaderCircle className="spinner" size={15} /> : <Camera size={15} />}Usar esta foto</button></footer></section></div> : null}
         </section> : null}
 
         {activeTab === 'appearance' ? <section className="content-card settings-page-card appearance-settings-card">
@@ -692,6 +876,40 @@ export function SettingsView({
       </main>
     </div>
   );
+}
+
+async function cropProfileImage(source: string, zoom: number, offsetX: number, offsetY: number) {
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const element = new Image();
+    element.onload = () => resolve(element);
+    element.onerror = () => reject(new Error('Não foi possível ler esta imagem.'));
+    element.src = source;
+  });
+  const baseSide = Math.min(image.naturalWidth, image.naturalHeight);
+  const visibleSide = baseSide / Math.max(1, zoom);
+  const maxX = Math.max(0, (image.naturalWidth - visibleSide) / 2);
+  const maxY = Math.max(0, (image.naturalHeight - visibleSide) / 2);
+  const sourceX = Math.max(0, Math.min(image.naturalWidth - visibleSide, maxX - (offsetX / 100) * maxX));
+  const sourceY = Math.max(0, Math.min(image.naturalHeight - visibleSide, maxY - (offsetY / 100) * maxY));
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 512;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Não foi possível preparar o recorte da foto.');
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(image, sourceX, sourceY, visibleSide, visibleSide, 0, 0, 512, 512);
+  return await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Não foi possível gerar a foto.')), 'image/webp', .88);
+  });
+}
+
+function profileAvatarPath(avatarUrl: string | null) {
+  if (!avatarUrl) return null;
+  const marker = '/storage/v1/object/public/profile-avatars/';
+  const markerIndex = avatarUrl.indexOf(marker);
+  if (markerIndex < 0) return null;
+  return decodeURIComponent(avatarUrl.slice(markerIndex + marker.length).split('?')[0]);
 }
 
 function ThemeOption({
@@ -772,7 +990,15 @@ function teamRoleLabel(role: WorkspaceRole) {
 function teamAvailabilityLabel(availability: WorkspaceMember['availability']) {
   if (availability === 'busy') return 'Ocupado';
   if (availability === 'away') return 'Ausente';
+  if (availability === 'offline') return 'Offline';
   return 'Disponível';
+}
+
+function profilePresenceDescription(availability: WorkspaceMember['availability'], activeTasks: number) {
+  if (availability === 'offline') return 'O EditFlow não está conectado.';
+  if (availability === 'away') return 'Computador inativo ou bloqueado.';
+  if (availability === 'busy') return `${activeTasks} ${activeTasks === 1 ? 'trabalho ativo' : 'trabalhos ativos'}.`;
+  return 'Online e sem trabalhos ativos.';
 }
 
 function translateTeamError(message: string) {

@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('editflow', {
   openExternal: (url: string) => ipcRenderer.invoke('system:open-external', url),
   getVersion: () => ipcRenderer.invoke('system:get-version'),
   getUsdBrlRate: () => ipcRenderer.invoke('system:get-usd-brl-rate'),
+  getUserActivity: () => ipcRenderer.invoke('system:get-user-activity'),
   checkForUpdates: () => ipcRenderer.invoke('updater:check'),
   installUpdate: () => ipcRenderer.invoke('updater:install'),
   showUpdateLog: () => ipcRenderer.invoke('updater:show-log'),
