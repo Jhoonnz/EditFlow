@@ -106,6 +106,13 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [editingColumn, setEditingColumn] = useState<BoardColumn | null>(null);
   const [creatingColumn, setCreatingColumn] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showWorkspaceMenu, setShowWorkspaceMenu] = useState(false);
+  const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
+  const [workspaceDraft, setWorkspaceDraft] = useState('');
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [workspaceDialogError, setWorkspaceDialogError] = useState<string | null>(null);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [liveNotification, setLiveNotification] = useState<AppNotification | null>(null);
   const [profileMemberId, setProfileMemberId] = useState<string | null>(null);
   const [chatRequest, setChatRequest] = useState<ChatOpenRequest | null>(null);
@@ -113,10 +120,72 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [presenceReady, setPresenceReady] = useState(false);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notificationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notificationRef = useRef<HTMLDivElement>(null);
+  const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const handleChatRequestHandled = useCallback(() => setChatRequest(null), []);
   const openSettings = (tab: SettingsTab) => {
     setSettingsNavigation((current) => ({ tab, token: current.token + 1 }));
     setView('settings');
+  };
+
+  useEffect(() => {
+    if (!showNotifications) return;
+    const closeNotificationsOnOutsidePointer = (event: PointerEvent) => {
+      if (!notificationRef.current?.contains(event.target as Node)) setShowNotifications(false);
+    };
+    document.addEventListener('pointerdown', closeNotificationsOnOutsidePointer);
+    return () => document.removeEventListener('pointerdown', closeNotificationsOnOutsidePointer);
+  }, [showNotifications]);
+
+  useEffect(() => {
+    if (!showWorkspaceMenu) return;
+    const closeWorkspaceMenuOnOutsidePointer = (event: PointerEvent) => {
+      if (!workspaceMenuRef.current?.contains(event.target as Node)) setShowWorkspaceMenu(false);
+    };
+    document.addEventListener('pointerdown', closeWorkspaceMenuOnOutsidePointer);
+    return () => document.removeEventListener('pointerdown', closeWorkspaceMenuOnOutsidePointer);
+  }, [showWorkspaceMenu]);
+
+  useEffect(() => {
+    if (!showCreateWorkspace && !showLogoutConfirm) return;
+    const closeDialogOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (showCreateWorkspace && !creatingWorkspace) setShowCreateWorkspace(false);
+      if (showLogoutConfirm && !signingOut) setShowLogoutConfirm(false);
+    };
+    document.addEventListener('keydown', closeDialogOnEscape);
+    return () => document.removeEventListener('keydown', closeDialogOnEscape);
+  }, [creatingWorkspace, showCreateWorkspace, showLogoutConfirm, signingOut]);
+
+  const createWorkspace = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!supabase || creatingWorkspace) return;
+    const workspaceName = workspaceDraft.trim();
+    if (workspaceName.length < 2) return setWorkspaceDialogError('Digite um nome com pelo menos 2 caracteres.');
+    setCreatingWorkspace(true);
+    setWorkspaceDialogError(null);
+    const { data: workspaceId, error: createError } = await supabase.rpc('create_workspace', { workspace_name: workspaceName });
+    if (createError) {
+      setWorkspaceDialogError(createError.message);
+      setCreatingWorkspace(false);
+      return;
+    }
+    await onWorkspacesChanged();
+    if (workspaceId) onWorkspaceChange(workspaceId as string);
+    setCreatingWorkspace(false);
+    setShowCreateWorkspace(false);
+    setWorkspaceDraft('');
+  };
+
+  const signOut = async () => {
+    if (!supabase || signingOut) return;
+    setSigningOut(true);
+    const { error: signOutError } = await supabase.auth.signOut();
+    if (signOutError) {
+      setError(signOutError.message);
+      setSigningOut(false);
+      setShowLogoutConfirm(false);
+    }
   };
 
   const loadBoard = useCallback(async (quiet = false) => {
@@ -225,6 +294,19 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     if (reloadTimer.current) clearTimeout(reloadTimer.current);
     reloadTimer.current = setTimeout(() => void loadBoard(true), 180);
   }, [loadBoard]);
+
+  const assignTask = useCallback(async (taskId: string, assigneeId: string | null) => {
+    if (!supabase || !canManagePlanning) return false;
+    setTasks((current) => current.map((task) => task.id === taskId ? { ...task, assignee_id: assigneeId } : task));
+    const { error: assignmentError } = await supabase.from('tasks').update({ assignee_id: assigneeId }).eq('id', taskId);
+    if (assignmentError) {
+      setError(assignmentError.message);
+      await loadBoard(true);
+      return false;
+    }
+    await loadBoard(true);
+    return true;
+  }, [canManagePlanning, loadBoard]);
 
   useEffect(() => {
     void loadBoard();
@@ -644,13 +726,18 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
       <aside className="app-sidebar">
         <div className="sidebar-brand"><span className="sidebar-logo"><Sparkles size={18} /></span><span>EditFlow</span></div>
 
-        <label className="workspace-select-wrap">
-          <span className="workspace-avatar">{workspace.name.slice(0, 1).toUpperCase()}</span>
-          <select value={workspace.id} onChange={(event) => onWorkspaceChange(event.target.value)}>
-            {workspaces.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
-          </select>
-          <ChevronDown size={15} />
-        </label>
+        <div className="workspace-switcher" ref={workspaceMenuRef}>
+          <button type="button" className="workspace-switcher-trigger" aria-expanded={showWorkspaceMenu} onClick={() => setShowWorkspaceMenu((show) => !show)}>
+            <span className="workspace-avatar">{workspace.name.slice(0, 1).toUpperCase()}</span>
+            <span className="workspace-trigger-copy"><strong>{workspace.name}</strong><small>{roleLabel(workspace.role)}</small></span>
+            <ChevronDown className={showWorkspaceMenu ? 'open' : ''} size={15} />
+          </button>
+          {showWorkspaceMenu ? <div className="workspace-switcher-menu">
+            <strong>ESPAÇOS DE TRABALHO</strong>
+            {workspaces.map((item) => <button type="button" className={item.id === workspace.id ? 'selected' : ''} key={item.id} onClick={() => { onWorkspaceChange(item.id); setShowWorkspaceMenu(false); }}><span className="workspace-menu-avatar">{item.name.slice(0,1).toUpperCase()}</span><span><b>{item.name}</b><small>{roleLabel(item.role)}</small></span>{item.id === workspace.id ? <CheckCircle2 size={14} /> : null}</button>)}
+            <button type="button" className="workspace-create-button" onClick={() => { setShowWorkspaceMenu(false); setWorkspaceDialogError(null); setShowCreateWorkspace(true); }}><span><Plus size={15} /></span><span><b>Criar nova equipe</b><small>Configurar outro espaço</small></span></button>
+          </div> : null}
+        </div>
 
         <nav className="sidebar-nav" aria-label="Navegação principal">
           <button className={`nav-item ${view === 'board' ? 'active' : ''}`} onClick={() => setView('board')}><LayoutDashboard size={18} /><span>Produção</span></button>
@@ -670,7 +757,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
             <span className="user-avatar">{currentUserMember?.avatar_url ? <img src={currentUserMember.avatar_url} alt="Sua foto de perfil" /> : (user.email?.[0] ?? 'U').toUpperCase()}</span>
             <span className="account-copy"><strong>{currentUserMember?.display_name || user.user_metadata.full_name || 'Minha conta'}</strong><small>{user.email}</small></span>
           </button>
-          <button type="button" className="account-logout-button" onClick={() => void supabase?.auth.signOut()} title="Sair da conta" aria-label="Sair da conta"><LogOut size={16} /></button>
+          <button type="button" className="account-logout-button" onClick={() => setShowLogoutConfirm(true)} title="Sair da conta" aria-label="Sair da conta"><LogOut size={16} /></button>
         </div>
       </aside>
 
@@ -681,7 +768,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
             <h1>{view === 'board' ? board?.name ?? 'Produção' : view === 'clients' ? 'Clientes' : view === 'team' ? 'Equipe' : view === 'finance' ? 'Ganhos' : 'Configurações'}</h1>
           </div>
           <div className="header-actions">
-            <div className="notification-wrap">
+            <div className="notification-wrap" ref={notificationRef}>
               <button className={`round-action ${unreadNotifications.length || deadlineNotifications.length ? 'has-notifications' : ''}`} aria-label="Notificações" onClick={() => setShowNotifications((show) => !show)}><Bell size={19} />{unreadNotifications.length ? <i /> : null}</button>
               {showNotifications ? (
                 <div className="notification-popover">
@@ -777,9 +864,12 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                       progressPercent={Math.round(((columns.findIndex((item) => item.id === column.id) + 1) / Math.max(columns.length, 1)) * 100)}
                       client={clients.find((client) => client.id === task.client_id)}
                       assignee={liveMembers.find((member) => member.user_id === task.assignee_id)}
+                      members={liveMembers}
+                      canAssign={canManagePlanning}
                       taskLinks={links.filter((link) => link.task_id === task.id)}
                       onOpen={() => setEditor({ mode: 'edit', task })}
                       onOpenProfile={(memberId) => setProfileMemberId(memberId)}
+                      onAssign={(assigneeId) => assignTask(task.id, assigneeId)}
                       onDragStart={(event) => {
                         event.dataTransfer.effectAllowed = 'move';
                         event.dataTransfer.setData('text/editflow-task', task.id);
@@ -813,7 +903,14 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         {view === 'clients' && canManagePlanning ? <ClientsView workspace={workspace} clients={clients} tasks={tasks} onChanged={() => loadBoard(true)} /> : null}
         {view === 'team' ? <TeamView userId={user.id} workspace={workspace} members={liveMembers} tasks={tasks} onChanged={() => loadBoard(true)} onMemberProfile={setProfileMemberId} onMemberTasks={(member) => { setSearch(member.display_name); setView('board'); }} /> : null}
         {view === 'finance' && workspace.role === 'owner' ? <FinanceView workspace={workspace} clients={clients} tasks={tasks} /> : null}
-        {view === 'settings' ? <SettingsView user={user} workspace={workspace} tasks={tasks} currentAvailability={currentUserMember?.availability ?? 'offline'} requestedTab={settingsNavigation.tab} requestedTabToken={settingsNavigation.token} onWorkspacesChanged={onWorkspacesChanged} onProfileChanged={() => loadBoard(true)} /> : null}
+        {view === 'settings' ? <SettingsView user={user} workspace={workspace} tasks={tasks} currentAvailability={currentUserMember?.availability ?? 'offline'} requestedTab={settingsNavigation.tab} requestedTabToken={settingsNavigation.token} onWorkspacesChanged={onWorkspacesChanged} onProfileChanged={async (profile) => {
+          if (profile) setMembers((current) => current.map((member) => member.user_id === user.id ? {
+            ...member,
+            ...('displayName' in profile ? { display_name: profile.displayName } : {}),
+            ...('avatarUrl' in profile ? { avatar_url: profile.avatarUrl } : {}),
+          } : member));
+          await loadBoard(true);
+        }} /> : null}
       </section>
 
       {editor && board && columns[0] ? (
@@ -889,6 +986,22 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           <button className="live-notification-close" aria-label="Fechar notificação" onClick={() => setLiveNotification(null)}><X size={16} /></button>
         </aside>
       ) : null}
+      {showCreateWorkspace ? <div className="app-dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget && !creatingWorkspace) setShowCreateWorkspace(false); }}>
+        <section className="app-dialog workspace-create-dialog" role="dialog" aria-modal="true" aria-labelledby="create-workspace-title">
+          <header><span className="app-dialog-icon"><Plus size={20} /></span><div><p>NOVO ESPAÇO</p><h2 id="create-workspace-title">Criar outra equipe</h2><small>Um novo quadro de produção será configurado automaticamente.</small></div></header>
+          <form onSubmit={(event) => void createWorkspace(event)}>
+            <label><span>Nome da equipe ou empresa</span><input autoFocus value={workspaceDraft} onChange={(event) => setWorkspaceDraft(event.target.value)} placeholder="Ex.: Novo estúdio" maxLength={80} disabled={creatingWorkspace} /></label>
+            {workspaceDialogError ? <div className="app-dialog-error">{workspaceDialogError}</div> : null}
+            <footer><button type="button" className="app-dialog-cancel" disabled={creatingWorkspace} onClick={() => setShowCreateWorkspace(false)}>Cancelar</button><button type="submit" className="app-dialog-confirm" disabled={creatingWorkspace || workspaceDraft.trim().length < 2}>{creatingWorkspace ? <LoaderCircle className="spinner" size={15} /> : <Plus size={15} />}Criar equipe</button></footer>
+          </form>
+        </section>
+      </div> : null}
+      {showLogoutConfirm ? <div className="app-dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget && !signingOut) setShowLogoutConfirm(false); }}>
+        <section className="app-dialog logout-dialog" role="alertdialog" aria-modal="true" aria-labelledby="logout-title" aria-describedby="logout-description">
+          <header><span className="app-dialog-icon danger"><LogOut size={20} /></span><div><p>CONFIRMAR SAÍDA</p><h2 id="logout-title">Sair do EditFlow?</h2><small id="logout-description">Você precisará entrar novamente para acessar suas equipes.</small></div></header>
+          <footer><button type="button" className="app-dialog-cancel" autoFocus disabled={signingOut} onClick={() => setShowLogoutConfirm(false)}>Cancelar</button><button type="button" className="app-dialog-confirm danger" disabled={signingOut} onClick={() => void signOut()}>{signingOut ? <LoaderCircle className="spinner" size={15} /> : <LogOut size={15} />}Sim, sair</button></footer>
+        </section>
+      </div> : null}
     </main>
   );
 }
@@ -964,9 +1077,12 @@ function TaskCard({
   progressPercent,
   client,
   assignee,
+  members,
+  canAssign,
   taskLinks,
   onOpen,
   onOpenProfile,
+  onAssign,
   onDragStart,
   onDragEnd,
   onDragOver,
@@ -980,9 +1096,12 @@ function TaskCard({
   progressPercent: number;
   client?: Client;
   assignee?: WorkspaceMember;
+  members: WorkspaceMember[];
+  canAssign: boolean;
   taskLinks: TaskLink[];
   onOpen: () => void;
   onOpenProfile: (memberId: string) => void;
+  onAssign: (memberId: string | null) => Promise<boolean>;
   onDragStart: (event: DragEvent<HTMLDivElement>) => void;
   onDragEnd: () => void;
   onDragOver: (event: DragEvent<HTMLDivElement>) => void;
@@ -992,6 +1111,9 @@ function TaskCard({
   dragEnabled: boolean;
 }) {
   const [showLinks, setShowLinks] = useState(false);
+  const [showAssignees, setShowAssignees] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const assigneePickerRef = useRef<HTMLDivElement>(null);
   const countdown = taskCountdown(task.due_at);
   const subtitle = client?.name || task.description || priorityLabel(task.priority);
   const downloadLinks = taskLinks.filter((link) => link.category === 'download');
@@ -1002,7 +1124,25 @@ function TaskCard({
 
   const handleMainClick = () => {
     setShowLinks(false);
+    setShowAssignees(false);
     onOpen();
+  };
+
+  useEffect(() => {
+    if (!showAssignees) return;
+    const closeAssigneesOnOutsidePointer = (event: PointerEvent) => {
+      if (!assigneePickerRef.current?.contains(event.target as Node)) setShowAssignees(false);
+    };
+    document.addEventListener('pointerdown', closeAssigneesOnOutsidePointer);
+    return () => document.removeEventListener('pointerdown', closeAssigneesOnOutsidePointer);
+  }, [showAssignees]);
+
+  const chooseAssignee = async (memberId: string | null) => {
+    if (assigning) return;
+    setAssigning(true);
+    const saved = await onAssign(memberId);
+    setAssigning(false);
+    if (saved) setShowAssignees(false);
   };
 
   const handleDownloadClick = async () => {
@@ -1053,7 +1193,6 @@ function TaskCard({
               onClick={() => { setShowLinks(false); onOpenProfile(assignee.user_id); }}
             >{assignee.avatar_url ? <img src={assignee.avatar_url} alt="" /> : memberInitials(assignee.display_name)}</button>
           ) : <span className="task-card-avatar empty" title="Sem responsável">?</span>}
-          <span className="task-card-avatar revision" title={`Versão ${task.revision_round ?? 1}`}>V{task.revision_round ?? 1}</span>
           {downloadLinks.length ? (
             <button
               type="button"
@@ -1063,7 +1202,14 @@ function TaskCard({
               onClick={() => void handleDownloadClick()}
             ><Download size={11} />{downloadLinks.length > 1 ? downloadLinks.length : null}</button>
           ) : null}
-          <span className="task-card-add-person" aria-hidden="true"><Plus size={11} /></span>
+          {canAssign ? <div className="task-assignee-picker" ref={assigneePickerRef}>
+            <button type="button" className={`task-card-add-person ${showAssignees ? 'active' : ''}`} title={assignee ? 'Trocar responsável' : 'Definir responsável'} aria-label={assignee ? 'Trocar responsável' : 'Definir responsável'} onClick={() => { setShowLinks(false); setShowAssignees((show) => !show); }}><Plus size={11} /></button>
+            {showAssignees ? <aside className="task-assignee-popover" aria-label="Escolher responsável">
+              <strong>RESPONSÁVEL</strong>
+              <button type="button" className={!task.assignee_id ? 'selected' : ''} disabled={assigning} onClick={() => void chooseAssignee(null)}><span className="task-assignee-avatar empty">?</span><span><b>Sem responsável</b><small>Deixar a tarefa livre</small></span></button>
+              {members.map((member) => <button type="button" className={task.assignee_id === member.user_id ? 'selected' : ''} disabled={assigning} key={member.user_id} onClick={() => void chooseAssignee(member.user_id)}><span className="task-assignee-avatar">{member.avatar_url ? <img src={member.avatar_url} alt="" /> : memberInitials(member.display_name)}</span><span><b>{member.display_name}</b><small>{availabilityLabel(member.availability)}</small></span></button>)}
+            </aside> : null}
+          </div> : null}
         </span>
         <span className={`task-card-countdown ${countdown.state}`}>{countdown.label}</span>
       </span>
@@ -1426,7 +1572,7 @@ function TaskEditor({
   };
 
   return (
-    <div className="editor-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="editor-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <aside className="task-editor" aria-modal="true" role="dialog" aria-label={mode === 'new' ? 'Nova tarefa' : 'Editar tarefa'}>
         <header className="editor-header">
           <div><p>{mode === 'new' ? 'NOVO TRABALHO' : 'DETALHES DO TRABALHO'}</p><h2>{mode === 'new' ? 'Criar tarefa' : task?.title}</h2></div>

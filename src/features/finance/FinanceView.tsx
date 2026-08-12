@@ -360,7 +360,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
           <div className="client-earning-list">
             {clientSummaries.map(({ client, setting, grossUsd: clientGrossUsd, netUsd: clientNetUsd, itemCount, pendingItems }) => (
               <article key={client.id}>
-                <span className="finance-client-avatar">{client.name.slice(0,1).toUpperCase()}</span>
+                <span className="finance-client-avatar">{client.youtube_thumbnail_url ? <img src={client.youtube_thumbnail_url} alt={`Canal de ${client.name}`} /> : client.name.slice(0,1).toUpperCase()}</span>
                 <div><strong>{client.name}</strong><small>{setting ? billingDescription(setting) : 'Sem configuração atual'}{setting?.pricing_model === 'bundle' && pendingItems ? ` · ${pendingItems}/${setting.bundle_size} no próximo pacote` : ''}</small></div>
                 <em>{rate ? formatBrl(clientNetUsd * rate.rate) : formatUsd(clientNetUsd)}<small>líquido · bruto {formatUsd(clientGrossUsd)} · {itemCount} vídeos</small></em>
               </article>

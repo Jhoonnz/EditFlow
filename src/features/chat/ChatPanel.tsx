@@ -1,15 +1,12 @@
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import {
-  Check,
   LoaderCircle,
   MessageCircle,
   MessageSquarePlus,
   Minus,
-  Pencil,
   Search,
   Send,
-  Trash2,
   Users,
   X,
 } from 'lucide-react';
@@ -52,7 +49,6 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [composer, setComposer] = useState('');
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [memberSearch, setMemberSearch] = useState('');
   const [showMemberPicker, setShowMemberPicker] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -63,9 +59,18 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedIdRef = useRef<string | null>(null);
   const openRef = useRef(false);
+  const widgetRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
   useEffect(() => { openRef.current = open; }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const closeChatOnOutsidePointer = (event: PointerEvent) => {
+      if (!widgetRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', closeChatOnOutsidePointer);
+    return () => document.removeEventListener('pointerdown', closeChatOnOutsidePointer);
+  }, [open]);
 
   const loadMessages = useCallback(async (conversationId: string, quiet = false) => {
     if (!supabase) return;
@@ -254,7 +259,6 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
   const selectConversation = (conversationId: string) => {
     setSelectedId(conversationId);
     setShowMemberPicker(false);
-    setEditingId(null);
     setComposer('');
   };
 
@@ -276,18 +280,15 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
     setSending(true);
     setError(null);
     const body = composer.trim();
-    const result = editingId
-      ? await supabase.from('chat_messages').update({ body }).eq('id', editingId)
-      : await supabase.from('chat_messages').insert({
-        conversation_id: selectedId,
-        workspace_id: workspace.id,
-        sender_id: currentUserId,
-        body,
-      });
+    const result = await supabase.from('chat_messages').insert({
+      conversation_id: selectedId,
+      workspace_id: workspace.id,
+      sender_id: currentUserId,
+      body,
+    });
     setSending(false);
     if (result.error) return setError(chatSetupMessage(result.error.message));
     setComposer('');
-    setEditingId(null);
     await Promise.all([loadMessages(selectedId, true), loadOverview(true)]);
     await markConversationRead(selectedId);
   };
@@ -299,26 +300,8 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
     }
   };
 
-  const startEditing = (message: ChatMessage) => {
-    setEditingId(message.id);
-    setComposer(message.body);
-  };
-
-  const cancelEditing = () => {
-    setEditingId(null);
-    setComposer('');
-  };
-
-  const deleteMessage = async (message: ChatMessage) => {
-    if (!supabase || !window.confirm('Excluir esta mensagem?')) return;
-    const { error: deleteError } = await supabase.from('chat_messages').delete().eq('id', message.id);
-    if (deleteError) return setError(chatSetupMessage(deleteError.message));
-    if (selectedId) await loadMessages(selectedId, true);
-    await loadOverview(true);
-  };
-
   return (
-    <div className={`chat-widget ${open ? 'open' : ''}`}>
+    <div className={`chat-widget ${open ? 'open' : ''}`} ref={widgetRef}>
       {open ? (
         <section className="chat-panel" role="dialog" aria-label="Mensagens da equipe">
           <aside className="chat-sidebar">
@@ -384,7 +367,6 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
                           <p>{renderMessageBody(message.body)}</p>
                           <span>{shortTime(message.created_at)}{message.edited_at ? ' · editada' : ''}</span>
                         </div>
-                        {own ? <div className="chat-message-actions"><button type="button" onClick={() => startEditing(message)} aria-label="Editar mensagem"><Pencil size={11} /></button><button type="button" onClick={() => void deleteMessage(message)} aria-label="Excluir mensagem"><Trash2 size={11} /></button></div> : null}
                       </div>
                     </article>
                   </div>
@@ -394,10 +376,9 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
 
             {error ? <div className="chat-error">{error}</div> : null}
             <form className="chat-composer" onSubmit={(event) => void submitMessage(event)}>
-              {editingId ? <div className="chat-editing-label"><span><Pencil size={12} />Editando mensagem</span><button type="button" onClick={cancelEditing}><X size={13} /></button></div> : null}
               <div>
                 <textarea value={composer} onChange={(event) => setComposer(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder={selectedConversation ? `Mensagem para ${selectedConversation.kind === 'general' ? 'a equipe' : selectedConversation.otherMember?.display_name ?? 'o membro'}...` : 'Selecione uma conversa'} disabled={!selectedConversation || sending} maxLength={4000} rows={1} />
-                <button type="submit" disabled={!selectedConversation || !composer.trim() || sending} aria-label={editingId ? 'Salvar edição' : 'Enviar mensagem'}>{sending ? <LoaderCircle className="spinner" size={17} /> : editingId ? <Check size={17} /> : <Send size={17} />}</button>
+                <button type="submit" disabled={!selectedConversation || !composer.trim() || sending} aria-label="Enviar mensagem">{sending ? <LoaderCircle className="spinner" size={17} /> : <Send size={17} />}</button>
               </div>
               <small>Enter para enviar · Shift + Enter para quebrar linha</small>
             </form>
@@ -423,10 +404,20 @@ function MemberAvatar({ member, compact = false }: { member: WorkspaceMember | n
 }
 
 function renderMessageBody(body: string) {
-  const parts = body.split(/(https:\/\/[^\s]+)/gi);
-  return parts.map((part, index) => part.match(/^https:\/\//i)
-    ? <button type="button" className="chat-inline-link" key={`${part}-${index}`} onClick={() => void window.editflow.openExternal(part)}>{part}</button>
-    : <span key={`${part}-${index}`}>{part}</span>);
+  const parts = body.split(/((?:https?:\/\/|www\.)[^\s<]+)/gi);
+  return parts.map((part, index) => {
+    if (!part.match(/^(?:https?:\/\/|www\.)/i)) return <span key={`${part}-${index}`}>{part}</span>;
+    const trailingPunctuation = part.match(/[.,!?;:)\]]+$/)?.[0] ?? '';
+    const label = trailingPunctuation ? part.slice(0, -trailingPunctuation.length) : part;
+    const target = normalizeChatUrl(label);
+    return <span key={`${part}-${index}`}><button type="button" className="chat-inline-link" onClick={() => void window.editflow.openExternal(target)}>{label}</button>{trailingPunctuation}</span>;
+  });
+}
+
+function normalizeChatUrl(value: string) {
+  if (/^https:\/\//i.test(value)) return value;
+  if (/^http:\/\//i.test(value)) return `https://${value.slice(7)}`;
+  return `https://${value}`;
 }
 
 function memberInitials(name: string) {

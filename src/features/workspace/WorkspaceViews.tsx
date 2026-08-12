@@ -516,7 +516,7 @@ export function SettingsView({
   requestedTab?: SettingsTab;
   requestedTabToken?: number;
   onWorkspacesChanged: () => Promise<void>;
-  onProfileChanged: () => Promise<void>;
+  onProfileChanged: (profile?: { displayName?: string; avatarUrl?: string | null }) => Promise<void>;
 }) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const [workspaceName, setWorkspaceName] = useState(workspace.name);
@@ -647,7 +647,7 @@ export function SettingsView({
     setSaving(false);
     if (profileError) return setError(profileError.message);
     setProfileSnapshot({ displayName: profileValues.display_name, specialty: profileValues.specialty, bio: profileValues.bio });
-    await onProfileChanged();
+    await onProfileChanged({ displayName: profileValues.display_name });
     setSuccess('Seu perfil foi atualizado.');
   };
 
@@ -686,7 +686,7 @@ export function SettingsView({
       setAvatarUrl(publicUrl);
       setCropSource(null);
       if (oldAvatarPath) await supabase.storage.from('profile-avatars').remove([oldAvatarPath]);
-      await onProfileChanged();
+      await onProfileChanged({ avatarUrl: publicUrl });
       setSuccess('Foto de perfil atualizada.');
     } catch (avatarError) {
       setError(avatarError instanceof Error ? avatarError.message : 'Não foi possível salvar a foto.');
@@ -706,7 +706,7 @@ export function SettingsView({
     setAvatarSaving(false);
     if (profileError) return setError(profileError.message);
     setAvatarUrl(null);
-    await onProfileChanged();
+    await onProfileChanged({ avatarUrl: null });
     setSuccess('Foto de perfil removida.');
   };
 
