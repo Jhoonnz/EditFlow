@@ -717,6 +717,26 @@ button { color: inherit; }
 .settings-form input, .invite-form input, .invite-form select { width: 100%; height: 41px; padding: 0 11px; border: 1px solid #dedee6; border-radius: 10px; outline: 0; background: #fff; color: #383943; font-size: 11px; }
 .settings-form input:focus, .invite-form input:focus, .invite-form select:focus { border-color: #8a83d7; box-shadow: 0 0 0 3px rgba(138,131,215,.1); }
 .settings-form input:disabled { background: #f3f3f6; color: #92939d; }
+.client-payment-panel { display: grid; gap: 10px; min-width: 0; margin: 2px 0 0; padding: 13px; border: 1px solid #e2dfed; border-radius: 13px; background: #f8f7fc; }
+.client-payment-panel legend { display: flex; align-items: center; gap: 7px; padding: 0 6px; color: #5d559d; }
+.client-payment-panel legend > span { display: grid; gap: 2px; }
+.client-payment-panel legend strong { font-size: 9px; }
+.client-payment-panel legend small { color: #97939f; font-size: 7px; font-weight: 500; }
+.client-payment-models { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; }
+.client-payment-models > button { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 48px; padding: 7px; border: 1px solid #e0dee8; border-radius: 10px; background: rgba(255,255,255,.78); color: #77747f; cursor: pointer; text-align: left; }
+.client-payment-models > button.active { border-color: #8e86d5; background: #eeebfb; color: #554d99; box-shadow: 0 0 0 3px rgba(112,103,201,.06); }
+.client-payment-models > button > svg { flex: 0 0 auto; }
+.client-payment-models > button > span { display: grid; min-width: 0; gap: 2px; }
+.client-payment-models strong,.client-payment-models small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.client-payment-models strong { font-size: 7px; }
+.client-payment-models small { color: #9b98a3; font-size: 6px; }
+.client-payment-values { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.client-payment-values > label:only-child { grid-column: 1 / -1; }
+.client-payment-values label > span { display: block; margin-bottom: 5px; color: #686570; font-size: 7px; font-weight: 750; }
+.client-payment-values label > div { display: flex; align-items: center; gap: 6px; height: 37px; padding: 0 8px; border: 1px solid #dedce5; border-radius: 9px; background: #fff; }
+.client-payment-values label > div input { min-width: 0; height: 34px; padding: 0; border: 0; background: transparent; box-shadow: none; }
+.client-payment-values b { color: #7d7985; font-size: 7px; white-space: nowrap; }
+.client-payment-unavailable { padding: 10px; border: 1px solid #e2d9b8; border-radius: 10px; background: #fff9e9; color: #8d6d2d; font-size: 8px; line-height: 1.5; }
 .form-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .full-row { grid-column: 1 / -1; }
 .primary-button, .secondary-button, .danger-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 38px; padding: 0 14px; border-radius: 10px; font-size: 10px; font-weight: 750; cursor: pointer; }
@@ -741,6 +761,7 @@ button { color: inherit; }
 .client-copy strong { color: #464750; font-size: 11px; }
 .client-copy small { color: #999aa3; font-size: 9px; }
 .client-row > button, .member-row > button { display: grid; place-items: center; flex: 0 0 31px; width: 31px; height: 31px; border: 0; border-radius: 8px; background: transparent; color: #8d8e98; cursor: pointer; }
+.client-row > button:disabled { opacity: .45; cursor: wait; }
 .client-row > button:hover { background: #f0eef9; color: #514a91; }
 .client-row > button.danger-icon:hover, .member-row > button.danger-icon:hover { background: #fff0f2; color: #b34a59; }
 .empty-panel { padding: 28px 10px; border: 1px dashed #dddde4; border-radius: 11px; color: #a1a2ab; font-size: 10px; text-align: center; }
@@ -841,7 +862,7 @@ button { color: inherit; }
 .billing-preview strong { color: #51498e; }
 .billing-form > .primary-button { width: 100%; }
 .client-earning-list { display: grid; gap: 7px; }
-.client-earning-list article { display: grid; grid-template-columns: 36px minmax(0,1fr) auto 42px; align-items: center; gap: 9px; min-height: 57px; padding: 8px; border: 1px solid #e7e5ec; border-radius: 12px; }
+.client-earning-list article { display: grid; grid-template-columns: 36px minmax(0,1fr) auto; align-items: center; gap: 9px; min-height: 57px; padding: 8px; border: 1px solid #e7e5ec; border-radius: 12px; }
 .finance-client-avatar { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; background: linear-gradient(145deg,#ddd8ff,#efe5fa); color: #554e98; font-size: 11px; font-weight: 850; }
 .client-earning-list article > div { display: grid; min-width: 0; gap: 3px; }
 .client-earning-list strong,.client-earning-list small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -850,6 +871,7 @@ button { color: inherit; }
 .client-earning-list em { display: grid; gap: 3px; color: #474550; font-size: 9px; font-style: normal; font-weight: 800; text-align: right; white-space: nowrap; }
 .client-earning-list em small { font-weight: 500; }
 .client-earning-list article > button { height: 27px; padding: 0 7px; border: 0; border-radius: 8px; background: #f0eef9; color: #5c54a1; font-size: 7px; font-weight: 750; cursor: pointer; }
+.finance-client-summary { margin-bottom: 14px; }
 .finance-list-empty { display: grid; place-items: center; min-height: 90px; padding: 12px; border: 1px dashed #d9d7e0; border-radius: 11px; color: #9a97a2; font-size: 8px; text-align: center; }
 .earnings-history-card { margin-bottom: 5px; }
 .earnings-table { overflow: hidden; border: 1px solid #e7e5ec; border-radius: 12px; }
@@ -958,6 +980,9 @@ button { color: inherit; }
   .billing-model,
   .billing-values { grid-template-columns: 1fr; }
   .billing-values > label:only-child { grid-column: auto; }
+  .client-payment-models,
+  .client-payment-values { grid-template-columns: 1fr; }
+  .client-payment-values > label:only-child { grid-column: auto; }
   .client-earning-list article { grid-template-columns: 36px minmax(0,1fr) auto; }
   .client-earning-list article > button { grid-column: 2 / -1; justify-self: end; }
 }
@@ -1135,6 +1160,15 @@ button { color: inherit; }
 :root[data-theme="dark"] .editor-form textarea:disabled,
 :root[data-theme="dark"] .editor-form select:disabled,
 :root[data-theme="dark"] .settings-form input:disabled { background: #25242a; color: #85838d; }
+:root[data-theme="dark"] .client-payment-panel { border-color: #44404f; background: #2d2a37; }
+:root[data-theme="dark"] .client-payment-panel legend { color: #beb7ff; }
+:root[data-theme="dark"] .client-payment-panel legend small { color: #92909a; }
+:root[data-theme="dark"] .client-payment-models > button { border-color: #46434d; background: #323139; color: #aaa7b1; }
+:root[data-theme="dark"] .client-payment-models > button.active { border-color: #756dc2; background: #3a354e; color: #c0b9ff; }
+:root[data-theme="dark"] .client-payment-values label > span { color: #bbb8c2; }
+:root[data-theme="dark"] .client-payment-values label > div { border-color: #494650; background: #302f36; }
+:root[data-theme="dark"] .client-payment-values input { color: #e8e6eb; }
+:root[data-theme="dark"] .client-payment-unavailable { border-color: #5b4c32; background: #393124; color: #d6ad68; }
 :root[data-theme="dark"] .column-editor-modal form label > span,
 :root[data-theme="dark"] .column-editor-modal legend,
 :root[data-theme="dark"] .settings-form label > span { color: #c0bec8; }

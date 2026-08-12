@@ -1,8 +1,8 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { Building2, Eye, Laptop, LoaderCircle, Mail, MonitorCog, Moon, Palette, Pencil, Plus, Power, Save, Sun, Trash2, UserPlus, Users, X } from 'lucide-react';
+import { Building2, CircleDollarSign, Eye, Laptop, LoaderCircle, Mail, MonitorCog, Moon, PackageCheck, Palette, Pencil, Plus, Power, Save, Sun, Trash2, UserPlus, Users, Video, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import type { Client, MemberAvailability, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
+import type { BillingPricingModel, Client, ClientBillingSetting, MemberAvailability, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
 
 export function ClientsView({
   workspace,
@@ -18,28 +18,116 @@ export function ClientsView({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [billingSettings, setBillingSettings] = useState<ClientBillingSetting[]>([]);
+  const [billingAvailable, setBillingAvailable] = useState(true);
+  const [billingLoading, setBillingLoading] = useState(workspace.role === 'owner');
+  const [billingMode, setBillingMode] = useState<'none' | BillingPricingModel>('none');
+  const [amountUsd, setAmountUsd] = useState('');
+  const [bundleSize, setBundleSize] = useState('5');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isOwner = workspace.role === 'owner';
+
+  const loadBillingSettings = useCallback(async () => {
+    if (!supabase || !isOwner) {
+      setBillingLoading(false);
+      return;
+    }
+    setBillingLoading(true);
+    const { data, error: billingError } = await supabase
+      .from('client_billing_settings')
+      .select('*')
+      .eq('workspace_id', workspace.id);
+    if (billingError) {
+      const missingSchema = isMissingFinanceSchema(billingError.message);
+      setBillingAvailable(!missingSchema);
+      if (!missingSchema) setError(billingError.message);
+      setBillingLoading(false);
+      return;
+    }
+    setBillingAvailable(true);
+    setBillingSettings((data ?? []).map(normalizeBillingSetting));
+    setBillingLoading(false);
+  }, [isOwner, workspace.id]);
+
+  useEffect(() => { void loadBillingSettings(); }, [loadBillingSettings]);
 
   const resetForm = () => {
     setEditingId(null);
     setName('');
     setEmail('');
+    setBillingMode('none');
+    setAmountUsd('');
+    setBundleSize('5');
     setError(null);
   };
 
   const saveClient = async (event: FormEvent) => {
     event.preventDefault();
     if (!supabase || !name.trim()) return setError('Digite o nome do cliente.');
+    const parsedAmount = Number(amountUsd.replace(',', '.'));
+    const parsedBundleSize = billingMode === 'bundle' ? Number(bundleSize) : 1;
+    if (isOwner && billingMode !== 'none' && (!Number.isFinite(parsedAmount) || parsedAmount <= 0)) return setError('Digite um valor em dólar maior que zero.');
+    if (isOwner && billingMode === 'bundle' && (!Number.isInteger(parsedBundleSize) || parsedBundleSize < 2)) return setError('O pacote precisa ter pelo menos 2 vídeos.');
+
     setSaving(true);
     setError(null);
     const payload = { name: name.trim(), email: email.trim() || null };
-    const result = editingId
-      ? await supabase.from('clients').update(payload).eq('id', editingId)
-      : await supabase.from('clients').insert({ ...payload, workspace_id: workspace.id });
+    let clientId = editingId;
+    let createdClientId: string | null = null;
+    if (editingId) {
+      const { error: clientError } = await supabase.from('clients').update(payload).eq('id', editingId);
+      if (clientError) {
+        setSaving(false);
+        return setError(clientError.message);
+      }
+    } else {
+      const { data: createdClient, error: clientError } = await supabase
+        .from('clients')
+        .insert({ ...payload, workspace_id: workspace.id })
+        .select('id')
+        .single();
+      if (clientError || !createdClient) {
+        setSaving(false);
+        return setError(clientError?.message ?? 'Não foi possível criar o cliente.');
+      }
+      clientId = createdClient.id as string;
+      createdClientId = clientId;
+    }
+
+    if (isOwner && clientId && billingAvailable) {
+      const billingResult = billingMode === 'none'
+        ? await supabase.from('client_billing_settings').delete().eq('client_id', clientId)
+        : await supabase.from('client_billing_settings').upsert({
+          client_id: clientId,
+          workspace_id: workspace.id,
+          currency: 'USD',
+          pricing_model: billingMode,
+          amount_usd: parsedAmount,
+          bundle_size: parsedBundleSize,
+        }, { onConflict: 'client_id' });
+      if (billingResult.error) {
+        if (createdClientId) await supabase.from('clients').delete().eq('id', createdClientId);
+        setSaving(false);
+        return setError(isMissingFinanceSchema(billingResult.error.message)
+          ? 'Ative primeiro o módulo financeiro executando a migration 012 no Supabase.'
+          : billingResult.error.message);
+      }
+      if (billingMode !== 'none') {
+        const { error: syncError } = await supabase.rpc('sync_client_earnings', { target_client: clientId });
+        if (syncError) {
+          setSaving(false);
+          setEditingId(clientId);
+          await loadBillingSettings();
+          await onChanged();
+          return setError(`Cliente salvo, mas não foi possível sincronizar entregas anteriores: ${syncError.message}`);
+        }
+      }
+    }
+
     setSaving(false);
-    if (result.error) return setError(result.error.message);
     resetForm();
+    await loadBillingSettings();
     await onChanged();
   };
 
@@ -47,6 +135,10 @@ export function ClientsView({
     setEditingId(client.id);
     setName(client.name);
     setEmail(client.email ?? '');
+    const setting = billingSettings.find((item) => item.client_id === client.id);
+    setBillingMode(setting?.pricing_model ?? 'none');
+    setAmountUsd(setting ? String(setting.amount_usd) : '');
+    setBundleSize(setting ? String(setting.bundle_size) : '5');
     setError(null);
   };
 
@@ -68,6 +160,22 @@ export function ClientsView({
         <form className="settings-form" onSubmit={saveClient}>
           <label><span>Nome</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome do cliente" /></label>
           <label><span>E-mail</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="contato@cliente.com" /></label>
+          {isOwner && billingAvailable ? (
+            <fieldset className="client-payment-panel">
+              <legend><CircleDollarSign size={15} /><span><strong>Pagamento do cliente</strong><small>O valor será contabilizado quando o trabalho for entregue.</small></span></legend>
+              <div className="client-payment-models">
+                <button type="button" className={billingMode === 'none' ? 'active' : ''} onClick={() => setBillingMode('none')}><X size={15} /><span><strong>Não contabilizar</strong><small>Sem ganhos automáticos</small></span></button>
+                <button type="button" className={billingMode === 'per_video' ? 'active' : ''} onClick={() => setBillingMode('per_video')}><Video size={15} /><span><strong>Por vídeo</strong><small>Valor por entrega</small></span></button>
+                <button type="button" className={billingMode === 'bundle' ? 'active' : ''} onClick={() => setBillingMode('bundle')}><PackageCheck size={15} /><span><strong>Por pacote</strong><small>Valor a cada lote</small></span></button>
+              </div>
+              {billingMode !== 'none' ? (
+                <div className="client-payment-values">
+                  <label><span>Valor em USD</span><div><b>US$</b><input inputMode="decimal" value={amountUsd} onChange={(event) => setAmountUsd(event.target.value)} placeholder="200.00" /></div></label>
+                  {billingMode === 'bundle' ? <label><span>Vídeos no pacote</span><div><input type="number" min="2" max="1000" value={bundleSize} onChange={(event) => setBundleSize(event.target.value)} /><b>vídeos</b></div></label> : null}
+                </div>
+              ) : null}
+            </fieldset>
+          ) : isOwner ? <div className="client-payment-unavailable">Execute a migration 012 no Supabase para configurar pagamentos automáticos.</div> : null}
           {error ? <div className="panel-error">{error}</div> : null}
           <div className="form-actions">
             {editingId ? <button type="button" className="secondary-button" onClick={resetForm}>Cancelar</button> : null}
@@ -81,11 +189,12 @@ export function ClientsView({
         <div className="client-list">
           {clients.map((client) => {
             const taskCount = tasks.filter((task) => task.client_id === client.id).length;
+            const setting = billingSettings.find((item) => item.client_id === client.id);
             return (
               <article className="client-row" key={client.id}>
                 <span className="client-avatar">{client.name.slice(0, 1).toUpperCase()}</span>
-                <div className="client-copy"><strong>{client.name}</strong><small>{client.email || 'Sem e-mail'} · {taskCount} {taskCount === 1 ? 'trabalho' : 'trabalhos'}</small></div>
-                <button onClick={() => editClient(client)} aria-label={`Editar ${client.name}`}><Pencil size={15} /></button>
+                <div className="client-copy"><strong>{client.name}</strong><small>{client.email || 'Sem e-mail'} · {taskCount} {taskCount === 1 ? 'trabalho' : 'trabalhos'}{isOwner ? ` · ${setting ? billingDescription(setting) : 'sem pagamento automático'}` : ''}</small></div>
+                <button disabled={isOwner && billingLoading} onClick={() => editClient(client)} aria-label={`Editar ${client.name}`}><Pencil size={15} /></button>
                 <button className="danger-icon" onClick={() => void deleteClient(client)} aria-label={`Excluir ${client.name}`}><Trash2 size={15} /></button>
               </article>
             );
@@ -485,6 +594,22 @@ function availabilityLabel(availability: MemberAvailability) {
   if (availability === 'busy') return 'Ocupado';
   if (availability === 'away') return 'Ausente';
   return 'Disponível';
+}
+
+function normalizeBillingSetting(row: Record<string, unknown>) {
+  return { ...row, amount_usd: Number(row.amount_usd), bundle_size: Number(row.bundle_size) } as ClientBillingSetting;
+}
+
+function billingDescription(setting: ClientBillingSetting) {
+  const amount = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(setting.amount_usd);
+  return setting.pricing_model === 'per_video'
+    ? `${amount} por vídeo`
+    : `${amount} a cada ${setting.bundle_size} vídeos`;
+}
+
+function isMissingFinanceSchema(message: string) {
+  const normalized = message.toLowerCase();
+  return normalized.includes('client_billing_settings') || normalized.includes('schema cache');
 }
 
 function translateMemberError(message: string) {

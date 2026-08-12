@@ -1,22 +1,18 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import {
   BadgeDollarSign,
   Banknote,
   CheckCircle2,
-  CircleDollarSign,
   Clock3,
   LoaderCircle,
-  PackageCheck,
   RefreshCw,
-  Save,
   TrendingUp,
   Video,
   WalletCards,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import type {
-  BillingPricingModel,
   Client,
   ClientBillingSetting,
   Earning,
@@ -29,27 +25,12 @@ type Props = {
   clients: Client[];
 };
 
-type BillingDraft = {
-  clientId: string;
-  pricingModel: BillingPricingModel;
-  amountUsd: string;
-  bundleSize: string;
-};
-
-const emptyDraft: BillingDraft = {
-  clientId: '',
-  pricingModel: 'per_video',
-  amountUsd: '',
-  bundleSize: '5',
-};
-
 export function FinanceView({ workspace, clients }: Props) {
   const [settings, setSettings] = useState<ClientBillingSetting[]>([]);
   const [earnings, setEarnings] = useState<Earning[]>([]);
   const [events, setEvents] = useState<EarningEvent[]>([]);
   const [rate, setRate] = useState<EditFlowUsdBrlRate | null>(null);
   const [month, setMonth] = useState(currentMonth());
-  const [draft, setDraft] = useState<BillingDraft>(emptyDraft);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [rateLoading, setRateLoading] = useState(false);
@@ -124,7 +105,6 @@ export function FinanceView({ workspace, clients }: Props) {
   const estimatedBrl = rate ? monthUsd * rate.rate : null;
   const pendingBrl = rate ? pendingUsd * rate.rate : null;
   const producedVideos = sum(monthlyEarnings.map((earning) => earning.item_count));
-  const selectedClient = clients.find((client) => client.id === draft.clientId);
 
   const clientSummaries = useMemo(() => clients.map((client) => {
     const clientEarnings = monthlyEarnings.filter((earning) => earning.client_id === client.id);
@@ -138,45 +118,6 @@ export function FinanceView({ workspace, clients }: Props) {
       pendingItems: unallocated.length,
     };
   }).filter((summary) => summary.setting || summary.amountUsd), [clients, events, monthlyEarnings, settings]);
-
-  const selectClient = (clientId: string) => {
-    const setting = settings.find((item) => item.client_id === clientId);
-    setDraft(setting ? {
-      clientId,
-      pricingModel: setting.pricing_model,
-      amountUsd: String(setting.amount_usd),
-      bundleSize: String(setting.bundle_size),
-    } : { ...emptyDraft, clientId });
-    setError(null);
-  };
-
-  const saveBilling = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!supabase || !selectedClient) return setError('Escolha um cliente.');
-    const amountUsd = Number(draft.amountUsd.replace(',', '.'));
-    const bundleSize = draft.pricingModel === 'per_video' ? 1 : Number(draft.bundleSize);
-    if (!Number.isFinite(amountUsd) || amountUsd <= 0) return setError('Digite um valor em dólar maior que zero.');
-    if (draft.pricingModel === 'bundle' && (!Number.isInteger(bundleSize) || bundleSize < 2)) return setError('O pacote precisa ter pelo menos 2 vídeos.');
-
-    setSaving(true);
-    setError(null);
-    const { error: saveError } = await supabase.from('client_billing_settings').upsert({
-      client_id: selectedClient.id,
-      workspace_id: workspace.id,
-      currency: 'USD',
-      pricing_model: draft.pricingModel,
-      amount_usd: amountUsd,
-      bundle_size: bundleSize,
-    }, { onConflict: 'client_id' });
-    if (saveError) {
-      setSaving(false);
-      return setError(saveError.message);
-    }
-    const { error: syncError } = await supabase.rpc('sync_client_earnings', { target_client: selectedClient.id });
-    setSaving(false);
-    if (syncError) return setError(syncError.message);
-    await loadFinance(true);
-  };
 
   const markReceived = async (earning: Earning) => {
     if (!supabase || !rate) return setError('A cotação precisa estar disponível para registrar o recebimento.');
@@ -245,39 +186,19 @@ export function FinanceView({ workspace, clients }: Props) {
         <article><span className="blue"><Video size={18} /></span><div><small>Vídeos contabilizados</small><strong>{producedVideos}</strong><em>{monthlyEarnings.length} lançamentos</em></div></article>
       </section>
 
-      <div className="finance-grid">
-        <section className="finance-card billing-config-card">
-          <header><span><CircleDollarSign size={18} /></span><div><h3>Pagamento por cliente</h3><p>Configure valores em dólar por vídeo ou pacote.</p></div></header>
-          <form className="billing-form" onSubmit={saveBilling}>
-            <label className="billing-client"><span>Cliente</span><select value={draft.clientId} onChange={(event) => selectClient(event.target.value)}><option value="">Escolha um cliente</option>{clients.map((client) => <option value={client.id} key={client.id}>{client.name}</option>)}</select></label>
-            <div className="billing-model">
-              <button type="button" className={draft.pricingModel === 'per_video' ? 'active' : ''} onClick={() => setDraft((current) => ({ ...current, pricingModel: 'per_video' }))}><Video size={16} /><span><strong>Por vídeo</strong><small>Receita a cada entrega</small></span></button>
-              <button type="button" className={draft.pricingModel === 'bundle' ? 'active' : ''} onClick={() => setDraft((current) => ({ ...current, pricingModel: 'bundle' }))}><PackageCheck size={16} /><span><strong>Por pacote</strong><small>Receita ao completar o lote</small></span></button>
-            </div>
-            <div className="billing-values">
-              <label><span>Valor em USD</span><div><b>US$</b><input inputMode="decimal" value={draft.amountUsd} onChange={(event) => setDraft((current) => ({ ...current, amountUsd: event.target.value }))} placeholder="200.00" /></div></label>
-              {draft.pricingModel === 'bundle' ? <label><span>Vídeos no pacote</span><div><input type="number" min="2" max="1000" value={draft.bundleSize} onChange={(event) => setDraft((current) => ({ ...current, bundleSize: event.target.value }))} /><b>vídeos</b></div></label> : null}
-            </div>
-            {rate && Number(draft.amountUsd.replace(',', '.')) > 0 ? <p className="billing-preview">Estimativa atual: <strong>{formatBrl(Number(draft.amountUsd.replace(',', '.')) * rate.rate)}</strong></p> : null}
-            <button className="primary-button" disabled={saving || !clients.length}>{saving ? <LoaderCircle className="spinner" size={15} /> : <Save size={15} />}Salvar configuração</button>
-          </form>
-        </section>
-
-        <section className="finance-card client-earnings-card">
-          <header><span><WalletCards size={18} /></span><div><h3>Resumo por cliente</h3><p>Valores gerados no mês selecionado.</p></div></header>
+      <section className="finance-card client-earnings-card finance-client-summary">
+          <header><span><WalletCards size={18} /></span><div><h3>Resumo por cliente</h3><p>Valores gerados no mês selecionado. Configure o pagamento ao criar ou editar um cliente.</p></div></header>
           <div className="client-earning-list">
             {clientSummaries.map(({ client, setting, amountUsd, itemCount, pendingItems }) => (
               <article key={client.id}>
                 <span className="finance-client-avatar">{client.name.slice(0,1).toUpperCase()}</span>
                 <div><strong>{client.name}</strong><small>{setting ? billingDescription(setting) : 'Sem configuração atual'}{setting?.pricing_model === 'bundle' && pendingItems ? ` · ${pendingItems}/${setting.bundle_size} no próximo pacote` : ''}</small></div>
                 <em>{rate ? formatBrl(amountUsd * rate.rate) : formatUsd(amountUsd)}<small>{itemCount} vídeos</small></em>
-                <button type="button" onClick={() => selectClient(client.id)}>Editar</button>
               </article>
             ))}
             {!clientSummaries.length ? <div className="finance-list-empty">Configure o primeiro cliente para começar a contabilizar as entregas.</div> : null}
           </div>
-        </section>
-      </div>
+      </section>
 
       <section className="finance-card earnings-history-card">
         <header><span><CheckCircle2 size={18} /></span><div><h3>Lançamentos do mês</h3><p>O valor em reais é estimado até você confirmar o recebimento.</p></div></header>
