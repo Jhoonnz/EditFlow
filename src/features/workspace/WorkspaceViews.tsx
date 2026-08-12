@@ -490,13 +490,11 @@ export function TeamView({
   );
 }
 
-type SettingsTab = 'general' | 'profile' | 'appearance' | 'notifications' | 'security' | 'application';
+export type SettingsTab = 'general' | 'profile' | 'security' | 'application';
 
 const settingsTabs: Array<{ id: SettingsTab; label: string; icon: typeof Building2 }> = [
   { id: 'general', label: 'Geral', icon: Building2 },
   { id: 'profile', label: 'Meu perfil', icon: UserRound },
-  { id: 'appearance', label: 'Aparência', icon: Palette },
-  { id: 'notifications', label: 'Notificações', icon: Bell },
   { id: 'security', label: 'Segurança', icon: ShieldCheck },
   { id: 'application', label: 'Aplicativo', icon: AppWindow },
 ];
@@ -506,6 +504,8 @@ export function SettingsView({
   workspace,
   tasks,
   currentAvailability,
+  requestedTab,
+  requestedTabToken,
   onWorkspacesChanged,
   onProfileChanged,
 }: {
@@ -513,6 +513,8 @@ export function SettingsView({
   workspace: WorkspaceSummary;
   tasks: Task[];
   currentAvailability: WorkspaceMember['availability'];
+  requestedTab?: SettingsTab;
+  requestedTabToken?: number;
   onWorkspacesChanged: () => Promise<void>;
   onProfileChanged: () => Promise<void>;
 }) {
@@ -540,6 +542,12 @@ export function SettingsView({
   const canManage = workspace.role === 'owner' || workspace.role === 'admin';
 
   useEffect(() => setWorkspaceName(workspace.name), [workspace.id, workspace.name]);
+  useEffect(() => {
+    if (!requestedTab) return;
+    setActiveTab(requestedTab);
+    setError(null);
+    setSuccess(null);
+  }, [requestedTab, requestedTabToken]);
   useEffect(() => { void window.editflow.getVersion().then(setAppVersion); }, []);
   useEffect(() => { void window.editflow.getDesktopPreferences().then(setDesktopPreferences); }, []);
   useEffect(() => {
@@ -835,23 +843,6 @@ export function SettingsView({
           {cropSource ? <div className="profile-crop-backdrop" role="dialog" aria-modal="true" aria-label="Recortar foto de perfil" onMouseDown={(event) => { if (event.target === event.currentTarget && !avatarSaving) setCropSource(null); }}><section className="profile-crop-modal"><header><div><strong>Ajustar foto</strong><small>Centralize seu rosto dentro do quadro.</small></div><button type="button" disabled={avatarSaving} onClick={() => setCropSource(null)} aria-label="Fechar"><X size={17} /></button></header><div className="profile-crop-preview"><img src={cropSource} alt="Prévia do recorte" style={{ transform: `translate(${cropX * .45}px, ${cropY * .45}px) scale(${cropZoom})` }} /></div><div className="profile-crop-controls"><label><span>Zoom</span><input type="range" min="1" max="3" step="0.05" value={cropZoom} onChange={(event) => setCropZoom(Number(event.target.value))} /></label><label><span>Horizontal</span><input type="range" min="-100" max="100" value={cropX} onChange={(event) => setCropX(Number(event.target.value))} /></label><label><span>Vertical</span><input type="range" min="-100" max="100" value={cropY} onChange={(event) => setCropY(Number(event.target.value))} /></label></div><footer><button type="button" className="secondary-button" disabled={avatarSaving} onClick={() => setCropSource(null)}>Cancelar</button><button type="button" className="primary-button" disabled={avatarSaving} onClick={() => void saveCroppedAvatar()}>{avatarSaving ? <LoaderCircle className="spinner" size={15} /> : <Camera size={15} />}Usar esta foto</button></footer></section></div> : null}
         </section> : null}
 
-        {activeTab === 'appearance' ? <section className="content-card settings-page-card appearance-settings-card">
-          <div className="content-card-heading"><span className="content-icon"><Palette size={18} /></span><div><h2>Aparência</h2><p>Escolha como o EditFlow deve aparecer neste computador.</p></div></div>
-          {desktopPreferences ? <div className="theme-options" role="radiogroup" aria-label="Tema do aplicativo">
-            <ThemeOption icon={Sun} title="Claro" description="Visual limpo e iluminado." active={desktopPreferences.theme === 'light'} saving={desktopSaving === 'theme'} onClick={() => void updateDesktopPreference('theme', 'light')} />
-            <ThemeOption icon={Moon} title="Escuro" description="Grafite com cores vibrantes." active={desktopPreferences.theme === 'dark'} saving={desktopSaving === 'theme'} onClick={() => void updateDesktopPreference('theme', 'dark')} />
-            <ThemeOption icon={Laptop} title="Automático" description="Acompanha o tema do Windows." active={desktopPreferences.theme === 'system'} saving={desktopSaving === 'theme'} onClick={() => void updateDesktopPreference('theme', 'system')} />
-          </div> : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
-        </section> : null}
-
-        {activeTab === 'notifications' ? <section className="content-card settings-page-card">
-          <div className="content-card-heading"><span className="content-icon"><Bell size={18} /></span><div><h2>Notificações</h2><p>Controle os alertas exibidos pelo Windows.</p></div></div>
-          {desktopPreferences ? <div className="desktop-preference-list">
-            <DesktopPreference icon={Bell} title="Notificações do Windows" description="Mostra alertas de mensagens, novas tarefas, comentários, ajustes e movimentações." checked={desktopPreferences.nativeNotifications} saving={desktopSaving === 'nativeNotifications'} onChange={(checked) => void updateDesktopPreference('nativeNotifications', checked)} />
-            <div className="notification-events-card"><strong>Eventos acompanhados</strong><div><span>Mensagens da equipe</span><span>Tarefas atribuídas</span><span>Comentários e ajustes</span><span>Mudanças no fluxo</span><span>Convites aceitos</span></div><small>Os avisos continuam disponíveis dentro do EditFlow mesmo quando os alertas do Windows estiverem desativados.</small></div>
-          </div> : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
-        </section> : null}
-
         {activeTab === 'security' ? <section className="content-card settings-page-card">
           <div className="content-card-heading"><span className="content-icon"><LockKeyhole size={18} /></span><div><h2>Segurança</h2><p>Atualize a senha usada para acessar sua conta.</p></div></div>
           <div className="security-account-row"><ShieldCheck size={18} /><span><strong>Conta protegida pelo Supabase</strong><small>{user.email}</small></span></div>
@@ -869,6 +860,21 @@ export function SettingsView({
               <DesktopPreference icon={Power} title="Iniciar com o Windows" description="Abre o EditFlow automaticamente quando você entrar no computador." checked={desktopPreferences.launchAtLogin} saving={desktopSaving === 'launchAtLogin'} onChange={(checked) => void updateDesktopPreference('launchAtLogin', checked)} />
               <DesktopPreference icon={X} title="Manter ativo ao clicar no X" description="Esconde a janela nos ícones ocultos para continuar funcionando." checked={desktopPreferences.closeToTray} saving={desktopSaving === 'closeToTray'} onChange={(checked) => void updateDesktopPreference('closeToTray', checked)} />
               <DesktopPreference icon={Eye} title="Mostrar resumo ao abrir" description="Exibe a tela de boas-vindas com tarefas, mensagens e prazos." checked={desktopPreferences.showWelcome} saving={desktopSaving === 'showWelcome'} onChange={(checked) => void updateDesktopPreference('showWelcome', checked)} />
+            </div> : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
+          </section>
+          <section className="content-card settings-page-card appearance-settings-card">
+            <div className="content-card-heading"><span className="content-icon"><Palette size={18} /></span><div><h2>Aparência</h2><p>Escolha como o EditFlow deve aparecer neste computador.</p></div></div>
+            {desktopPreferences ? <div className="theme-options" role="radiogroup" aria-label="Tema do aplicativo">
+              <ThemeOption icon={Sun} title="Claro" description="Visual limpo e iluminado." active={desktopPreferences.theme === 'light'} saving={desktopSaving === 'theme'} onClick={() => void updateDesktopPreference('theme', 'light')} />
+              <ThemeOption icon={Moon} title="Escuro" description="Grafite com cores vibrantes." active={desktopPreferences.theme === 'dark'} saving={desktopSaving === 'theme'} onClick={() => void updateDesktopPreference('theme', 'dark')} />
+              <ThemeOption icon={Laptop} title="Automático" description="Acompanha o tema do Windows." active={desktopPreferences.theme === 'system'} saving={desktopSaving === 'theme'} onClick={() => void updateDesktopPreference('theme', 'system')} />
+            </div> : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
+          </section>
+          <section className="content-card settings-page-card">
+            <div className="content-card-heading"><span className="content-icon"><Bell size={18} /></span><div><h2>Notificações</h2><p>Controle os alertas exibidos pelo Windows.</p></div></div>
+            {desktopPreferences ? <div className="desktop-preference-list">
+              <DesktopPreference icon={Bell} title="Notificações do Windows" description="Mostra alertas de mensagens, novas tarefas, comentários, ajustes e movimentações." checked={desktopPreferences.nativeNotifications} saving={desktopSaving === 'nativeNotifications'} onChange={(checked) => void updateDesktopPreference('nativeNotifications', checked)} />
+              <div className="notification-events-card"><strong>Eventos acompanhados</strong><div><span>Mensagens da equipe</span><span>Tarefas atribuídas</span><span>Comentários e ajustes</span><span>Mudanças no fluxo</span><span>Convites aceitos</span></div><small>Os avisos continuam disponíveis dentro do EditFlow mesmo quando os alertas do Windows estiverem desativados.</small></div>
             </div> : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
           </section>
           <section className="content-card update-settings-row"><div><h2>Atualizações</h2><p>Versão instalada: {appVersion}. O EditFlow também verifica automaticamente ao abrir.</p></div><button className="secondary-button" onClick={() => void checkForUpdates()}>Verificar atualizações</button></section>

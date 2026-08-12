@@ -35,7 +35,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import { ChatPanel, type ChatOpenRequest } from '../chat/ChatPanel';
 import { FinanceView } from '../finance/FinanceView';
-import { ClientsView, SettingsView, TeamView } from '../workspace/WorkspaceViews';
+import { ClientsView, SettingsView, TeamView, type SettingsTab } from '../workspace/WorkspaceViews';
 import type {
   AppNotification,
   Board,
@@ -94,6 +94,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [search, setSearch] = useState('');
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(navigator.onLine ? 'connecting' : 'offline');
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [settingsNavigation, setSettingsNavigation] = useState<{ tab: SettingsTab; token: number }>({ tab: 'general', token: 0 });
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [dropColumnId, setDropColumnId] = useState<string | null>(null);
   const [taskDropTarget, setTaskDropTarget] = useState<{ taskId: string; edge: 'before' | 'after' } | null>(null);
@@ -113,6 +114,10 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notificationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleChatRequestHandled = useCallback(() => setChatRequest(null), []);
+  const openSettings = (tab: SettingsTab) => {
+    setSettingsNavigation((current) => ({ tab, token: current.token + 1 }));
+    setView('settings');
+  };
 
   const loadBoard = useCallback(async (quiet = false) => {
     if (!supabase) return;
@@ -411,6 +416,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           : 'available';
     return { ...member, availability };
   }), [members, presenceActivity, presenceReady, tasks]);
+  const currentUserMember = liveMembers.find((member) => member.user_id === user.id);
 
   const filteredTasks = useMemo(() => {
     const term = search.trim().toLocaleLowerCase('pt-BR');
@@ -658,12 +664,14 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           {syncStatus === 'offline' || syncStatus === 'error' ? <WifiOff size={14} /> : <Wifi size={14} />}
           <span>{syncLabel(syncStatus)}</span>
         </button>
-        <button className={`nav-item ${view === 'settings' ? 'active' : ''}`} onClick={() => setView('settings')}><Settings size={18} /><span>Configurações</span></button>
-        <button className="account-row" onClick={() => void supabase?.auth.signOut()} title="Sair da conta">
-          <span className="user-avatar">{(user.email?.[0] ?? 'U').toUpperCase()}</span>
-          <span className="account-copy"><strong>{user.user_metadata.full_name || 'Minha conta'}</strong><small>{user.email}</small></span>
-          <LogOut size={16} />
-        </button>
+        <button className={`nav-item ${view === 'settings' ? 'active' : ''}`} onClick={() => openSettings('general')}><Settings size={18} /><span>Configurações</span></button>
+        <div className="account-row">
+          <button type="button" className="account-profile-button" onClick={() => openSettings('profile')} title="Abrir meu perfil">
+            <span className="user-avatar">{currentUserMember?.avatar_url ? <img src={currentUserMember.avatar_url} alt="Sua foto de perfil" /> : (user.email?.[0] ?? 'U').toUpperCase()}</span>
+            <span className="account-copy"><strong>{currentUserMember?.display_name || user.user_metadata.full_name || 'Minha conta'}</strong><small>{user.email}</small></span>
+          </button>
+          <button type="button" className="account-logout-button" onClick={() => void supabase?.auth.signOut()} title="Sair da conta" aria-label="Sair da conta"><LogOut size={16} /></button>
+        </div>
       </aside>
 
       <section className="dashboard-main">
@@ -805,7 +813,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         {view === 'clients' && canManagePlanning ? <ClientsView workspace={workspace} clients={clients} tasks={tasks} onChanged={() => loadBoard(true)} /> : null}
         {view === 'team' ? <TeamView userId={user.id} workspace={workspace} members={liveMembers} tasks={tasks} onChanged={() => loadBoard(true)} onMemberProfile={setProfileMemberId} onMemberTasks={(member) => { setSearch(member.display_name); setView('board'); }} /> : null}
         {view === 'finance' && workspace.role === 'owner' ? <FinanceView workspace={workspace} clients={clients} tasks={tasks} /> : null}
-        {view === 'settings' ? <SettingsView user={user} workspace={workspace} tasks={tasks} currentAvailability={liveMembers.find((member) => member.user_id === user.id)?.availability ?? 'offline'} onWorkspacesChanged={onWorkspacesChanged} onProfileChanged={() => loadBoard(true)} /> : null}
+        {view === 'settings' ? <SettingsView user={user} workspace={workspace} tasks={tasks} currentAvailability={currentUserMember?.availability ?? 'offline'} requestedTab={settingsNavigation.tab} requestedTabToken={settingsNavigation.token} onWorkspacesChanged={onWorkspacesChanged} onProfileChanged={() => loadBoard(true)} /> : null}
       </section>
 
       {editor && board && columns[0] ? (

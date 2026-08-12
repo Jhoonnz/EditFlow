@@ -1,7 +1,7 @@
 {
   "name": "editflow",
   "productName": "EditFlow",
-  "version": "0.1.30",
+  "version": "0.1.31",
   "description": "Gestao de producao para equipes de edicao.",
   "author": "EditFlow",
   "main": ".vite/build/main.js",
@@ -50,7 +50,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
@@ -64,7 +66,9 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "EditFlow",
-      "installerLanguages": ["pt_BR"],
+      "installerLanguages": [
+        "pt_BR"
+      ],
       "artifactName": "EditFlow-Setup-${version}.${ext}"
     }
   }
