@@ -26,6 +26,7 @@ type DesktopPreferences = {
   launchAtLogin: boolean;
   closeToTray: boolean;
   showWelcome: boolean;
+  nativeNotifications: boolean;
   theme: 'light' | 'dark' | 'system';
 };
 
@@ -33,6 +34,7 @@ const defaultDesktopPreferences: DesktopPreferences = {
   launchAtLogin: false,
   closeToTray: true,
   showWelcome: true,
+  nativeNotifications: true,
   theme: 'light',
 };
 
@@ -361,7 +363,7 @@ ipcMain.handle('desktop:update-preferences', async (_event, value: unknown) => {
   return desktopPreferences;
 });
 ipcMain.handle('notifications:show', (event, value: unknown) => {
-  if (!ElectronNotification.isSupported() || !isNativeNotificationPayload(value)) return false;
+  if (!desktopPreferences.nativeNotifications || !ElectronNotification.isSupported() || !isNativeNotificationPayload(value)) return false;
 
   const targetWindow = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
   const notification = new ElectronNotification({
@@ -550,6 +552,7 @@ function sanitizeDesktopPreferences(value: unknown): DesktopPreferences {
     launchAtLogin: typeof saved.launchAtLogin === 'boolean' ? saved.launchAtLogin : defaultDesktopPreferences.launchAtLogin,
     closeToTray: typeof saved.closeToTray === 'boolean' ? saved.closeToTray : defaultDesktopPreferences.closeToTray,
     showWelcome: typeof saved.showWelcome === 'boolean' ? saved.showWelcome : defaultDesktopPreferences.showWelcome,
+    nativeNotifications: typeof saved.nativeNotifications === 'boolean' ? saved.nativeNotifications : defaultDesktopPreferences.nativeNotifications,
     theme,
   };
 }

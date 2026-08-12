@@ -34,7 +34,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { FinanceView } from '../finance/FinanceView';
-import { ClientsView, SettingsView } from '../workspace/WorkspaceViews';
+import { ClientsView, SettingsView, TeamView } from '../workspace/WorkspaceViews';
 import type {
   AppNotification,
   Board,
@@ -65,7 +65,7 @@ type Props = {
 };
 
 type SyncStatus = 'connecting' | 'connected' | 'offline' | 'error';
-type DashboardView = 'board' | 'clients' | 'finance' | 'settings';
+type DashboardView = 'board' | 'clients' | 'team' | 'finance' | 'settings';
 
 const emptyDraft: TaskDraft = {
   title: '',
@@ -495,6 +495,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         <nav className="sidebar-nav" aria-label="Navegação principal">
           <button className={`nav-item ${view === 'board' ? 'active' : ''}`} onClick={() => setView('board')}><LayoutDashboard size={18} /><span>Produção</span></button>
           {canManagePlanning ? <button className={`nav-item ${view === 'clients' ? 'active' : ''}`} onClick={() => setView('clients')}><Users size={18} /><span>Clientes</span><small>{clients.length}</small></button> : null}
+          <button className={`nav-item ${view === 'team' ? 'active' : ''}`} onClick={() => setView('team')}><Users size={18} /><span>Equipe</span><small>{members.length}</small></button>
           {workspace.role === 'owner' ? <button className={`nav-item ${view === 'finance' ? 'active' : ''}`} onClick={() => setView('finance')}><WalletCards size={18} /><span>Ganhos</span></button> : null}
         </nav>
 
@@ -515,7 +516,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         <header className="dashboard-header">
           <div>
             <p>ESPAÇO DE TRABALHO</p>
-            <h1>{view === 'board' ? board?.name ?? 'Produção' : view === 'clients' ? 'Clientes' : view === 'finance' ? 'Ganhos' : 'Configurações'}</h1>
+            <h1>{view === 'board' ? board?.name ?? 'Produção' : view === 'clients' ? 'Clientes' : view === 'team' ? 'Equipe' : view === 'finance' ? 'Ganhos' : 'Configurações'}</h1>
           </div>
           <div className="header-actions">
             <div className="notification-wrap">
@@ -648,8 +649,9 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           })}
         </div> : null}
         {view === 'clients' && canManagePlanning ? <ClientsView workspace={workspace} clients={clients} tasks={tasks} onChanged={() => loadBoard(true)} /> : null}
+        {view === 'team' ? <TeamView userId={user.id} workspace={workspace} members={members} tasks={tasks} onChanged={() => loadBoard(true)} onMemberProfile={setProfileMemberId} onMemberTasks={(member) => { setSearch(member.display_name); setView('board'); }} /> : null}
         {view === 'finance' && workspace.role === 'owner' ? <FinanceView workspace={workspace} clients={clients} /> : null}
-        {view === 'settings' ? <SettingsView user={user} workspace={workspace} onWorkspacesChanged={onWorkspacesChanged} onMemberProfile={setProfileMemberId} /> : null}
+        {view === 'settings' ? <SettingsView user={user} workspace={workspace} onWorkspacesChanged={onWorkspacesChanged} /> : null}
       </section>
 
       {editor && board && columns[0] ? (

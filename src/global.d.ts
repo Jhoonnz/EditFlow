@@ -37,6 +37,7 @@ type EditFlowDesktopPreferences = {
   launchAtLogin: boolean;
   closeToTray: boolean;
   showWelcome: boolean;
+  nativeNotifications: boolean;
   theme: 'light' | 'dark' | 'system';
 };
 

@@ -1,9 +1,9 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { Building2, CircleDollarSign, Eye, ExternalLink, Laptop, LoaderCircle, Mail, MonitorCog, Moon, PackageCheck, Palette, Pencil, Plus, Power, RefreshCw, Save, Sun, Trash2, UserPlus, Users, Video, X, Youtube } from 'lucide-react';
+import { AppWindow, Bell, Building2, CircleDollarSign, Eye, ExternalLink, KeyRound, Laptop, ListVideo, LoaderCircle, LockKeyhole, Mail, MonitorCog, Moon, MoreHorizontal, PackageCheck, Palette, Pencil, Plus, Power, RefreshCw, Save, Search, ShieldCheck, Sun, Trash2, UserPlus, UserRound, Users, Video, X, Youtube } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { estimateNetUsd, paymentFeeRule, paymentFeeRules, paymentMethodLabel } from '../finance/paymentFees';
-import type { BillingPricingModel, Client, ClientBillingSetting, MemberAvailability, PaymentMethod, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
+import type { BillingPricingModel, Client, ClientBillingSetting, PaymentMethod, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
 
 export function ClientsView({
   workspace,
@@ -331,119 +331,72 @@ export function ClientsView({
   );
 }
 
-export function SettingsView({
-  user,
+type TeamFilter = 'all' | 'available' | 'admins';
+
+export function TeamView({
+  userId,
   workspace,
-  onWorkspacesChanged,
+  members,
+  tasks,
+  onChanged,
   onMemberProfile,
+  onMemberTasks,
 }: {
-  user: User;
+  userId: string;
   workspace: WorkspaceSummary;
-  onWorkspacesChanged: () => Promise<void>;
+  members: WorkspaceMember[];
+  tasks: Task[];
+  onChanged: () => Promise<void>;
   onMemberProfile: (memberId: string) => void;
+  onMemberTasks: (member: WorkspaceMember) => void;
 }) {
-  const [workspaceName, setWorkspaceName] = useState(workspace.name);
-  const [displayName, setDisplayName] = useState(String(user.user_metadata.full_name ?? ''));
-  const [members, setMembers] = useState<WorkspaceMember[]>([]);
-  const [pendingInvitations, setPendingInvitations] = useState<WorkspaceInvitation[]>([]);
+  const [filter, setFilter] = useState<TeamFilter>('all');
+  const [search, setSearch] = useState('');
+  const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<Exclude<WorkspaceRole, 'owner'>>('editor');
+  const [pendingInvitations, setPendingInvitations] = useState<WorkspaceInvitation[]>([]);
+  const [memberMenuId, setMemberMenuId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [appVersion, setAppVersion] = useState('...');
-  const [desktopPreferences, setDesktopPreferences] = useState<EditFlowDesktopPreferences | null>(null);
-  const [desktopSaving, setDesktopSaving] = useState<keyof EditFlowDesktopPreferences | null>(null);
   const canManage = workspace.role === 'owner' || workspace.role === 'admin';
 
-  useEffect(() => setWorkspaceName(workspace.name), [workspace.id, workspace.name]);
-  useEffect(() => { void window.editflow.getVersion().then(setAppVersion); }, []);
-  useEffect(() => { void window.editflow.getDesktopPreferences().then(setDesktopPreferences); }, []);
-
-  const loadMembers = useCallback(async () => {
-    if (!supabase) return;
-    const [membershipResult, invitationResult] = await Promise.all([
-      supabase.from('workspace_members').select('user_id, role').eq('workspace_id', workspace.id),
-      canManage
-        ? supabase.from('workspace_invitations').select('id, workspace_id, email, role, status, expires_at, created_at').eq('workspace_id', workspace.id).eq('status', 'pending').order('created_at', { ascending: false })
-        : Promise.resolve({ data: [], error: null }),
-    ]);
-    const membershipError = membershipResult.error ?? invitationResult.error;
-    if (membershipError) return setError(membershipError.message);
-    const memberships = membershipResult.data ?? [];
-    const ids = memberships.map((item) => item.user_id as string);
-    const profileResult = ids.length
-      ? await supabase.rpc('get_workspace_member_profiles', { target_workspace: workspace.id })
-      : { data: [], error: null };
-    let profileRows = (profileResult.data ?? []) as Array<{
-      user_id: string;
-      display_name: string;
-      email: string | null;
-      avatar_url: string | null;
-      availability: MemberAvailability;
-    }>;
-    if (profileResult.error && ids.length) {
-      const fallbackProfiles = await supabase.from('profiles').select('id, display_name, avatar_url').in('id', ids);
-      if (fallbackProfiles.error) return setError(fallbackProfiles.error.message);
-      profileRows = (fallbackProfiles.data ?? []).map((profile) => ({
-        user_id: profile.id as string,
-        display_name: profile.display_name as string,
-        email: null,
-        avatar_url: profile.avatar_url as string | null,
-        availability: 'available',
-      }));
-    }
-    const profilesById = new Map(profileRows.map((profile) => [profile.user_id, profile]));
-    setMembers(memberships.map((item) => ({
-      user_id: item.user_id as string,
-      role: item.role as WorkspaceRole,
-      display_name: profilesById.get(item.user_id as string)?.display_name || (item.user_id === user.id ? user.email || 'Você' : 'Membro'),
-      email: profilesById.get(item.user_id as string)?.email ?? undefined,
-      avatar_url: profilesById.get(item.user_id as string)?.avatar_url ?? null,
-      availability: profilesById.get(item.user_id as string)?.availability ?? 'available',
-    })));
-    setPendingInvitations((invitationResult.data ?? []).map((invitation) => ({
-      id: invitation.id as string,
-      workspace_id: invitation.workspace_id as string,
+  const loadInvitations = useCallback(async () => {
+    if (!supabase || !canManage) return setPendingInvitations([]);
+    const { data, error: invitationError } = await supabase
+      .from('workspace_invitations')
+      .select('id, workspace_id, email, role, status, expires_at, created_at')
+      .eq('workspace_id', workspace.id)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+    if (invitationError) return setError(invitationError.message);
+    setPendingInvitations((data ?? []).map((invitation) => ({
+      ...invitation,
       workspace_name: workspace.name,
-      email: invitation.email as string,
-      role: invitation.role as WorkspaceInvitation['role'],
-      status: invitation.status as WorkspaceInvitation['status'],
-      expires_at: invitation.expires_at as string,
-      created_at: invitation.created_at as string,
-    })));
-  }, [canManage, user.email, user.id, workspace.id, workspace.name]);
+    })) as WorkspaceInvitation[]);
+  }, [canManage, workspace.id, workspace.name]);
 
-  useEffect(() => { void loadMembers(); }, [loadMembers]);
+  useEffect(() => { void loadInvitations(); }, [loadInvitations]);
 
   useEffect(() => {
-    if (!supabase) return;
+    if (!supabase || !canManage) return;
     const realtimeClient = supabase;
     const channel = realtimeClient
-      .channel(`editflow-team-settings:${workspace.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'workspace_invitations', filter: `workspace_id=eq.${workspace.id}` }, () => void loadMembers())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'workspace_members', filter: `workspace_id=eq.${workspace.id}` }, () => void loadMembers())
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, () => void loadMembers())
+      .channel(`editflow-team-page:${workspace.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workspace_invitations', filter: `workspace_id=eq.${workspace.id}` }, () => void loadInvitations())
       .subscribe();
     return () => { void realtimeClient.removeChannel(channel); };
-  }, [loadMembers, workspace.id]);
+  }, [canManage, loadInvitations, workspace.id]);
 
-  const saveGeneral = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!supabase || workspaceName.trim().length < 2) return setError('O nome da equipe precisa ter pelo menos 2 caracteres.');
-    setSaving(true);
-    setError(null);
-    const [workspaceResult, profileResult] = await Promise.all([
-      canManage ? supabase.from('workspaces').update({ name: workspaceName.trim() }).eq('id', workspace.id) : Promise.resolve({ error: null }),
-      supabase.from('profiles').update({ display_name: displayName.trim() }).eq('id', user.id),
-    ]);
-    setSaving(false);
-    const saveError = workspaceResult.error ?? profileResult.error;
-    if (saveError) return setError(saveError.message);
-    await supabase.auth.updateUser({ data: { full_name: displayName.trim() } });
-    await onWorkspacesChanged();
-  };
+  const visibleMembers = members.filter((member) => {
+    const matchesFilter = filter === 'all'
+      || (filter === 'available' && member.availability === 'available')
+      || (filter === 'admins' && (member.role === 'owner' || member.role === 'admin'));
+    const term = search.trim().toLocaleLowerCase('pt-BR');
+    return matchesFilter && (!term || `${member.display_name} ${member.email ?? ''} ${teamRoleLabel(member.role)}`.toLocaleLowerCase('pt-BR').includes(term));
+  });
 
-  const addMember = async (event: FormEvent) => {
+  const inviteMember = async (event: FormEvent) => {
     event.preventDefault();
     if (!supabase || !inviteEmail.trim()) return;
     setSaving(true);
@@ -454,38 +407,168 @@ export function SettingsView({
       member_role: inviteRole,
     });
     setSaving(false);
-    if (inviteError) return setError(translateMemberError(inviteError.message));
+    if (inviteError) return setError(translateTeamError(inviteError.message));
     setInviteEmail('');
-    await loadMembers();
+    setInviteOpen(false);
+    await loadInvitations();
   };
 
   const cancelInvitation = async (invitation: WorkspaceInvitation) => {
     if (!supabase || !window.confirm(`Cancelar o convite enviado para ${invitation.email}?`)) return;
     const { error: cancelError } = await supabase.rpc('cancel_workspace_invitation', { target_invitation: invitation.id });
     if (cancelError) return setError(cancelError.message);
-    await loadMembers();
+    await loadInvitations();
   };
 
   const changeMemberRole = async (member: WorkspaceMember, role: Exclude<WorkspaceRole, 'owner'>) => {
     if (!supabase) return;
+    setSaving(true);
     setError(null);
     const { error: roleError } = await supabase.rpc('change_workspace_member_role', {
       target_workspace: workspace.id,
       target_user: member.user_id,
       member_role: role,
     });
+    setSaving(false);
     if (roleError) return setError(roleError.message);
-    await loadMembers();
+    setMemberMenuId(null);
+    await onChanged();
   };
 
   const removeMember = async (member: WorkspaceMember) => {
     if (!supabase || !window.confirm(`Remover ${member.display_name} desta equipe?`)) return;
+    setSaving(true);
     const { error: removeError } = await supabase.rpc('remove_workspace_member', {
       target_workspace: workspace.id,
       target_user: member.user_id,
     });
+    setSaving(false);
     if (removeError) return setError(removeError.message);
-    await loadMembers();
+    setMemberMenuId(null);
+    await onChanged();
+  };
+
+  return (
+    <div className="team-view">
+      <section className="team-hero">
+        <div><span>EQUIPE</span><h2>Pessoas que fazem acontecer.</h2><p>Veja a disponibilidade e a carga de trabalho de cada colaborador.</p></div>
+        <label className="team-search"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar membro..." /></label>
+      </section>
+
+      <div className="team-toolbar">
+        <div className="team-filters" role="group" aria-label="Filtrar membros">
+          <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>Todos <small>{members.length}</small></button>
+          <button className={filter === 'available' ? 'active' : ''} onClick={() => setFilter('available')}>Disponíveis</button>
+          <button className={filter === 'admins' ? 'active' : ''} onClick={() => setFilter('admins')}>Gestores</button>
+        </div>
+        {canManage ? <button className="team-invite-button" onClick={() => setInviteOpen((open) => !open)}>{inviteOpen ? <X size={16} /> : <UserPlus size={16} />}{inviteOpen ? 'Fechar' : 'Convidar membro'}</button> : null}
+      </div>
+
+      {error ? <div className="panel-error">{error}</div> : null}
+      {inviteOpen && canManage ? <form className="team-invite-panel" onSubmit={inviteMember}><div><Mail size={18} /><span><strong>Novo convite</strong><small>A pessoa poderá aceitar ou recusar ao entrar no EditFlow.</small></span></div><input type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="email@exemplo.com" autoFocus /><select value={inviteRole} onChange={(event) => setInviteRole(event.target.value as Exclude<WorkspaceRole, 'owner'>)}><option value="editor">Editor</option><option value="admin">Administrador</option></select><button className="primary-button" type="submit" disabled={saving || !inviteEmail.trim()}>{saving ? <LoaderCircle className="spinner" size={15} /> : <Plus size={15} />}Enviar convite</button></form> : null}
+
+      {pendingInvitations.length ? <section className="team-pending"><header><strong>Convites pendentes</strong><small>{pendingInvitations.length}</small></header><div>{pendingInvitations.map((invitation) => <article key={invitation.id}><span>{invitation.email.slice(0,1).toUpperCase()}</span><div><strong>{invitation.email}</strong><small>{teamRoleLabel(invitation.role)} · expira em {new Date(invitation.expires_at).toLocaleDateString('pt-BR')}</small></div><button onClick={() => void cancelInvitation(invitation)} aria-label="Cancelar convite"><X size={14} /></button></article>)}</div></section> : null}
+
+      <section className="team-grid">
+        {visibleMembers.map((member) => {
+          const memberTasks = tasks.filter((task) => task.assignee_id === member.user_id);
+          const activeTasks = memberTasks.filter((task) => !task.completed_at).length;
+          const deliveredTasks = memberTasks.filter((task) => Boolean(task.completed_at)).length;
+          const canManageMember = canManage && member.role !== 'owner' && member.user_id !== userId;
+          return <article className="team-profile-card" key={member.user_id}>
+            <span className={`team-presence ${member.availability}`} title={teamAvailabilityLabel(member.availability)} />
+            {canManageMember ? <div className="team-card-menu-wrap"><button className="team-card-menu-button" onClick={() => setMemberMenuId((current) => current === member.user_id ? null : member.user_id)} aria-label={`Gerenciar ${member.display_name}`}><MoreHorizontal size={17} /></button>{memberMenuId === member.user_id ? <div className="team-card-menu"><label><span>Cargo</span><select value={member.role} disabled={saving} onChange={(event) => void changeMemberRole(member, event.target.value as Exclude<WorkspaceRole, 'owner'>)}><option value="editor">Editor</option><option value="admin">Administrador</option></select></label><button onClick={() => void removeMember(member)}><Trash2 size={13} />Remover da equipe</button></div> : null}</div> : null}
+            <button className="team-card-avatar" onClick={() => onMemberProfile(member.user_id)} aria-label={`Abrir perfil de ${member.display_name}`}>{member.avatar_url ? <img src={member.avatar_url} alt="" /> : <span>{member.display_name.slice(0,1).toUpperCase()}</span>}</button>
+            <div className="team-card-copy"><h3>{member.display_name}{member.user_id === userId ? <small>você</small> : null}</h3><p>{teamRoleLabel(member.role)}</p><span>{activeTasks} {activeTasks === 1 ? 'trabalho ativo' : 'trabalhos ativos'} · {deliveredTasks} entregues</span><em className={member.availability}>{teamAvailabilityLabel(member.availability)}</em></div>
+            <footer><button onClick={() => onMemberProfile(member.user_id)}><UserRound size={15} />Perfil</button><button onClick={() => onMemberTasks(member)}><ListVideo size={15} />Trabalhos</button></footer>
+          </article>;
+        })}
+        {canManage && filter === 'all' && !search.trim() ? <button className="team-add-card" onClick={() => { setInviteOpen(true); window.setTimeout(() => document.querySelector<HTMLInputElement>('.team-invite-panel input')?.focus(), 0); }}><span><UserPlus size={25} /></span><strong>Adicionar membro</strong><small>Convide alguém para colaborar com sua equipe.</small></button> : null}
+      </section>
+      {!visibleMembers.length ? <div className="team-empty"><Users size={24} /><strong>Nenhum membro encontrado</strong><span>Tente mudar o filtro ou o termo de busca.</span></div> : null}
+    </div>
+  );
+}
+
+type SettingsTab = 'general' | 'profile' | 'appearance' | 'notifications' | 'security' | 'application';
+
+const settingsTabs: Array<{ id: SettingsTab; label: string; icon: typeof Building2 }> = [
+  { id: 'general', label: 'Geral', icon: Building2 },
+  { id: 'profile', label: 'Meu perfil', icon: UserRound },
+  { id: 'appearance', label: 'Aparência', icon: Palette },
+  { id: 'notifications', label: 'Notificações', icon: Bell },
+  { id: 'security', label: 'Segurança', icon: ShieldCheck },
+  { id: 'application', label: 'Aplicativo', icon: AppWindow },
+];
+
+export function SettingsView({
+  user,
+  workspace,
+  onWorkspacesChanged,
+}: {
+  user: User;
+  workspace: WorkspaceSummary;
+  onWorkspacesChanged: () => Promise<void>;
+}) {
+  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+  const [workspaceName, setWorkspaceName] = useState(workspace.name);
+  const [displayName, setDisplayName] = useState(String(user.user_metadata.full_name ?? ''));
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState('...');
+  const [desktopPreferences, setDesktopPreferences] = useState<EditFlowDesktopPreferences | null>(null);
+  const [desktopSaving, setDesktopSaving] = useState<keyof EditFlowDesktopPreferences | null>(null);
+  const canManage = workspace.role === 'owner' || workspace.role === 'admin';
+
+  useEffect(() => setWorkspaceName(workspace.name), [workspace.id, workspace.name]);
+  useEffect(() => { void window.editflow.getVersion().then(setAppVersion); }, []);
+  useEffect(() => { void window.editflow.getDesktopPreferences().then(setDesktopPreferences); }, []);
+
+  const saveWorkspace = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!supabase || workspaceName.trim().length < 2) return setError('O nome da equipe precisa ter pelo menos 2 caracteres.');
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    const workspaceResult = canManage
+      ? await supabase.from('workspaces').update({ name: workspaceName.trim() }).eq('id', workspace.id)
+      : { error: null };
+    setSaving(false);
+    if (workspaceResult.error) return setError(workspaceResult.error.message);
+    await onWorkspacesChanged();
+    setSuccess('Configurações gerais salvas.');
+  };
+
+  const saveProfile = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!supabase || !displayName.trim()) return setError('Digite seu nome de exibição.');
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    const { error: profileError } = await supabase.from('profiles').update({ display_name: displayName.trim() }).eq('id', user.id);
+    if (!profileError) await supabase.auth.updateUser({ data: { full_name: displayName.trim() } });
+    setSaving(false);
+    if (profileError) return setError(profileError.message);
+    setSuccess('Seu perfil foi atualizado.');
+  };
+
+  const changePassword = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!supabase) return;
+    if (newPassword.length < 8) return setError('A nova senha precisa ter pelo menos 8 caracteres.');
+    if (newPassword !== confirmPassword) return setError('As duas senhas não coincidem.');
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    const { error: passwordError } = await supabase.auth.updateUser({ password: newPassword });
+    setSaving(false);
+    if (passwordError) return setError(passwordError.message);
+    setNewPassword('');
+    setConfirmPassword('');
+    setSuccess('Sua senha foi alterada com segurança.');
   };
 
   const deleteWorkspace = async () => {
@@ -528,127 +611,85 @@ export function SettingsView({
   };
 
   return (
-    <div className="settings-view">
-      {error ? <div className="panel-error">{error}</div> : null}
-      <section className="content-card">
-        <div className="content-card-heading"><span className="content-icon"><Building2 size={18} /></span><div><h2>Geral</h2><p>Dados da equipe e do seu perfil.</p></div></div>
-        <form className="settings-form settings-grid" onSubmit={saveGeneral}>
-          <label><span>Nome da equipe</span><input value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} disabled={!canManage} /></label>
-          <label><span>Seu nome</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Como você quer aparecer" /></label>
-          <div className="form-actions full-row"><button className="primary-button" type="submit" disabled={saving}>{saving ? <LoaderCircle className="spinner" size={16} /> : <Save size={16} />}Salvar alterações</button></div>
-        </form>
-      </section>
+    <div className="settings-view settings-center-view">
+      <nav className="settings-tabs" role="tablist" aria-label="Seções das configurações">
+        {settingsTabs.map(({ id, label, icon: Icon }) => (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === id}
+            className={activeTab === id ? 'active' : ''}
+            key={id}
+            onClick={() => { setActiveTab(id); setError(null); setSuccess(null); }}
+          ><Icon size={15} /><span>{label}</span></button>
+        ))}
+      </nav>
 
-      <section className="content-card">
-        <div className="content-card-heading"><span className="content-icon"><UserPlus size={18} /></span><div><h2>Membros</h2><p>Envie um convite para a pessoa aceitar ou recusar.</p></div></div>
-        {canManage ? (
-          <form className="invite-form" onSubmit={addMember}>
-            <label><Mail size={16} /><input type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="email@exemplo.com" /></label>
-            <select value={inviteRole} onChange={(event) => setInviteRole(event.target.value as Exclude<WorkspaceRole, 'owner'>)}><option value="editor">Editor</option><option value="admin">Administrador</option></select>
-            <button className="primary-button" type="submit" disabled={saving}><Plus size={16} />Enviar convite</button>
+      <main className="settings-tab-content" key={activeTab} role="tabpanel">
+        {error ? <div className="panel-error">{error}</div> : null}
+        {success ? <div className="panel-success"><ShieldCheck size={15} />{success}</div> : null}
+
+        {activeTab === 'general' ? <>
+          <section className="content-card settings-page-card">
+            <div className="content-card-heading"><span className="content-icon"><Building2 size={18} /></span><div><h2>Configurações gerais</h2><p>Identidade e informações principais deste espaço de trabalho.</p></div></div>
+            <form className="settings-form" onSubmit={saveWorkspace}>
+              <label><span>Nome da equipe ou empresa</span><input value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} disabled={!canManage} /></label>
+              <div className="settings-info-row"><Building2 size={16} /><span><strong>Seu acesso neste espaço</strong><small>{workspace.role === 'owner' ? 'Proprietário' : workspace.role === 'admin' ? 'Administrador' : 'Editor'}</small></span></div>
+              {canManage ? <div className="form-actions"><button className="primary-button" type="submit" disabled={saving}>{saving ? <LoaderCircle className="spinner" size={16} /> : <Save size={16} />}Salvar alterações</button></div> : null}
+            </form>
+          </section>
+          {workspace.role === 'owner' ? <section className="content-card danger-zone"><div><h2>Excluir equipe</h2><p>Remove permanentemente clientes, quadros, tarefas e links desta equipe.</p></div><button className="danger-button" onClick={() => void deleteWorkspace()} disabled={saving}><Trash2 size={16} />Excluir equipe</button></section> : null}
+        </> : null}
+
+        {activeTab === 'profile' ? <section className="content-card settings-page-card">
+          <div className="content-card-heading"><span className="content-icon"><UserRound size={18} /></span><div><h2>Meu perfil</h2><p>Defina como seu nome aparece para os outros membros.</p></div></div>
+          <div className="settings-profile-hero"><span>{displayName.trim().slice(0, 1).toUpperCase() || user.email?.slice(0, 1).toUpperCase() || 'U'}</span><div><strong>{displayName || 'Seu perfil'}</strong><small>{user.email}</small></div></div>
+          <form className="settings-form settings-profile-form" onSubmit={saveProfile}>
+            <label><span>Nome de exibição</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Como você quer aparecer" /></label>
+            <label><span>E-mail da conta</span><input value={user.email ?? ''} disabled /></label>
+            <div className="form-actions"><button className="primary-button" type="submit" disabled={saving}>{saving ? <LoaderCircle className="spinner" size={16} /> : <Save size={16} />}Salvar perfil</button></div>
           </form>
-        ) : null}
-        {canManage && pendingInvitations.length ? (
-          <div className="pending-invitations">
-            <strong>CONVITES PENDENTES</strong>
-            {pendingInvitations.map((invitation) => (
-              <article key={invitation.id}>
-                <span className="client-avatar">{invitation.email.slice(0, 1).toUpperCase()}</span>
-                <div className="client-copy"><strong>{invitation.email}</strong><small>{roleLabel(invitation.role)} · aguardando resposta</small></div>
-                <button className="danger-icon" onClick={() => void cancelInvitation(invitation)} aria-label="Cancelar convite"><Trash2 size={15} /></button>
-              </article>
-            ))}
-          </div>
-        ) : null}
-        <div className="member-list">
-          {members.map((member) => (
-            <article className="member-row" key={member.user_id}>
-              <button type="button" className="client-avatar member-avatar-button" onClick={() => onMemberProfile(member.user_id)} aria-label={`Abrir perfil de ${member.display_name}`}>
-                {member.avatar_url ? <img src={member.avatar_url} alt="" /> : member.display_name.slice(0, 1).toUpperCase()}
-              </button>
-              <div className="client-copy"><strong>{member.display_name}{member.user_id === user.id ? ' (você)' : ''}</strong><small>{roleLabel(member.role)} · {availabilityLabel(member.availability)}</small></div>
-              {canManage && member.role !== 'owner' && member.user_id !== user.id ? <select className="member-role-select" value={member.role} onChange={(event) => void changeMemberRole(member, event.target.value as Exclude<WorkspaceRole, 'owner'>)}><option value="editor">Editor</option><option value="admin">Administrador</option></select> : null}
-              {canManage && member.role !== 'owner' && member.user_id !== user.id ? <button className="danger-icon" onClick={() => void removeMember(member)} aria-label="Remover membro"><Trash2 size={15} /></button> : null}
-            </article>
-          ))}
-        </div>
-      </section>
+        </section> : null}
 
-      <section className="content-card appearance-settings-card">
-        <div className="content-card-heading"><span className="content-icon"><Palette size={18} /></span><div><h2>Aparência</h2><p>Escolha como o EditFlow deve aparecer neste computador.</p></div></div>
-        {desktopPreferences ? (
-          <div className="theme-options" role="radiogroup" aria-label="Tema do aplicativo">
-            <ThemeOption
-              icon={Sun}
-              title="Claro"
-              description="Visual limpo e iluminado."
-              active={desktopPreferences.theme === 'light'}
-              saving={desktopSaving === 'theme'}
-              onClick={() => void updateDesktopPreference('theme', 'light')}
-            />
-            <ThemeOption
-              icon={Moon}
-              title="Escuro"
-              description="Grafite com cores vibrantes."
-              active={desktopPreferences.theme === 'dark'}
-              saving={desktopSaving === 'theme'}
-              onClick={() => void updateDesktopPreference('theme', 'dark')}
-            />
-            <ThemeOption
-              icon={Laptop}
-              title="Automático"
-              description="Acompanha o tema do Windows."
-              active={desktopPreferences.theme === 'system'}
-              saving={desktopSaving === 'theme'}
-              onClick={() => void updateDesktopPreference('theme', 'system')}
-            />
-          </div>
-        ) : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
-      </section>
+        {activeTab === 'appearance' ? <section className="content-card settings-page-card appearance-settings-card">
+          <div className="content-card-heading"><span className="content-icon"><Palette size={18} /></span><div><h2>Aparência</h2><p>Escolha como o EditFlow deve aparecer neste computador.</p></div></div>
+          {desktopPreferences ? <div className="theme-options" role="radiogroup" aria-label="Tema do aplicativo">
+            <ThemeOption icon={Sun} title="Claro" description="Visual limpo e iluminado." active={desktopPreferences.theme === 'light'} saving={desktopSaving === 'theme'} onClick={() => void updateDesktopPreference('theme', 'light')} />
+            <ThemeOption icon={Moon} title="Escuro" description="Grafite com cores vibrantes." active={desktopPreferences.theme === 'dark'} saving={desktopSaving === 'theme'} onClick={() => void updateDesktopPreference('theme', 'dark')} />
+            <ThemeOption icon={Laptop} title="Automático" description="Acompanha o tema do Windows." active={desktopPreferences.theme === 'system'} saving={desktopSaving === 'theme'} onClick={() => void updateDesktopPreference('theme', 'system')} />
+          </div> : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
+        </section> : null}
 
-      <section className="content-card desktop-settings-card">
-        <div className="content-card-heading"><span className="content-icon"><MonitorCog size={18} /></span><div><h2>Aplicativo no Windows</h2><p>Escolha como o EditFlow se comporta ao iniciar e fechar.</p></div></div>
-        {desktopPreferences ? (
-          <div className="desktop-preference-list">
-            <DesktopPreference
-              icon={Power}
-              title="Iniciar com o Windows"
-              description="Abre o EditFlow automaticamente quando você entrar no computador."
-              checked={desktopPreferences.launchAtLogin}
-              saving={desktopSaving === 'launchAtLogin'}
-              onChange={(checked) => void updateDesktopPreference('launchAtLogin', checked)}
-            />
-            <DesktopPreference
-              icon={X}
-              title="Manter ativo ao clicar no X"
-              description="Esconde a janela nos ícones ocultos para continuar recebendo notificações."
-              checked={desktopPreferences.closeToTray}
-              saving={desktopSaving === 'closeToTray'}
-              onChange={(checked) => void updateDesktopPreference('closeToTray', checked)}
-            />
-            <DesktopPreference
-              icon={Eye}
-              title="Mostrar resumo ao abrir"
-              description="Exibe a tela de boas-vindas com tarefas, mensagens e prazos."
-              checked={desktopPreferences.showWelcome}
-              saving={desktopSaving === 'showWelcome'}
-              onChange={(checked) => void updateDesktopPreference('showWelcome', checked)}
-            />
-          </div>
-        ) : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
-      </section>
+        {activeTab === 'notifications' ? <section className="content-card settings-page-card">
+          <div className="content-card-heading"><span className="content-icon"><Bell size={18} /></span><div><h2>Notificações</h2><p>Controle os alertas exibidos pelo Windows.</p></div></div>
+          {desktopPreferences ? <div className="desktop-preference-list">
+            <DesktopPreference icon={Bell} title="Notificações do Windows" description="Mostra alertas de novas tarefas, comentários, ajustes e movimentações." checked={desktopPreferences.nativeNotifications} saving={desktopSaving === 'nativeNotifications'} onChange={(checked) => void updateDesktopPreference('nativeNotifications', checked)} />
+            <div className="notification-events-card"><strong>Eventos acompanhados</strong><div><span>Tarefas atribuídas</span><span>Comentários e ajustes</span><span>Mudanças no fluxo</span><span>Convites aceitos</span></div><small>Os avisos continuam disponíveis dentro do EditFlow mesmo quando os alertas do Windows estiverem desativados.</small></div>
+          </div> : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
+        </section> : null}
 
-      <section className="content-card update-settings-row">
-        <div><h2>Atualizações</h2><p>Versão instalada: {appVersion}. O EditFlow também verifica automaticamente ao abrir.</p></div>
-        <button className="secondary-button" onClick={() => void checkForUpdates()}>Verificar atualizações</button>
-      </section>
+        {activeTab === 'security' ? <section className="content-card settings-page-card">
+          <div className="content-card-heading"><span className="content-icon"><LockKeyhole size={18} /></span><div><h2>Segurança</h2><p>Atualize a senha usada para acessar sua conta.</p></div></div>
+          <div className="security-account-row"><ShieldCheck size={18} /><span><strong>Conta protegida pelo Supabase</strong><small>{user.email}</small></span></div>
+          <form className="settings-form security-form" onSubmit={changePassword}>
+            <label><span>Nova senha</span><div className="password-setting-field"><KeyRound size={15} /><input type="password" minLength={8} autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="Mínimo de 8 caracteres" /></div></label>
+            <label><span>Confirmar nova senha</span><div className="password-setting-field"><KeyRound size={15} /><input type="password" minLength={8} autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Digite novamente" /></div></label>
+            <div className="form-actions"><button className="primary-button" type="submit" disabled={saving || !newPassword || !confirmPassword}>{saving ? <LoaderCircle className="spinner" size={16} /> : <ShieldCheck size={16} />}Alterar senha</button></div>
+          </form>
+        </section> : null}
 
-      {workspace.role === 'owner' ? (
-        <section className="content-card danger-zone">
-          <div><h2>Excluir equipe</h2><p>Remove permanentemente clientes, quadros, tarefas e links desta equipe.</p></div>
-          <button className="danger-button" onClick={() => void deleteWorkspace()} disabled={saving}><Trash2 size={16} />Excluir equipe</button>
-        </section>
-      ) : null}
+        {activeTab === 'application' ? <>
+          <section className="content-card settings-page-card desktop-settings-card">
+            <div className="content-card-heading"><span className="content-icon"><MonitorCog size={18} /></span><div><h2>Aplicativo no Windows</h2><p>Escolha como o EditFlow se comporta ao iniciar e fechar.</p></div></div>
+            {desktopPreferences ? <div className="desktop-preference-list">
+              <DesktopPreference icon={Power} title="Iniciar com o Windows" description="Abre o EditFlow automaticamente quando você entrar no computador." checked={desktopPreferences.launchAtLogin} saving={desktopSaving === 'launchAtLogin'} onChange={(checked) => void updateDesktopPreference('launchAtLogin', checked)} />
+              <DesktopPreference icon={X} title="Manter ativo ao clicar no X" description="Esconde a janela nos ícones ocultos para continuar funcionando." checked={desktopPreferences.closeToTray} saving={desktopSaving === 'closeToTray'} onChange={(checked) => void updateDesktopPreference('closeToTray', checked)} />
+              <DesktopPreference icon={Eye} title="Mostrar resumo ao abrir" description="Exibe a tela de boas-vindas com tarefas, mensagens e prazos." checked={desktopPreferences.showWelcome} saving={desktopSaving === 'showWelcome'} onChange={(checked) => void updateDesktopPreference('showWelcome', checked)} />
+            </div> : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
+          </section>
+          <section className="content-card update-settings-row"><div><h2>Atualizações</h2><p>Versão instalada: {appVersion}. O EditFlow também verifica automaticamente ao abrir.</p></div><button className="secondary-button" onClick={() => void checkForUpdates()}>Verificar atualizações</button></section>
+        </> : null}
+      </main>
     </div>
   );
 }
@@ -709,18 +750,6 @@ function DesktopPreference({
   );
 }
 
-function roleLabel(role: WorkspaceRole) {
-  if (role === 'owner') return 'Proprietário';
-  if (role === 'admin') return 'Administrador';
-  return 'Editor';
-}
-
-function availabilityLabel(availability: MemberAvailability) {
-  if (availability === 'busy') return 'Ocupado';
-  if (availability === 'away') return 'Ausente';
-  return 'Disponível';
-}
-
 function isSupportedYoutubeChannelUrl(value: string) {
   try {
     const url = new URL(value);
@@ -732,6 +761,25 @@ function isSupportedYoutubeChannelUrl(value: string) {
   } catch {
     return false;
   }
+}
+
+function teamRoleLabel(role: WorkspaceRole) {
+  if (role === 'owner') return 'Proprietário';
+  if (role === 'admin') return 'Administrador';
+  return 'Editor';
+}
+
+function teamAvailabilityLabel(availability: WorkspaceMember['availability']) {
+  if (availability === 'busy') return 'Ocupado';
+  if (availability === 'away') return 'Ausente';
+  return 'Disponível';
+}
+
+function translateTeamError(message: string) {
+  const normalized = message.toLowerCase();
+  if (normalized.includes('already a workspace member')) return 'Essa pessoa já faz parte da equipe.';
+  if (normalized.includes('valid email')) return 'Digite um e-mail válido.';
+  return message;
 }
 
 async function edgeFunctionErrorMessage(error: unknown) {
@@ -810,10 +858,4 @@ function validPercent(value: number) {
 function isMissingFinanceSchema(message: string) {
   const normalized = message.toLowerCase();
   return normalized.includes('client_billing_settings') || normalized.includes('payment_method') || normalized.includes('schema cache');
-}
-
-function translateMemberError(message: string) {
-  if (message.toLowerCase().includes('already a workspace member')) return 'Essa pessoa já faz parte da equipe.';
-  if (message.toLowerCase().includes('valid email')) return 'Digite um e-mail válido.';
-  return message;
 }

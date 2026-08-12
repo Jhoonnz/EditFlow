@@ -13,18 +13,21 @@ contextBridge.exposeInMainWorld('editflow', {
     launchAtLogin: boolean;
     closeToTray: boolean;
     showWelcome: boolean;
+    nativeNotifications: boolean;
     theme: 'light' | 'dark' | 'system';
   }) => ipcRenderer.invoke('desktop:update-preferences', preferences),
   onDesktopPreferencesChanged: (callback: (preferences: {
     launchAtLogin: boolean;
     closeToTray: boolean;
     showWelcome: boolean;
+    nativeNotifications: boolean;
     theme: 'light' | 'dark' | 'system';
   }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, preferences: {
       launchAtLogin: boolean;
       closeToTray: boolean;
       showWelcome: boolean;
+      nativeNotifications: boolean;
       theme: 'light' | 'dark' | 'system';
     }) => callback(preferences);
     ipcRenderer.on('desktop:preferences-changed', listener);
