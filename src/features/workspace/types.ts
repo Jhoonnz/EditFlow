@@ -76,6 +76,7 @@ export type Task = {
 };
 
 export type BillingPricingModel = 'per_video' | 'bundle';
+export type PaymentMethod = 'none' | 'paypal_international' | 'wise_ach' | 'wise_wire' | 'custom';
 
 export type ClientBillingSetting = {
   client_id: string;
@@ -84,6 +85,10 @@ export type ClientBillingSetting = {
   pricing_model: BillingPricingModel;
   amount_usd: number;
   bundle_size: number;
+  payment_method: PaymentMethod;
+  fee_percent: number;
+  fee_fixed_usd: number;
+  conversion_spread_percent: number;
   created_at: string;
   updated_at: string;
 };
@@ -98,6 +103,11 @@ export type Earning = {
   description: string;
   item_count: number;
   amount_usd: number;
+  net_amount_usd: number;
+  payment_method: PaymentMethod;
+  fee_percent: number;
+  fee_fixed_usd: number;
+  conversion_spread_percent: number;
   status: EarningStatus;
   earned_at: string;
   received_at: string | null;
@@ -117,6 +127,10 @@ export type EarningEvent = {
   pricing_model: BillingPricingModel;
   amount_usd: number;
   bundle_size: number;
+  payment_method: PaymentMethod;
+  fee_percent: number;
+  fee_fixed_usd: number;
+  conversion_spread_percent: number;
   earning_id: string | null;
   created_at: string;
 };

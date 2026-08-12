@@ -4,19 +4,24 @@ import {
   BadgeDollarSign,
   Banknote,
   CheckCircle2,
+  CircleDollarSign,
   Clock3,
   LoaderCircle,
+  ReceiptText,
   RefreshCw,
   TrendingUp,
   Video,
   WalletCards,
+  X,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { paymentMethodLabel } from './paymentFees';
 import type {
   Client,
   ClientBillingSetting,
   Earning,
   EarningEvent,
+  PaymentMethod,
   WorkspaceSummary,
 } from '../workspace/types';
 
@@ -36,6 +41,8 @@ export function FinanceView({ workspace, clients }: Props) {
   const [rateLoading, setRateLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [migrationMissing, setMigrationMissing] = useState(false);
+  const [receivingEarning, setReceivingEarning] = useState<Earning | null>(null);
+  const [actualReceivedBrl, setActualReceivedBrl] = useState('');
 
   const loadRate = useCallback(async () => {
     setRateLoading(true);
@@ -53,9 +60,9 @@ export function FinanceView({ workspace, clients }: Props) {
     if (!quiet) setLoading(true);
     setError(null);
     const [settingsResult, earningsResult, eventsResult] = await Promise.all([
-      supabase.from('client_billing_settings').select('*').eq('workspace_id', workspace.id).order('created_at'),
-      supabase.from('earnings').select('*').eq('workspace_id', workspace.id).order('earned_at', { ascending: false }),
-      supabase.from('earning_events').select('*').eq('workspace_id', workspace.id).order('completed_at', { ascending: false }),
+      supabase.from('client_billing_settings').select('client_id, workspace_id, currency, pricing_model, amount_usd, bundle_size, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, created_at, updated_at').eq('workspace_id', workspace.id).order('created_at'),
+      supabase.from('earnings').select('id, workspace_id, client_id, source_type, description, item_count, amount_usd, net_amount_usd, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, status, earned_at, received_at, exchange_rate_brl, amount_brl, created_at, updated_at').eq('workspace_id', workspace.id).order('earned_at', { ascending: false }),
+      supabase.from('earning_events').select('id, workspace_id, client_id, task_id, task_title, completed_at, pricing_model, amount_usd, bundle_size, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, earning_id, created_at').eq('workspace_id', workspace.id).order('completed_at', { ascending: false }),
     ]);
     const loadError = settingsResult.error ?? earningsResult.error ?? eventsResult.error;
     if (loadError) {
@@ -97,15 +104,16 @@ export function FinanceView({ workspace, clients }: Props) {
   }, [loadFinance, migrationMissing, workspace.id]);
 
   const monthlyEarnings = useMemo(() => earnings.filter((earning) => monthKey(earning.earned_at) === month), [earnings, month]);
-  const monthUsd = sum(monthlyEarnings.map((earning) => earning.amount_usd));
+  const grossUsd = sum(monthlyEarnings.map((earning) => earning.amount_usd));
+  const netUsd = sum(monthlyEarnings.map((earning) => earning.net_amount_usd));
+  const feeUsd = grossUsd - netUsd;
   const pendingEarnings = monthlyEarnings.filter((earning) => earning.status === 'pending');
   const receivedEarnings = monthlyEarnings.filter((earning) => earning.status === 'received');
-  const pendingUsd = sum(pendingEarnings.map((earning) => earning.amount_usd));
   const receivedBrl = sum(receivedEarnings.map((earning) => earning.amount_brl ?? 0));
-  const estimatedBrl = rate ? monthUsd * rate.rate : null;
-  const pendingBrl = rate ? pendingUsd * rate.rate : null;
-  const producedVideos = sum(monthlyEarnings.map((earning) => earning.item_count));
-
+  const pendingNetUsd = sum(pendingEarnings.map((earning) => earning.net_amount_usd));
+  const grossBrl = rate ? grossUsd * rate.rate : null;
+  const feeBrl = rate ? feeUsd * rate.rate : null;
+  const expectedNetBrl = rate ? receivedBrl + pendingNetUsd * rate.rate : null;
   const clientSummaries = useMemo(() => clients.map((client) => {
     const clientEarnings = monthlyEarnings.filter((earning) => earning.client_id === client.id);
     const setting = settings.find((item) => item.client_id === client.id);
@@ -113,24 +121,37 @@ export function FinanceView({ workspace, clients }: Props) {
     return {
       client,
       setting,
-      amountUsd: sum(clientEarnings.map((earning) => earning.amount_usd)),
+      grossUsd: sum(clientEarnings.map((earning) => earning.amount_usd)),
+      netUsd: sum(clientEarnings.map((earning) => earning.net_amount_usd)),
       itemCount: sum(clientEarnings.map((earning) => earning.item_count)),
       pendingItems: unallocated.length,
     };
-  }).filter((summary) => summary.setting || summary.amountUsd), [clients, events, monthlyEarnings, settings]);
+  }).filter((summary) => summary.setting || summary.grossUsd), [clients, events, monthlyEarnings, settings]);
 
-  const markReceived = async (earning: Earning) => {
-    if (!supabase || !rate) return setError('A cotação precisa estar disponível para registrar o recebimento.');
+  const openReceiveDialog = (earning: Earning) => {
+    setReceivingEarning(earning);
+    setActualReceivedBrl(rate ? String(roundCurrency(earning.net_amount_usd * rate.rate)).replace('.', ',') : '');
+    setError(null);
+  };
+
+  const markReceived = async () => {
+    if (!supabase || !receivingEarning) return;
+    const amountBrl = Number(actualReceivedBrl.replace(',', '.'));
+    if (!Number.isFinite(amountBrl) || amountBrl <= 0) return setError('Informe o valor em reais que realmente caiu na conta.');
     setSaving(true);
     setError(null);
     const { error: updateError } = await supabase.from('earnings').update({
       status: 'received',
       received_at: new Date().toISOString(),
-      exchange_rate_brl: rate.rate,
-      amount_brl: roundCurrency(earning.amount_usd * rate.rate),
-    }).eq('id', earning.id);
+      exchange_rate_brl: receivingEarning.net_amount_usd > 0
+        ? roundRate(amountBrl / receivingEarning.net_amount_usd)
+        : (rate?.rate ?? 1),
+      amount_brl: roundCurrency(amountBrl),
+    }).eq('id', receivingEarning.id);
     setSaving(false);
     if (updateError) return setError(updateError.message);
+    setReceivingEarning(null);
+    setActualReceivedBrl('');
     await loadFinance(true);
   };
 
@@ -155,7 +176,7 @@ export function FinanceView({ workspace, clients }: Props) {
       <div className="finance-view finance-empty-state">
         <span><WalletCards size={25} /></span>
         <h2>Ative o módulo financeiro</h2>
-        <p>Execute a migration <strong>012_financial_tracking.sql</strong> no SQL Editor do Supabase. Depois, volte aqui e tente novamente.</p>
+        <p>Execute as migrations <strong>012_financial_tracking.sql</strong> e <strong>013_payment_fees.sql</strong> no SQL Editor do Supabase. Depois, volte aqui e tente novamente.</p>
         <button className="secondary-button" onClick={() => void loadFinance()}><RefreshCw size={15} />Tentar novamente</button>
       </div>
     );
@@ -166,8 +187,8 @@ export function FinanceView({ workspace, clients }: Props) {
       <section className="finance-hero">
         <div className="finance-hero-copy">
           <p>VISÃO FINANCEIRA</p>
-          <h2>{estimatedBrl === null ? 'Cotação indisponível' : formatBrl(estimatedBrl)}</h2>
-          <span>Estimativa produzida em {formatMonth(month)} · {formatUsd(monthUsd)}</span>
+          <h2>{expectedNetBrl === null ? 'Cotação indisponível' : formatBrl(expectedNetBrl)}</h2>
+          <span>Líquido estimado em {formatMonth(month)} · {formatUsd(netUsd)} após taxas</span>
         </div>
         <div className="finance-rate-card">
           <span><TrendingUp size={17} /></span>
@@ -180,20 +201,20 @@ export function FinanceView({ workspace, clients }: Props) {
       {error ? <div className="panel-error finance-error">{error}</div> : null}
 
       <section className="finance-metrics">
-        <article><span className="purple"><BadgeDollarSign size={18} /></span><div><small>Produzido</small><strong>{estimatedBrl === null ? '—' : formatBrl(estimatedBrl)}</strong><em>{formatUsd(monthUsd)}</em></div></article>
+        <article><span className="purple"><BadgeDollarSign size={18} /></span><div><small>Faturamento bruto</small><strong>{grossBrl === null ? '—' : formatBrl(grossBrl)}</strong><em>{formatUsd(grossUsd)}</em></div></article>
+        <article><span className="orange"><ReceiptText size={18} /></span><div><small>Taxas estimadas</small><strong>{feeBrl === null ? '—' : `-${formatBrl(feeBrl)}`}</strong><em>-{formatUsd(feeUsd)}</em></div></article>
+        <article><span className="blue"><CircleDollarSign size={18} /></span><div><small>Líquido estimado</small><strong>{expectedNetBrl === null ? '—' : formatBrl(expectedNetBrl)}</strong><em>{formatUsd(netUsd)}</em></div></article>
         <article><span className="green"><Banknote size={18} /></span><div><small>Recebido</small><strong>{formatBrl(receivedBrl)}</strong><em>{receivedEarnings.length} pagamentos</em></div></article>
-        <article><span className="orange"><Clock3 size={18} /></span><div><small>A receber</small><strong>{pendingBrl === null ? '—' : formatBrl(pendingBrl)}</strong><em>{formatUsd(pendingUsd)}</em></div></article>
-        <article><span className="blue"><Video size={18} /></span><div><small>Vídeos contabilizados</small><strong>{producedVideos}</strong><em>{monthlyEarnings.length} lançamentos</em></div></article>
       </section>
 
       <section className="finance-card client-earnings-card finance-client-summary">
           <header><span><WalletCards size={18} /></span><div><h3>Resumo por cliente</h3><p>Valores gerados no mês selecionado. Configure o pagamento ao criar ou editar um cliente.</p></div></header>
           <div className="client-earning-list">
-            {clientSummaries.map(({ client, setting, amountUsd, itemCount, pendingItems }) => (
+            {clientSummaries.map(({ client, setting, grossUsd: clientGrossUsd, netUsd: clientNetUsd, itemCount, pendingItems }) => (
               <article key={client.id}>
                 <span className="finance-client-avatar">{client.name.slice(0,1).toUpperCase()}</span>
                 <div><strong>{client.name}</strong><small>{setting ? billingDescription(setting) : 'Sem configuração atual'}{setting?.pricing_model === 'bundle' && pendingItems ? ` · ${pendingItems}/${setting.bundle_size} no próximo pacote` : ''}</small></div>
-                <em>{rate ? formatBrl(amountUsd * rate.rate) : formatUsd(amountUsd)}<small>{itemCount} vídeos</small></em>
+                <em>{rate ? formatBrl(clientNetUsd * rate.rate) : formatUsd(clientNetUsd)}<small>líquido · bruto {formatUsd(clientGrossUsd)} · {itemCount} vídeos</small></em>
               </article>
             ))}
             {!clientSummaries.length ? <div className="finance-list-empty">Configure o primeiro cliente para começar a contabilizar as entregas.</div> : null}
@@ -206,46 +227,81 @@ export function FinanceView({ workspace, clients }: Props) {
           <div className="earnings-table-head"><span>Cliente / lançamento</span><span>Conclusão</span><span>Valor</span><span>Status</span></div>
           {monthlyEarnings.map((earning) => {
             const client = clients.find((item) => item.id === earning.client_id);
-            const displayBrl = earning.status === 'received' ? earning.amount_brl : (rate ? earning.amount_usd * rate.rate : null);
+            const displayBrl = earning.status === 'received' ? earning.amount_brl : (rate ? earning.net_amount_usd * rate.rate : null);
+            const earningFeeUsd = earning.amount_usd - earning.net_amount_usd;
             return (
               <article key={earning.id}>
-                <div><strong>{client?.name || 'Cliente removido'}</strong><small>{earning.description} · {earning.item_count} {earning.item_count === 1 ? 'vídeo' : 'vídeos'}</small></div>
+                <div><strong>{client?.name || 'Cliente removido'}</strong><small>{earning.description} · {paymentMethodLabel(earning.payment_method)} · {earning.item_count} {earning.item_count === 1 ? 'vídeo' : 'vídeos'}</small></div>
                 <span>{formatCompactDate(earning.earned_at)}</span>
-                <div className="earning-value"><strong>{displayBrl === null ? '—' : formatBrl(displayBrl)}</strong><small>{formatUsd(earning.amount_usd)}{earning.exchange_rate_brl ? ` · câmbio ${formatRate(earning.exchange_rate_brl)}` : ''}</small></div>
+                <div className="earning-value"><strong>{displayBrl === null ? '—' : formatBrl(displayBrl)}</strong><small>líquido {formatUsd(earning.net_amount_usd)} · bruto {formatUsd(earning.amount_usd)} · taxas {formatUsd(earningFeeUsd)}{earning.exchange_rate_brl ? ` · câmbio efetivo ${formatRate(earning.exchange_rate_brl)}` : ''}</small></div>
                 {earning.status === 'received'
                   ? <button className="earning-status received" disabled={saving} onClick={() => void reopenEarning(earning)}><CheckCircle2 size={13} />Recebido</button>
-                  : <button className="earning-status pending" disabled={saving || !rate} onClick={() => void markReceived(earning)}><Clock3 size={13} />Marcar recebido</button>}
+                  : <button className="earning-status pending" disabled={saving} onClick={() => openReceiveDialog(earning)}><Clock3 size={13} />Marcar recebido</button>}
               </article>
             );
           })}
           {!monthlyEarnings.length ? <div className="finance-list-empty">Nenhum ganho foi gerado neste mês.</div> : null}
         </div>
       </section>
+
+      {receivingEarning ? (
+        <div className="receive-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setReceivingEarning(null); }}>
+          <section className="receive-dialog" role="dialog" aria-modal="true" aria-labelledby="receive-dialog-title">
+            <header><span><Banknote size={18} /></span><div><h3 id="receive-dialog-title">Confirmar recebimento</h3><p>Registre o valor real após todas as taxas e conversões.</p></div><button onClick={() => setReceivingEarning(null)} aria-label="Fechar"><X size={17} /></button></header>
+            <div className="receive-dialog-summary"><div><span>Bruto</span><strong>{formatUsd(receivingEarning.amount_usd)}</strong></div><div><span>Líquido estimado</span><strong>{formatUsd(receivingEarning.net_amount_usd)}</strong></div><div><span>Meio</span><strong>{paymentMethodLabel(receivingEarning.payment_method)}</strong></div></div>
+            <label><span>Quanto realmente caiu na conta?</span><div><b>R$</b><input autoFocus inputMode="decimal" value={actualReceivedBrl} onChange={(event) => setActualReceivedBrl(event.target.value)} placeholder="0,00" /></div></label>
+            <small>Esse valor substituirá a estimativa e ficará registrado no histórico.</small>
+            {error ? <div className="panel-error receive-dialog-error">{error}</div> : null}
+            <button className="primary-button" disabled={saving} onClick={() => void markReceived()}>{saving ? <LoaderCircle className="spinner" size={15} /> : <CheckCircle2 size={15} />}Confirmar recebimento</button>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
 
 function normalizeBillingSetting(row: Record<string, unknown>) {
-  return { ...row, amount_usd: Number(row.amount_usd), bundle_size: Number(row.bundle_size) } as ClientBillingSetting;
+  return {
+    ...row,
+    amount_usd: Number(row.amount_usd),
+    bundle_size: Number(row.bundle_size),
+    payment_method: (row.payment_method ?? 'none') as PaymentMethod,
+    fee_percent: Number(row.fee_percent ?? 0),
+    fee_fixed_usd: Number(row.fee_fixed_usd ?? 0),
+    conversion_spread_percent: Number(row.conversion_spread_percent ?? 0),
+  } as ClientBillingSetting;
 }
 
 function normalizeEarning(row: Record<string, unknown>) {
   return {
     ...row,
     amount_usd: Number(row.amount_usd),
+    net_amount_usd: Number(row.net_amount_usd ?? row.amount_usd),
     item_count: Number(row.item_count),
+    payment_method: (row.payment_method ?? 'none') as PaymentMethod,
+    fee_percent: Number(row.fee_percent ?? 0),
+    fee_fixed_usd: Number(row.fee_fixed_usd ?? 0),
+    conversion_spread_percent: Number(row.conversion_spread_percent ?? 0),
     exchange_rate_brl: row.exchange_rate_brl === null ? null : Number(row.exchange_rate_brl),
     amount_brl: row.amount_brl === null ? null : Number(row.amount_brl),
   } as Earning;
 }
 
 function normalizeEarningEvent(row: Record<string, unknown>) {
-  return { ...row, amount_usd: Number(row.amount_usd), bundle_size: Number(row.bundle_size) } as EarningEvent;
+  return {
+    ...row,
+    amount_usd: Number(row.amount_usd),
+    bundle_size: Number(row.bundle_size),
+    payment_method: (row.payment_method ?? 'none') as PaymentMethod,
+    fee_percent: Number(row.fee_percent ?? 0),
+    fee_fixed_usd: Number(row.fee_fixed_usd ?? 0),
+    conversion_spread_percent: Number(row.conversion_spread_percent ?? 0),
+  } as EarningEvent;
 }
 
 function isMissingFinanceSchema(message: string) {
   const normalized = message.toLowerCase();
-  return normalized.includes('client_billing_settings') || normalized.includes('earning_events') || normalized.includes('schema cache');
+  return normalized.includes('client_billing_settings') || normalized.includes('earning_events') || normalized.includes('net_amount_usd') || normalized.includes('payment_method') || normalized.includes('schema cache');
 }
 
 function currentMonth() {
@@ -281,8 +337,8 @@ function formatCompactDate(date: string) {
 
 function billingDescription(setting: ClientBillingSetting) {
   return setting.pricing_model === 'per_video'
-    ? `${formatUsd(setting.amount_usd)} por vídeo`
-    : `${formatUsd(setting.amount_usd)} a cada ${setting.bundle_size} vídeos`;
+    ? `${formatUsd(setting.amount_usd)} por vídeo · ${paymentMethodLabel(setting.payment_method)}`
+    : `${formatUsd(setting.amount_usd)} a cada ${setting.bundle_size} vídeos · ${paymentMethodLabel(setting.payment_method)}`;
 }
 
 function sum(values: number[]) {
@@ -291,4 +347,8 @@ function sum(values: number[]) {
 
 function roundCurrency(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function roundRate(value: number) {
+  return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000;
 }

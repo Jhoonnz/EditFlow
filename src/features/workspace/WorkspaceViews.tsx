@@ -2,7 +2,8 @@ import { FormEvent, useCallback, useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { Building2, CircleDollarSign, Eye, Laptop, LoaderCircle, Mail, MonitorCog, Moon, PackageCheck, Palette, Pencil, Plus, Power, Save, Sun, Trash2, UserPlus, Users, Video, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import type { BillingPricingModel, Client, ClientBillingSetting, MemberAvailability, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
+import { estimateNetUsd, paymentFeeRule, paymentFeeRules, paymentMethodLabel } from '../finance/paymentFees';
+import type { BillingPricingModel, Client, ClientBillingSetting, MemberAvailability, PaymentMethod, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
 
 export function ClientsView({
   workspace,
@@ -24,6 +25,10 @@ export function ClientsView({
   const [billingMode, setBillingMode] = useState<'none' | BillingPricingModel>('none');
   const [amountUsd, setAmountUsd] = useState('');
   const [bundleSize, setBundleSize] = useState('5');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('none');
+  const [feePercent, setFeePercent] = useState('0');
+  const [feeFixedUsd, setFeeFixedUsd] = useState('0');
+  const [conversionSpreadPercent, setConversionSpreadPercent] = useState('0');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isOwner = workspace.role === 'owner';
@@ -36,7 +41,7 @@ export function ClientsView({
     setBillingLoading(true);
     const { data, error: billingError } = await supabase
       .from('client_billing_settings')
-      .select('*')
+      .select('client_id, workspace_id, currency, pricing_model, amount_usd, bundle_size, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, created_at, updated_at')
       .eq('workspace_id', workspace.id);
     if (billingError) {
       const missingSchema = isMissingFinanceSchema(billingError.message);
@@ -59,7 +64,16 @@ export function ClientsView({
     setBillingMode('none');
     setAmountUsd('');
     setBundleSize('5');
+    applyPaymentMethod('none');
     setError(null);
+  };
+
+  const applyPaymentMethod = (method: PaymentMethod) => {
+    const rule = paymentFeeRule(method);
+    setPaymentMethod(method);
+    setFeePercent(String(rule.feePercent));
+    setFeeFixedUsd(String(rule.fixedFeeUsd));
+    setConversionSpreadPercent(String(rule.conversionSpreadPercent));
   };
 
   const saveClient = async (event: FormEvent) => {
@@ -67,8 +81,12 @@ export function ClientsView({
     if (!supabase || !name.trim()) return setError('Digite o nome do cliente.');
     const parsedAmount = Number(amountUsd.replace(',', '.'));
     const parsedBundleSize = billingMode === 'bundle' ? Number(bundleSize) : 1;
+    const parsedFeePercent = Number(feePercent.replace(',', '.'));
+    const parsedFixedFee = Number(feeFixedUsd.replace(',', '.'));
+    const parsedConversionSpread = Number(conversionSpreadPercent.replace(',', '.'));
     if (isOwner && billingMode !== 'none' && (!Number.isFinite(parsedAmount) || parsedAmount <= 0)) return setError('Digite um valor em dólar maior que zero.');
     if (isOwner && billingMode === 'bundle' && (!Number.isInteger(parsedBundleSize) || parsedBundleSize < 2)) return setError('O pacote precisa ter pelo menos 2 vídeos.');
+    if (isOwner && billingMode !== 'none' && (!validPercent(parsedFeePercent) || !validPercent(parsedConversionSpread) || !Number.isFinite(parsedFixedFee) || parsedFixedFee < 0)) return setError('Revise as taxas de recebimento informadas.');
 
     setSaving(true);
     setError(null);
@@ -105,12 +123,16 @@ export function ClientsView({
           pricing_model: billingMode,
           amount_usd: parsedAmount,
           bundle_size: parsedBundleSize,
+          payment_method: paymentMethod,
+          fee_percent: parsedFeePercent,
+          fee_fixed_usd: parsedFixedFee,
+          conversion_spread_percent: parsedConversionSpread,
         }, { onConflict: 'client_id' });
       if (billingResult.error) {
         if (createdClientId) await supabase.from('clients').delete().eq('id', createdClientId);
         setSaving(false);
         return setError(isMissingFinanceSchema(billingResult.error.message)
-          ? 'Ative primeiro o módulo financeiro executando a migration 012 no Supabase.'
+          ? 'Atualize o módulo financeiro executando as migrations 012 e 013 no Supabase.'
           : billingResult.error.message);
       }
       if (billingMode !== 'none') {
@@ -139,6 +161,14 @@ export function ClientsView({
     setBillingMode(setting?.pricing_model ?? 'none');
     setAmountUsd(setting ? String(setting.amount_usd) : '');
     setBundleSize(setting ? String(setting.bundle_size) : '5');
+    if (setting) {
+      setPaymentMethod(setting.payment_method);
+      setFeePercent(String(setting.fee_percent));
+      setFeeFixedUsd(String(setting.fee_fixed_usd));
+      setConversionSpreadPercent(String(setting.conversion_spread_percent));
+    } else {
+      applyPaymentMethod('none');
+    }
     setError(null);
   };
 
@@ -169,13 +199,24 @@ export function ClientsView({
                 <button type="button" className={billingMode === 'bundle' ? 'active' : ''} onClick={() => setBillingMode('bundle')}><PackageCheck size={15} /><span><strong>Por pacote</strong><small>Valor a cada lote</small></span></button>
               </div>
               {billingMode !== 'none' ? (
-                <div className="client-payment-values">
-                  <label><span>Valor em USD</span><div><b>US$</b><input inputMode="decimal" value={amountUsd} onChange={(event) => setAmountUsd(event.target.value)} placeholder="200.00" /></div></label>
-                  {billingMode === 'bundle' ? <label><span>Vídeos no pacote</span><div><input type="number" min="2" max="1000" value={bundleSize} onChange={(event) => setBundleSize(event.target.value)} /><b>vídeos</b></div></label> : null}
-                </div>
+                <>
+                  <div className="client-payment-values">
+                    <label><span>Valor bruto em USD</span><div><b>US$</b><input inputMode="decimal" value={amountUsd} onChange={(event) => setAmountUsd(event.target.value)} placeholder="200.00" /></div></label>
+                    {billingMode === 'bundle' ? <label><span>Vídeos no pacote</span><div><input type="number" min="2" max="1000" value={bundleSize} onChange={(event) => setBundleSize(event.target.value)} /><b>vídeos</b></div></label> : null}
+                  </div>
+                  <label className="payment-provider-select"><span>Como você recebe</span><select value={paymentMethod} onChange={(event) => applyPaymentMethod(event.target.value as PaymentMethod)}>{paymentFeeRules.map((rule) => <option value={rule.method} key={rule.method}>{rule.label}</option>)}</select></label>
+                  {paymentMethod === 'custom' ? (
+                    <div className="client-fee-values">
+                      <label><span>Taxa percentual</span><div><input inputMode="decimal" value={feePercent} onChange={(event) => setFeePercent(event.target.value)} /><b>%</b></div></label>
+                      <label><span>Taxa fixa</span><div><b>US$</b><input inputMode="decimal" value={feeFixedUsd} onChange={(event) => setFeeFixedUsd(event.target.value)} /></div></label>
+                      <label><span>Spread de conversão</span><div><input inputMode="decimal" value={conversionSpreadPercent} onChange={(event) => setConversionSpreadPercent(event.target.value)} /><b>%</b></div></label>
+                    </div>
+                  ) : null}
+                  <PaymentEstimate grossUsd={Number(amountUsd.replace(',', '.'))} paymentMethod={paymentMethod} feePercent={Number(feePercent.replace(',', '.'))} fixedFeeUsd={Number(feeFixedUsd.replace(',', '.'))} conversionSpreadPercent={Number(conversionSpreadPercent.replace(',', '.'))} />
+                </>
               ) : null}
             </fieldset>
-          ) : isOwner ? <div className="client-payment-unavailable">Execute a migration 012 no Supabase para configurar pagamentos automáticos.</div> : null}
+          ) : isOwner ? <div className="client-payment-unavailable">Execute as migrations 012 e 013 no Supabase para configurar pagamentos automáticos.</div> : null}
           {error ? <div className="panel-error">{error}</div> : null}
           <div className="form-actions">
             {editingId ? <button type="button" className="secondary-button" onClick={resetForm}>Cancelar</button> : null}
@@ -597,19 +638,54 @@ function availabilityLabel(availability: MemberAvailability) {
 }
 
 function normalizeBillingSetting(row: Record<string, unknown>) {
-  return { ...row, amount_usd: Number(row.amount_usd), bundle_size: Number(row.bundle_size) } as ClientBillingSetting;
+  return {
+    ...row,
+    amount_usd: Number(row.amount_usd),
+    bundle_size: Number(row.bundle_size),
+    payment_method: (row.payment_method ?? 'none') as PaymentMethod,
+    fee_percent: Number(row.fee_percent ?? 0),
+    fee_fixed_usd: Number(row.fee_fixed_usd ?? 0),
+    conversion_spread_percent: Number(row.conversion_spread_percent ?? 0),
+  } as ClientBillingSetting;
 }
 
 function billingDescription(setting: ClientBillingSetting) {
   const amount = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(setting.amount_usd);
   return setting.pricing_model === 'per_video'
-    ? `${amount} por vídeo`
-    : `${amount} a cada ${setting.bundle_size} vídeos`;
+    ? `${amount} por vídeo · ${paymentMethodLabel(setting.payment_method)}`
+    : `${amount} a cada ${setting.bundle_size} vídeos · ${paymentMethodLabel(setting.payment_method)}`;
+}
+
+function PaymentEstimate({ grossUsd, paymentMethod, feePercent, fixedFeeUsd, conversionSpreadPercent }: {
+  grossUsd: number;
+  paymentMethod: PaymentMethod;
+  feePercent: number;
+  fixedFeeUsd: number;
+  conversionSpreadPercent: number;
+}) {
+  const netUsd = estimateNetUsd(grossUsd, feePercent, fixedFeeUsd, conversionSpreadPercent);
+  const feeUsd = Number.isFinite(grossUsd) ? Math.max(0, grossUsd - netUsd) : 0;
+  return (
+    <div className="payment-estimate">
+      <div><span>Bruto</span><strong>{formatUsdSafe(grossUsd)}</strong></div>
+      <div><span>Taxas estimadas</span><strong>-{formatUsdSafe(feeUsd)}</strong></div>
+      <div className="net"><span>Líquido estimado</span><strong>{formatUsdSafe(netUsd)}</strong></div>
+      <small>{paymentFeeRule(paymentMethod).note}</small>
+    </div>
+  );
+}
+
+function formatUsdSafe(value: number) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number.isFinite(value) ? value : 0);
+}
+
+function validPercent(value: number) {
+  return Number.isFinite(value) && value >= 0 && value <= 100;
 }
 
 function isMissingFinanceSchema(message: string) {
   const normalized = message.toLowerCase();
-  return normalized.includes('client_billing_settings') || normalized.includes('schema cache');
+  return normalized.includes('client_billing_settings') || normalized.includes('payment_method') || normalized.includes('schema cache');
 }
 
 function translateMemberError(message: string) {

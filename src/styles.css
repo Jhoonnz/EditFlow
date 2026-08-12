@@ -714,8 +714,8 @@ button { color: inherit; }
 .settings-form { display: grid; gap: 13px; }
 .settings-grid { grid-template-columns: 1fr 1fr; }
 .settings-form label > span { display: block; margin-bottom: 6px; color: #60616b; font-size: 10px; font-weight: 750; }
-.settings-form input, .invite-form input, .invite-form select { width: 100%; height: 41px; padding: 0 11px; border: 1px solid #dedee6; border-radius: 10px; outline: 0; background: #fff; color: #383943; font-size: 11px; }
-.settings-form input:focus, .invite-form input:focus, .invite-form select:focus { border-color: #8a83d7; box-shadow: 0 0 0 3px rgba(138,131,215,.1); }
+.settings-form input, .settings-form select, .invite-form input, .invite-form select { width: 100%; height: 41px; padding: 0 11px; border: 1px solid #dedee6; border-radius: 10px; outline: 0; background: #fff; color: #383943; font-size: 11px; }
+.settings-form input:focus, .settings-form select:focus, .invite-form input:focus, .invite-form select:focus { border-color: #8a83d7; box-shadow: 0 0 0 3px rgba(138,131,215,.1); }
 .settings-form input:disabled { background: #f3f3f6; color: #92939d; }
 .client-payment-panel { display: grid; gap: 10px; min-width: 0; margin: 2px 0 0; padding: 13px; border: 1px solid #e2dfed; border-radius: 13px; background: #f8f7fc; }
 .client-payment-panel legend { display: flex; align-items: center; gap: 7px; padding: 0 6px; color: #5d559d; }
@@ -736,6 +736,19 @@ button { color: inherit; }
 .client-payment-values label > div { display: flex; align-items: center; gap: 6px; height: 37px; padding: 0 8px; border: 1px solid #dedce5; border-radius: 9px; background: #fff; }
 .client-payment-values label > div input { min-width: 0; height: 34px; padding: 0; border: 0; background: transparent; box-shadow: none; }
 .client-payment-values b { color: #7d7985; font-size: 7px; white-space: nowrap; }
+.payment-provider-select > span { margin-bottom: 5px !important; font-size: 7px !important; }
+.payment-provider-select select { height: 37px; font-size: 8px; }
+.client-fee-values { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 7px; }
+.client-fee-values label > span { display: block; margin-bottom: 5px; color: #686570; font-size: 7px; font-weight: 750; }
+.client-fee-values label > div { display: flex; align-items: center; gap: 5px; height: 37px; padding: 0 8px; border: 1px solid #dedce5; border-radius: 9px; background: #fff; }
+.client-fee-values input { min-width: 0; height: 34px; padding: 0; border: 0; background: transparent; box-shadow: none; }
+.client-fee-values b { color: #7d7985; font-size: 7px; white-space: nowrap; }
+.payment-estimate { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; padding: 9px; border: 1px solid #dfdced; border-radius: 11px; background: rgba(255,255,255,.58); }
+.payment-estimate > div { display: grid; gap: 3px; min-width: 0; }
+.payment-estimate span { color: #96929e; font-size: 6px; }
+.payment-estimate strong { overflow: hidden; color: #55525e; font-size: 9px; white-space: nowrap; text-overflow: ellipsis; }
+.payment-estimate .net strong { color: #398360; }
+.payment-estimate > small { grid-column: 1 / -1; padding-top: 6px; border-top: 1px solid #e8e5ef; color: #98949f; font-size: 6px; line-height: 1.45; }
 .client-payment-unavailable { padding: 10px; border: 1px solid #e2d9b8; border-radius: 10px; background: #fff9e9; color: #8d6d2d; font-size: 8px; line-height: 1.5; }
 .form-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .full-row { grid-column: 1 / -1; }
@@ -886,6 +899,24 @@ button { color: inherit; }
 .earning-status.received { border: 1px solid #bde6cf; background: #ecfaf2; color: #30865b; }
 .earning-status.pending { border: 1px solid #ecd7b5; background: #fff5e6; color: #a36b20; }
 .earning-status:disabled { opacity: .55; cursor: not-allowed; }
+.receive-dialog-backdrop { position: fixed; inset: 0; z-index: 65; display: grid; place-items: center; padding: 20px; background: rgba(29,28,42,.32); backdrop-filter: blur(5px); animation: fade-in .16s ease; }
+.receive-dialog { width: min(430px,100%); padding: 19px; border: 1px solid rgba(255,255,255,.82); border-radius: 19px; background: rgba(252,251,255,.94); box-shadow: 0 24px 65px rgba(30,28,49,.24); backdrop-filter: blur(22px); }
+.receive-dialog > header { display: grid; grid-template-columns: 38px minmax(0,1fr) 31px; align-items: center; gap: 10px; margin-bottom: 15px; }
+.receive-dialog > header > span { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 11px; background: #e7f6ed; color: #34845d; }
+.receive-dialog h3 { margin: 0 0 3px; color: #393843; font-size: 13px; }
+.receive-dialog header p { margin: 0; color: #92909a; font-size: 8px; }
+.receive-dialog header button { display: grid; place-items: center; width: 31px; height: 31px; padding: 0; border: 0; border-radius: 9px; background: transparent; color: #898792; cursor: pointer; }
+.receive-dialog-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 7px; margin-bottom: 13px; }
+.receive-dialog-summary > div { display: grid; gap: 4px; padding: 9px; border: 1px solid #e5e2eb; border-radius: 10px; background: rgba(255,255,255,.7); }
+.receive-dialog-summary span { color: #9996a1; font-size: 6px; }
+.receive-dialog-summary strong { overflow: hidden; color: #4c4a55; font-size: 8px; white-space: nowrap; text-overflow: ellipsis; }
+.receive-dialog > label > span { display: block; margin-bottom: 6px; color: #5e5b67; font-size: 8px; font-weight: 760; }
+.receive-dialog > label > div { display: flex; align-items: center; gap: 7px; height: 42px; padding: 0 11px; border: 1px solid #dcd9e5; border-radius: 11px; background: #fff; }
+.receive-dialog > label b { color: #4d8b69; font-size: 9px; }
+.receive-dialog > label input { min-width: 0; flex: 1; height: 38px; padding: 0; border: 0; outline: 0; background: transparent; color: #3d3c46; font-size: 12px; }
+.receive-dialog > small { display: block; margin: 8px 0 13px; color: #9996a1; font-size: 7px; line-height: 1.45; }
+.receive-dialog-error { margin-bottom: 10px; }
+.receive-dialog > .primary-button { width: 100%; }
 
 /* Notifications */
 .notification-wrap { position: relative; }
@@ -981,8 +1012,12 @@ button { color: inherit; }
   .billing-values { grid-template-columns: 1fr; }
   .billing-values > label:only-child { grid-column: auto; }
   .client-payment-models,
-  .client-payment-values { grid-template-columns: 1fr; }
+  .client-payment-values,
+  .client-fee-values,
+  .payment-estimate,
+  .receive-dialog-summary { grid-template-columns: 1fr; }
   .client-payment-values > label:only-child { grid-column: auto; }
+  .payment-estimate > small { grid-column: auto; }
   .client-earning-list article { grid-template-columns: 36px minmax(0,1fr) auto; }
   .client-earning-list article > button { grid-column: 2 / -1; justify-self: end; }
 }
@@ -1153,6 +1188,7 @@ button { color: inherit; }
 :root[data-theme="dark"] .editor-form select,
 :root[data-theme="dark"] .column-editor-modal form input,
 :root[data-theme="dark"] .settings-form input,
+:root[data-theme="dark"] .settings-form select,
 :root[data-theme="dark"] .invite-form input,
 :root[data-theme="dark"] .invite-form select,
 :root[data-theme="dark"] .member-role-select { border-color: #44434c; background: #2a2930; color: #ecebf0; }
@@ -1166,8 +1202,15 @@ button { color: inherit; }
 :root[data-theme="dark"] .client-payment-models > button { border-color: #46434d; background: #323139; color: #aaa7b1; }
 :root[data-theme="dark"] .client-payment-models > button.active { border-color: #756dc2; background: #3a354e; color: #c0b9ff; }
 :root[data-theme="dark"] .client-payment-values label > span { color: #bbb8c2; }
-:root[data-theme="dark"] .client-payment-values label > div { border-color: #494650; background: #302f36; }
-:root[data-theme="dark"] .client-payment-values input { color: #e8e6eb; }
+:root[data-theme="dark"] .client-payment-values label > div,
+:root[data-theme="dark"] .client-fee-values label > div { border-color: #494650; background: #302f36; }
+:root[data-theme="dark"] .client-payment-values input,
+:root[data-theme="dark"] .client-fee-values input { color: #e8e6eb; }
+:root[data-theme="dark"] .client-fee-values label > span { color: #bbb8c2; }
+:root[data-theme="dark"] .payment-estimate { border-color: #46434f; background: rgba(39,37,47,.72); }
+:root[data-theme="dark"] .payment-estimate strong { color: #dedbe4; }
+:root[data-theme="dark"] .payment-estimate .net strong { color: #7fd0a5; }
+:root[data-theme="dark"] .payment-estimate > small { border-color: #484550; color: #92909a; }
 :root[data-theme="dark"] .client-payment-unavailable { border-color: #5b4c32; background: #393124; color: #d6ad68; }
 :root[data-theme="dark"] .column-editor-modal form label > span,
 :root[data-theme="dark"] .column-editor-modal legend,
@@ -1226,6 +1269,17 @@ button { color: inherit; }
 :root[data-theme="dark"] .earnings-table > article { border-color: #403e47; }
 :root[data-theme="dark"] .earning-status.received { border-color: #365d49; background: #273c32; color: #7bd2a3; }
 :root[data-theme="dark"] .earning-status.pending { border-color: #604f34; background: #3b3225; color: #e6b76f; }
+:root[data-theme="dark"] .receive-dialog-backdrop { background: rgba(8,8,12,.58); }
+:root[data-theme="dark"] .receive-dialog { border-color: rgba(255,255,255,.11); background: rgba(39,38,46,.96); box-shadow: 0 24px 65px rgba(0,0,0,.42); }
+:root[data-theme="dark"] .receive-dialog h3,
+:root[data-theme="dark"] .receive-dialog-summary strong { color: #efedf3; }
+:root[data-theme="dark"] .receive-dialog header p,
+:root[data-theme="dark"] .receive-dialog-summary span,
+:root[data-theme="dark"] .receive-dialog > small { color: #96939e; }
+:root[data-theme="dark"] .receive-dialog-summary > div { border-color: #45434c; background: #302f36; }
+:root[data-theme="dark"] .receive-dialog > label > span { color: #c0bdc7; }
+:root[data-theme="dark"] .receive-dialog > label > div { border-color: #4a4752; background: #302f36; }
+:root[data-theme="dark"] .receive-dialog > label input { color: #efedf3; }
 :root[data-theme="dark"] .finance-empty-state > span { background: #353148; color: #b9b2ff; }
 :root[data-theme="dark"] .finance-empty-state h2 { color: #efedf3; }
 :root[data-theme="dark"] .finance-empty-state p { color: #9996a0; }
