@@ -2,93 +2,145 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { ArrowLeft, ArrowRight, Building2, LoaderCircle, LogOut, RefreshCw, Sparkles, UserPlus } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { useDialogFocus } from '../../lib/useDialogFocus';
 import { Dashboard } from '../board/Dashboard';
 import { WelcomeScreen } from './WelcomeScreen';
 import type { WelcomeStartupAction, WorkspaceInvitation, WorkspaceRole, WorkspaceSummary } from './types';
 
 type Props = { user: User };
+type WorkspaceLoadState = 'loading' | 'ready' | 'empty' | 'error';
+
+type WorkspaceSnapshot = {
+  workspaces: WorkspaceSummary[];
+  invitations: WorkspaceInvitation[];
+};
+
+const wait = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
 export function AuthenticatedApp({ user }: Props) {
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [invitations, setInvitations] = useState<WorkspaceInvitation[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [workspaceLoadState, setWorkspaceLoadState] = useState<WorkspaceLoadState>('loading');
   const [error, setError] = useState<string | null>(null);
   const [desktopPreferences, setDesktopPreferences] = useState<EditFlowDesktopPreferences | null>(null);
   const [welcomeAccess, setWelcomeAccess] = useState<{ isFirstAccess: boolean; previousOpenedAt: string | null } | null>(null);
   const [welcomeDismissed, setWelcomeDismissed] = useState(false);
   const [startupAction, setStartupAction] = useState<WelcomeStartupAction | null>(null);
   const accessRecorded = useRef(false);
+  const workspacesRef = useRef<WorkspaceSummary[]>([]);
+  const workspaceRequestSequence = useRef(0);
+
+  useEffect(() => {
+    workspacesRef.current = workspaces;
+  }, [workspaces]);
 
   const loadWorkspaces = useCallback(async () => {
-    if (!supabase) return;
+    const requestSequence = ++workspaceRequestSequence.current;
+    const hadLoadedWorkspace = workspacesRef.current.length > 0;
+
+    if (!supabase) {
+      setError('O Supabase não está configurado neste aplicativo.');
+      if (!hadLoadedWorkspace) setWorkspaceLoadState('error');
+      return;
+    }
+
+    if (!hadLoadedWorkspace) setWorkspaceLoadState('loading');
     setError(null);
+    let snapshot: WorkspaceSnapshot | null = null;
+    let lastError: string | null = null;
+    let confirmedEmptyResponses = 0;
 
-    const [membershipResult, invitationResult] = await Promise.all([
-      supabase.from('workspace_members').select('workspace_id, role').eq('user_id', user.id),
-      supabase
-        .from('workspace_invitations')
-        .select('id, workspace_id, email, role, status, expires_at, created_at')
-        .eq('email', (user.email ?? '').toLowerCase())
-        .eq('status', 'pending')
-        .gt('expires_at', new Date().toISOString())
-        .order('created_at', { ascending: false }),
-    ]);
+    // An empty response is checked twice. During session restoration or a
+    // short network interruption Supabase can transiently return no visible
+    // memberships, which must not be interpreted as a new account.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const [membershipResult, invitationResult] = await Promise.all([
+          supabase.from('workspace_members').select('workspace_id, role').eq('user_id', user.id),
+          supabase
+            .from('workspace_invitations')
+            .select('id, workspace_id, email, role, status, expires_at, created_at')
+            .eq('email', (user.email ?? '').toLowerCase())
+            .eq('status', 'pending')
+            .gt('expires_at', new Date().toISOString())
+            .order('created_at', { ascending: false }),
+        ]);
 
-    const loadError = membershipResult.error ?? invitationResult.error;
-    if (loadError) {
-      setError(loadError.message);
-      setLoading(false);
+        const loadError = membershipResult.error ?? invitationResult.error;
+        if (loadError) {
+          lastError = loadError.message;
+        } else {
+          const memberships = membershipResult.data ?? [];
+          const invitationRows = invitationResult.data ?? [];
+          const workspaceIds = Array.from(new Set([
+            ...memberships.map((membership) => membership.workspace_id as string),
+            ...invitationRows.map((invitation) => invitation.workspace_id as string),
+          ]));
+          const workspaceResult = workspaceIds.length
+            ? await supabase.from('workspaces').select('id, name').in('id', workspaceIds)
+            : { data: [], error: null };
+
+          if (workspaceResult.error) {
+            lastError = workspaceResult.error.message;
+          } else {
+            const workspaceNames = new Map(
+              (workspaceResult.data ?? []).map((workspace) => [workspace.id as string, workspace.name as string]),
+            );
+            const nextWorkspaces = memberships.map((membership) => ({
+              id: membership.workspace_id as string,
+              name: workspaceNames.get(membership.workspace_id as string) ?? 'Equipe',
+              role: membership.role as WorkspaceRole,
+            }));
+            const nextInvitations = invitationRows.map((invitation) => ({
+              id: invitation.id as string,
+              workspace_id: invitation.workspace_id as string,
+              workspace_name: workspaceNames.get(invitation.workspace_id as string) ?? 'Equipe EditFlow',
+              email: invitation.email as string,
+              role: invitation.role as WorkspaceInvitation['role'],
+              status: invitation.status as WorkspaceInvitation['status'],
+              expires_at: invitation.expires_at as string,
+              created_at: invitation.created_at as string,
+            }));
+
+            if (nextWorkspaces.length || nextInvitations.length) {
+              snapshot = { workspaces: nextWorkspaces, invitations: nextInvitations };
+              break;
+            }
+
+            confirmedEmptyResponses += 1;
+            if (confirmedEmptyResponses >= 2) {
+              snapshot = { workspaces: [], invitations: [] };
+              break;
+            }
+          }
+        }
+      } catch (loadException) {
+        lastError = loadException instanceof Error ? loadException.message : 'Falha de conexão ao carregar as equipes.';
+      }
+
+      if (attempt < 2) await wait(350 * (attempt + 1));
+    }
+
+    // Realtime and the initial load may overlap. Only the newest request is
+    // allowed to change navigation state.
+    if (requestSequence !== workspaceRequestSequence.current) return;
+
+    if (!snapshot) {
+      setError(lastError ?? 'Não foi possível confirmar as equipes desta conta.');
+      if (!hadLoadedWorkspace) setWorkspaceLoadState('error');
       return;
     }
 
-    const memberships = membershipResult.data ?? [];
-    const invitationRows = invitationResult.data ?? [];
-    const workspaceIds = Array.from(new Set([
-      ...memberships.map((membership) => membership.workspace_id as string),
-      ...invitationRows.map((invitation) => invitation.workspace_id as string),
-    ]));
-
-    const workspaceResult = workspaceIds.length
-      ? await supabase.from('workspaces').select('id, name').in('id', workspaceIds)
-      : { data: [], error: null };
-
-    if (workspaceResult.error) {
-      setError(workspaceResult.error.message);
-      setLoading(false);
-      return;
-    }
-
-    const workspaceNames = new Map((workspaceResult.data ?? []).map((workspace) => [workspace.id as string, workspace.name as string]));
-
-    const roleByWorkspace = new Map(
-      memberships.map((membership) => [membership.workspace_id, membership.role as WorkspaceRole]),
-    );
-    const nextWorkspaces = memberships.map((membership) => ({
-      id: membership.workspace_id as string,
-      name: workspaceNames.get(membership.workspace_id as string) ?? 'Equipe',
-      role: roleByWorkspace.get(membership.workspace_id as string) ?? 'editor',
-    }));
-
-    setInvitations(invitationRows.map((invitation) => ({
-      id: invitation.id as string,
-      workspace_id: invitation.workspace_id as string,
-      workspace_name: workspaceNames.get(invitation.workspace_id as string) ?? 'Equipe EditFlow',
-      email: invitation.email as string,
-      role: invitation.role as WorkspaceInvitation['role'],
-      status: invitation.status as WorkspaceInvitation['status'],
-      expires_at: invitation.expires_at as string,
-      created_at: invitation.created_at as string,
-    })));
-
-    setWorkspaces(nextWorkspaces);
+    setInvitations(snapshot.invitations);
+    setWorkspaces(snapshot.workspaces);
     setActiveWorkspaceId((current) =>
-      current && nextWorkspaces.some((workspace) => workspace.id === current)
+      current && snapshot.workspaces.some((workspace) => workspace.id === current)
         ? current
-        : (nextWorkspaces[0]?.id ?? null),
+        : (snapshot.workspaces[0]?.id ?? null),
     );
-    setLoading(false);
-  }, [user.id]);
+    setWorkspaceLoadState(snapshot.workspaces.length ? 'ready' : 'empty');
+  }, [user.email, user.id]);
 
   useEffect(() => {
     void loadWorkspaces();
@@ -99,7 +151,7 @@ export function AuthenticatedApp({ user }: Props) {
   }, []);
 
   useEffect(() => {
-    if (loading || !workspaces.length || accessRecorded.current) return;
+    if (workspaceLoadState === 'loading' || !workspaces.length || accessRecorded.current) return;
     accessRecorded.current = true;
 
     const recordAccess = async () => {
@@ -131,7 +183,7 @@ export function AuthenticatedApp({ user }: Props) {
     };
 
     void recordAccess();
-  }, [loading, user.id, workspaces.length]);
+  }, [user.id, workspaceLoadState, workspaces.length]);
 
   useEffect(() => {
     if (!supabase || !user.email) return;
@@ -154,7 +206,7 @@ export function AuthenticatedApp({ user }: Props) {
     return () => { void realtimeClient.removeChannel(channel); };
   }, [loadWorkspaces, user.email, user.id]);
 
-  if (loading) {
+  if (workspaceLoadState === 'loading') {
     return (
       <main className="app-loading">
         <div className="app-logo"><Sparkles size={19} /></div>
@@ -163,12 +215,16 @@ export function AuthenticatedApp({ user }: Props) {
     );
   }
 
-  if (!workspaces.length && invitations.length) {
+  if (workspaceLoadState === 'error' && !workspaces.length) {
+    return <WorkspaceLoadError error={error} onRetry={loadWorkspaces} />;
+  }
+
+  if (workspaceLoadState === 'empty' && invitations.length) {
     return <InvitationPrompt invitations={invitations} onChanged={loadWorkspaces} fullscreen />;
   }
 
-  if (!workspaces.length) {
-    return <WorkspaceOnboarding user={user} onCreated={loadWorkspaces} initialError={error} />;
+  if (workspaceLoadState === 'empty' && !workspaces.length) {
+    return <WorkspaceOnboarding user={user} onCreated={loadWorkspaces} initialError={null} />;
   }
 
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[0];
@@ -215,6 +271,38 @@ export function AuthenticatedApp({ user }: Props) {
   </>;
 }
 
+function WorkspaceLoadError({ error, onRetry }: {
+  error: string | null;
+  onRetry: () => Promise<void>;
+}) {
+  const [retrying, setRetrying] = useState(false);
+  const retry = async () => {
+    if (retrying) return;
+    setRetrying(true);
+    await onRetry();
+    setRetrying(false);
+  };
+  return (
+    <main className="onboarding-page">
+      <section className="onboarding-card">
+        <div className="onboarding-icon"><RefreshCw size={24} /></div>
+        <p className="onboarding-kicker">SINCRONIZAÇÃO</p>
+        <h1>Não conseguimos carregar suas equipes.</h1>
+        <p className="onboarding-copy">
+          Sua equipe não foi removida. Verifique a conexão e tente carregar os dados novamente.
+        </p>
+        {error ? <div className="workspace-error" role="alert">{error}</div> : null}
+        <button className="onboarding-submit" disabled={retrying} onClick={() => void retry()}>
+          {retrying ? <LoaderCircle className="spinner" size={18} /> : <RefreshCw size={18} />} Tentar novamente
+        </button>
+        <button className="onboarding-logout" onClick={() => void supabase?.auth.signOut()}>
+          <LogOut size={15} /> Sair desta conta
+        </button>
+      </section>
+    </main>
+  );
+}
+
 function InvitationPrompt({ invitations, onChanged, fullscreen = false }: {
   invitations: WorkspaceInvitation[];
   onChanged: () => Promise<void>;
@@ -222,6 +310,7 @@ function InvitationPrompt({ invitations, onChanged, fullscreen = false }: {
 }) {
   const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useDialogFocus<HTMLElement>(!fullscreen, () => undefined, false, '.invitation-dialog');
 
   const respond = async (invitation: WorkspaceInvitation, accept: boolean) => {
     if (!supabase) return;

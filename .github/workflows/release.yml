@@ -42,6 +42,9 @@ jobs:
       - name: Validar TypeScript
         run: npm run typecheck
 
+      - name: Executar testes de regressão
+        run: npm test
+
       - name: Criar o instalador
         shell: pwsh
         run: |

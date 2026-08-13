@@ -2,6 +2,8 @@ import { FormEvent, useCallback, useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { AlertTriangle, AppWindow, Bell, BriefcaseBusiness, Building2, CalendarClock, Camera, CheckCircle2, CircleDollarSign, Eye, ExternalLink, KeyRound, Laptop, ListVideo, LoaderCircle, LockKeyhole, Mail, MonitorCog, Moon, MoreHorizontal, PackageCheck, Palette, Pencil, Plus, Power, RefreshCw, Save, Search, ShieldCheck, Sun, Trash2, UserPlus, UserRound, Users, Video, X, Youtube } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { useAppDialog } from '../../components/AppDialog';
+import { useDialogFocus } from '../../lib/useDialogFocus';
 import { estimateNetUsd, paymentFeeRule, paymentFeeRules, paymentMethodLabel } from '../finance/paymentFees';
 import type { BillingPricingModel, Client, ClientBillingSetting, PaymentMethod, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
 
@@ -34,6 +36,7 @@ export function ClientsView({
   const [saving, setSaving] = useState(false);
   const [syncingClientId, setSyncingClientId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const appDialog = useAppDialog();
   const isOwner = workspace.role === 'owner';
 
   const loadBillingSettings = useCallback(async () => {
@@ -122,18 +125,22 @@ export function ClientsView({
     setSaving(true);
     setError(null);
     const channelUrl = youtubeChannelUrl.trim() || null;
+    const previousClient = editingId ? clients.find((client) => client.id === editingId) : null;
+    const channelChanged = (previousClient?.youtube_channel_url ?? null) !== channelUrl;
     const payload = {
       name: name.trim(),
       email: email.trim() || null,
       youtube_channel_url: channelUrl,
-      youtube_channel_id: null,
-      youtube_channel_title: null,
-      youtube_thumbnail_url: null,
-      youtube_subscriber_count: null,
-      youtube_average_views: null,
-      youtube_uploads_per_month: null,
-      youtube_video_count: null,
-      youtube_last_synced_at: null,
+      ...(channelChanged ? {
+        youtube_channel_id: null,
+        youtube_channel_title: null,
+        youtube_thumbnail_url: null,
+        youtube_subscriber_count: null,
+        youtube_average_views: null,
+        youtube_uploads_per_month: null,
+        youtube_video_count: null,
+        youtube_last_synced_at: null,
+      } : {}),
     };
     let clientId = editingId;
     let createdClientId: string | null = null;
@@ -191,7 +198,7 @@ export function ClientsView({
       }
     }
 
-    if (clientId && channelUrl) {
+    if (clientId && channelUrl && (!editingId || channelChanged)) {
       const youtubeError = await syncYoutubeChannel(clientId);
       if (youtubeError) {
         setSaving(false);
@@ -230,7 +237,14 @@ export function ClientsView({
   };
 
   const deleteClient = async (client: Client) => {
-    if (!supabase || !window.confirm(`Excluir o cliente “${client.name}”? As tarefas serão mantidas sem cliente.`)) return;
+    if (!supabase) return;
+    const confirmed = await appDialog.confirm({
+      title: `Excluir “${client.name}”?`,
+      description: 'As tarefas serão mantidas, mas ficarão sem um cliente associado.',
+      confirmLabel: 'Excluir cliente',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
     const { error: deleteError } = await supabase.from('clients').delete().eq('id', client.id);
     if (deleteError) return setError(deleteError.message);
     if (editingId === client.id) resetForm();
@@ -327,6 +341,7 @@ export function ClientsView({
           {!clients.length ? <div className="empty-panel">Nenhum cliente cadastrado ainda.</div> : null}
         </div>
       </section>
+      {appDialog.host}
     </div>
   );
 }
@@ -360,6 +375,23 @@ export function TeamView({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const canManage = workspace.role === 'owner' || workspace.role === 'admin';
+  const appDialog = useAppDialog();
+
+  useEffect(() => {
+    if (!memberMenuId) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!(event.target as Element).closest('.team-card-menu-wrap')) setMemberMenuId(null);
+    };
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMemberMenuId(null);
+    };
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', dismissOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', dismiss);
+      document.removeEventListener('keydown', dismissOnEscape);
+    };
+  }, [memberMenuId]);
 
   const loadInvitations = useCallback(async () => {
     if (!supabase || !canManage) return setPendingInvitations([]);
@@ -414,7 +446,14 @@ export function TeamView({
   };
 
   const cancelInvitation = async (invitation: WorkspaceInvitation) => {
-    if (!supabase || !window.confirm(`Cancelar o convite enviado para ${invitation.email}?`)) return;
+    if (!supabase) return;
+    const confirmed = await appDialog.confirm({
+      title: 'Cancelar convite?',
+      description: `O convite enviado para ${invitation.email} deixará de ser válido.`,
+      confirmLabel: 'Cancelar convite',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
     const { error: cancelError } = await supabase.rpc('cancel_workspace_invitation', { target_invitation: invitation.id });
     if (cancelError) return setError(cancelError.message);
     await loadInvitations();
@@ -436,7 +475,14 @@ export function TeamView({
   };
 
   const removeMember = async (member: WorkspaceMember) => {
-    if (!supabase || !window.confirm(`Remover ${member.display_name} desta equipe?`)) return;
+    if (!supabase) return;
+    const confirmed = await appDialog.confirm({
+      title: `Remover ${member.display_name}?`,
+      description: 'A pessoa perderá o acesso à equipe e suas tarefas ficarão sem responsável.',
+      confirmLabel: 'Remover membro',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
     setSaving(true);
     const { error: removeError } = await supabase.rpc('remove_workspace_member', {
       target_workspace: workspace.id,
@@ -486,6 +532,7 @@ export function TeamView({
         {canManage && filter === 'all' && !search.trim() ? <button className="team-add-card" onClick={() => { setInviteOpen(true); window.setTimeout(() => document.querySelector<HTMLInputElement>('.team-invite-panel input')?.focus(), 0); }}><span><UserPlus size={25} /></span><strong>Adicionar membro</strong><small>Convide alguém para colaborar com sua equipe.</small></button> : null}
       </section>
       {!visibleMembers.length ? <div className="team-empty"><Users size={24} /><strong>Nenhum membro encontrado</strong><span>Tente mudar o filtro ou o termo de busca.</span></div> : null}
+      {appDialog.host}
     </div>
   );
 }
@@ -506,6 +553,7 @@ export function SettingsView({
   currentAvailability,
   requestedTab,
   requestedTabToken,
+  onDirtyChange,
   onWorkspacesChanged,
   onProfileChanged,
 }: {
@@ -515,6 +563,7 @@ export function SettingsView({
   currentAvailability: WorkspaceMember['availability'];
   requestedTab?: SettingsTab;
   requestedTabToken?: number;
+  onDirtyChange?: (dirty: boolean) => void;
   onWorkspacesChanged: () => Promise<void>;
   onProfileChanged: (profile?: { displayName?: string; avatarUrl?: string | null }) => Promise<void>;
 }) {
@@ -540,14 +589,10 @@ export function SettingsView({
   const [desktopPreferences, setDesktopPreferences] = useState<EditFlowDesktopPreferences | null>(null);
   const [desktopSaving, setDesktopSaving] = useState<keyof EditFlowDesktopPreferences | null>(null);
   const canManage = workspace.role === 'owner' || workspace.role === 'admin';
+  const appDialog = useAppDialog();
+  useDialogFocus<HTMLElement>(Boolean(cropSource) && !appDialog.open, () => setCropSource(null), !avatarSaving, '.profile-crop-modal');
 
   useEffect(() => setWorkspaceName(workspace.name), [workspace.id, workspace.name]);
-  useEffect(() => {
-    if (!requestedTab) return;
-    setActiveTab(requestedTab);
-    setError(null);
-    setSuccess(null);
-  }, [requestedTab, requestedTabToken]);
   useEffect(() => { void window.editflow.getVersion().then(setAppVersion); }, []);
   useEffect(() => { void window.editflow.getDesktopPreferences().then(setDesktopPreferences); }, []);
   useEffect(() => {
@@ -599,6 +644,11 @@ export function SettingsView({
     || specialty.trim() !== profileSnapshot.specialty
     || bio.trim() !== profileSnapshot.bio
   );
+  const workspaceDirty = canManage && workspaceName.trim() !== workspace.name;
+  useEffect(() => {
+    onDirtyChange?.(profileDirty || workspaceDirty);
+    return () => onDirtyChange?.(false);
+  }, [onDirtyChange, profileDirty, workspaceDirty]);
   useEffect(() => {
     if (!profileDirty) return;
     const warnBeforeClose = (event: BeforeUnloadEvent) => event.preventDefault();
@@ -643,12 +693,13 @@ export function SettingsView({
       bio: bio.trim(),
     };
     const { error: profileError } = await supabase.from('profiles').update(profileValues).eq('id', user.id);
-    if (!profileError) await supabase.auth.updateUser({ data: { full_name: displayName.trim() } });
+    const authResult = profileError ? null : await supabase.auth.updateUser({ data: { full_name: displayName.trim() } });
     setSaving(false);
     if (profileError) return setError(profileError.message);
     setProfileSnapshot({ displayName: profileValues.display_name, specialty: profileValues.specialty, bio: profileValues.bio });
     await onProfileChanged({ displayName: profileValues.display_name });
-    setSuccess('Seu perfil foi atualizado.');
+    if (authResult?.error) setError(`O perfil foi salvo, mas os dados da conta não foram sincronizados: ${authResult.error.message}`);
+    else setSuccess('Seu perfil foi atualizado.');
   };
 
   const chooseAvatar = (file: File | undefined) => {
@@ -697,6 +748,13 @@ export function SettingsView({
 
   const removeAvatar = async () => {
     if (!supabase || !avatarUrl) return;
+    const confirmed = await appDialog.confirm({
+      title: 'Remover foto de perfil?',
+      description: 'Sua foto será removida para todos os membros da equipe.',
+      confirmLabel: 'Remover foto',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
     setAvatarSaving(true);
     setError(null);
     setSuccess(null);
@@ -710,13 +768,37 @@ export function SettingsView({
     setSuccess('Foto de perfil removida.');
   };
 
-  const changeSettingsTab = (nextTab: SettingsTab) => {
-    if (activeTab === 'profile' && nextTab !== 'profile' && profileDirty
-      && !window.confirm('Você possui alterações não salvas no perfil. Deseja sair sem salvar?')) return;
+  const changeSettingsTab = async (nextTab: SettingsTab) => {
+    const leavingDirtyProfile = activeTab === 'profile' && nextTab !== 'profile' && profileDirty;
+    const leavingDirtyWorkspace = activeTab === 'general' && nextTab !== 'general' && workspaceDirty;
+    if (leavingDirtyProfile || leavingDirtyWorkspace) {
+      const discard = await appDialog.confirm({
+        title: 'Descartar alterações?',
+        description: leavingDirtyProfile
+          ? 'As alterações não salvas do seu perfil serão perdidas.'
+          : 'O novo nome da equipe ainda não foi salvo.',
+        confirmLabel: 'Descartar',
+        tone: 'danger',
+      });
+      if (!discard) return;
+      if (leavingDirtyProfile) {
+        setDisplayName(profileSnapshot.displayName);
+        setSpecialty(profileSnapshot.specialty);
+        setBio(profileSnapshot.bio);
+      }
+      if (leavingDirtyWorkspace) setWorkspaceName(workspace.name);
+    }
     setActiveTab(nextTab);
     setError(null);
     setSuccess(null);
   };
+
+  useEffect(() => {
+    if (!requestedTab) return;
+    void changeSettingsTab(requestedTab);
+    // requestedTabToken intentionally represents a navigation action.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedTab, requestedTabToken]);
 
   const changePassword = async (event: FormEvent) => {
     event.preventDefault();
@@ -736,7 +818,15 @@ export function SettingsView({
 
   const deleteWorkspace = async () => {
     if (!supabase || workspace.role !== 'owner') return;
-    const confirmation = window.prompt(`Digite ${workspace.name} para excluir esta equipe e todos os trabalhos.`);
+    const confirmation = await appDialog.prompt({
+      title: `Excluir ${workspace.name}?`,
+      description: 'Clientes, tarefas, links, mensagens e lançamentos desta equipe serão removidos permanentemente.',
+      inputLabel: `Digite “${workspace.name}” para confirmar`,
+      placeholder: workspace.name,
+      requiredValue: workspace.name,
+      confirmLabel: 'Excluir equipe',
+      tone: 'danger',
+    });
     if (confirmation !== workspace.name) return;
     setSaving(true);
     const { error: deleteError } = await supabase.rpc('delete_workspace', { target_workspace: workspace.id });
@@ -758,7 +848,7 @@ export function SettingsView({
     key: keyof EditFlowDesktopPreferences,
     value: boolean | EditFlowDesktopPreferences['theme'],
   ) => {
-    if (!desktopPreferences) return;
+    if (!desktopPreferences || desktopSaving) return;
     const nextPreferences = { ...desktopPreferences, [key]: value };
     setDesktopPreferences(nextPreferences);
     setDesktopSaving(key);
@@ -783,7 +873,7 @@ export function SettingsView({
             aria-selected={activeTab === id}
             className={activeTab === id ? 'active' : ''}
             key={id}
-            onClick={() => changeSettingsTab(id)}
+            onClick={() => void changeSettingsTab(id)}
           ><Icon size={15} /><span>{label}</span></button>
         ))}
       </nav>
@@ -857,29 +947,30 @@ export function SettingsView({
           <section className="content-card settings-page-card desktop-settings-card">
             <div className="content-card-heading"><span className="content-icon"><MonitorCog size={18} /></span><div><h2>Aplicativo no Windows</h2><p>Escolha como o EditFlow se comporta ao iniciar e fechar.</p></div></div>
             {desktopPreferences ? <div className="desktop-preference-list">
-              <DesktopPreference icon={Power} title="Iniciar com o Windows" description="Abre o EditFlow automaticamente quando você entrar no computador." checked={desktopPreferences.launchAtLogin} saving={desktopSaving === 'launchAtLogin'} onChange={(checked) => void updateDesktopPreference('launchAtLogin', checked)} />
-              <DesktopPreference icon={X} title="Manter ativo ao clicar no X" description="Esconde a janela nos ícones ocultos para continuar funcionando." checked={desktopPreferences.closeToTray} saving={desktopSaving === 'closeToTray'} onChange={(checked) => void updateDesktopPreference('closeToTray', checked)} />
-              <DesktopPreference icon={Eye} title="Mostrar resumo ao abrir" description="Exibe a tela de boas-vindas com tarefas, mensagens e prazos." checked={desktopPreferences.showWelcome} saving={desktopSaving === 'showWelcome'} onChange={(checked) => void updateDesktopPreference('showWelcome', checked)} />
+              <DesktopPreference icon={Power} title="Iniciar com o Windows" description="Abre o EditFlow automaticamente quando você entrar no computador." checked={desktopPreferences.launchAtLogin} saving={desktopSaving !== null} onChange={(checked) => void updateDesktopPreference('launchAtLogin', checked)} />
+              <DesktopPreference icon={X} title="Manter ativo ao clicar no X" description="Esconde a janela nos ícones ocultos para continuar funcionando." checked={desktopPreferences.closeToTray} saving={desktopSaving !== null} onChange={(checked) => void updateDesktopPreference('closeToTray', checked)} />
+              <DesktopPreference icon={Eye} title="Mostrar resumo ao abrir" description="Exibe a tela de boas-vindas com tarefas, mensagens e prazos." checked={desktopPreferences.showWelcome} saving={desktopSaving !== null} onChange={(checked) => void updateDesktopPreference('showWelcome', checked)} />
             </div> : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
           </section>
           <section className="content-card settings-page-card appearance-settings-card">
             <div className="content-card-heading"><span className="content-icon"><Palette size={18} /></span><div><h2>Aparência</h2><p>Escolha como o EditFlow deve aparecer neste computador.</p></div></div>
             {desktopPreferences ? <div className="theme-options" role="radiogroup" aria-label="Tema do aplicativo">
-              <ThemeOption icon={Sun} title="Claro" description="Visual limpo e iluminado." active={desktopPreferences.theme === 'light'} saving={desktopSaving === 'theme'} onClick={() => void updateDesktopPreference('theme', 'light')} />
-              <ThemeOption icon={Moon} title="Escuro" description="Grafite com cores vibrantes." active={desktopPreferences.theme === 'dark'} saving={desktopSaving === 'theme'} onClick={() => void updateDesktopPreference('theme', 'dark')} />
-              <ThemeOption icon={Laptop} title="Automático" description="Acompanha o tema do Windows." active={desktopPreferences.theme === 'system'} saving={desktopSaving === 'theme'} onClick={() => void updateDesktopPreference('theme', 'system')} />
+              <ThemeOption icon={Sun} title="Claro" description="Visual limpo e iluminado." active={desktopPreferences.theme === 'light'} saving={desktopSaving !== null} onClick={() => void updateDesktopPreference('theme', 'light')} />
+              <ThemeOption icon={Moon} title="Escuro" description="Grafite com cores vibrantes." active={desktopPreferences.theme === 'dark'} saving={desktopSaving !== null} onClick={() => void updateDesktopPreference('theme', 'dark')} />
+              <ThemeOption icon={Laptop} title="Automático" description="Acompanha o tema do Windows." active={desktopPreferences.theme === 'system'} saving={desktopSaving !== null} onClick={() => void updateDesktopPreference('theme', 'system')} />
             </div> : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
           </section>
           <section className="content-card settings-page-card">
             <div className="content-card-heading"><span className="content-icon"><Bell size={18} /></span><div><h2>Notificações</h2><p>Controle os alertas exibidos pelo Windows.</p></div></div>
             {desktopPreferences ? <div className="desktop-preference-list">
-              <DesktopPreference icon={Bell} title="Notificações do Windows" description="Mostra alertas de mensagens, novas tarefas, comentários, ajustes e movimentações." checked={desktopPreferences.nativeNotifications} saving={desktopSaving === 'nativeNotifications'} onChange={(checked) => void updateDesktopPreference('nativeNotifications', checked)} />
+              <DesktopPreference icon={Bell} title="Notificações do Windows" description="Mostra alertas de mensagens, novas tarefas, comentários, ajustes e movimentações." checked={desktopPreferences.nativeNotifications} saving={desktopSaving !== null} onChange={(checked) => void updateDesktopPreference('nativeNotifications', checked)} />
               <div className="notification-events-card"><strong>Eventos acompanhados</strong><div><span>Mensagens da equipe</span><span>Tarefas atribuídas</span><span>Comentários e ajustes</span><span>Mudanças no fluxo</span><span>Convites aceitos</span></div><small>Os avisos continuam disponíveis dentro do EditFlow mesmo quando os alertas do Windows estiverem desativados.</small></div>
             </div> : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
           </section>
           <section className="content-card update-settings-row"><div><h2>Atualizações</h2><p>Versão instalada: {appVersion}. O EditFlow também verifica automaticamente ao abrir.</p></div><button className="secondary-button" onClick={() => void checkForUpdates()}>Verificar atualizações</button></section>
         </> : null}
       </main>
+      {appDialog.host}
     </div>
   );
 }

@@ -62,4 +62,10 @@ contextBridge.exposeInMainWorld('editflow', {
     ipcRenderer.on('updater:status', listener);
     return () => ipcRenderer.removeListener('updater:status', listener);
   },
+  getPendingAuthCallback: () => ipcRenderer.invoke('auth:get-pending-callback'),
+  onAuthCallback: (callback: (url: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, url: string) => callback(url);
+    ipcRenderer.on('auth:callback', listener);
+    return () => ipcRenderer.removeListener('auth:callback', listener);
+  },
 });

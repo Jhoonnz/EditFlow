@@ -4,13 +4,14 @@ import {
   LoaderCircle,
   MessageCircle,
   MessageSquarePlus,
-  Minus,
   Search,
   Send,
   Users,
   X,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { useLatestRequest } from '../../lib/asyncRequest';
+import { useDialogFocus } from '../../lib/useDialogFocus';
 import type {
   ChatConversation,
   ChatConversationMember,
@@ -46,6 +47,7 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [conversationMembers, setConversationMembers] = useState<ChatConversationMember[]>([]);
   const [previewMessages, setPreviewMessages] = useState<ChatMessage[]>([]);
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [composer, setComposer] = useState('');
@@ -60,6 +62,9 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
   const selectedIdRef = useRef<string | null>(null);
   const openRef = useRef(false);
   const widgetRef = useRef<HTMLDivElement>(null);
+  const { begin: beginMessagesRequest, isLatest: isLatestMessagesRequest, cancel: cancelMessagesRequests } = useLatestRequest();
+  const { begin: beginOverviewRequest, isLatest: isLatestOverviewRequest, cancel: cancelOverviewRequests } = useLatestRequest();
+  const panelRef = useDialogFocus<HTMLElement>(open, () => setOpen(false));
 
   useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
   useEffect(() => { openRef.current = open; }, [open]);
@@ -74,6 +79,7 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
 
   const loadMessages = useCallback(async (conversationId: string, quiet = false) => {
     if (!supabase) return;
+    const requestId = beginMessagesRequest();
     if (!quiet) setMessagesLoading(true);
     const { data, error: messageError } = await supabase
       .from('chat_messages')
@@ -81,32 +87,43 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
       .eq('conversation_id', conversationId)
       .order('created_at', { ascending: false })
       .limit(150);
+    if (!isLatestMessagesRequest(requestId) || selectedIdRef.current !== conversationId) return;
     if (messageError) setError(messageError.message);
     else setMessages(((data ?? []) as ChatMessage[]).reverse());
     setMessagesLoading(false);
-  }, []);
+  }, [beginMessagesRequest, isLatestMessagesRequest]);
 
   const markConversationRead = useCallback(async (conversationId: string) => {
     if (!supabase) return;
     const readAt = new Date().toISOString();
+    let previousReadAt: string | null | undefined;
     setConversationMembers((current) => current.map((item) => (
       item.conversation_id === conversationId && item.user_id === currentUserId
-        ? { ...item, last_read_at: readAt }
+        ? (previousReadAt = item.last_read_at, { ...item, last_read_at: readAt })
         : item
     )));
-    await supabase
+    const previousUnread = unreadCounts[conversationId] ?? 0;
+    setUnreadCounts((current) => ({ ...current, [conversationId]: 0 }));
+    const { error: readError } = await supabase
       .from('chat_conversation_members')
       .update({ last_read_at: readAt })
       .eq('conversation_id', conversationId)
       .eq('user_id', currentUserId);
-  }, [currentUserId]);
+    if (readError) {
+      setError(chatSetupMessage(readError.message));
+      setConversationMembers((current) => current.map((item) => item.conversation_id === conversationId && item.user_id === currentUserId ? { ...item, last_read_at: previousReadAt ?? null } : item));
+      setUnreadCounts((current) => ({ ...current, [conversationId]: previousUnread }));
+    }
+  }, [currentUserId, unreadCounts]);
 
   const loadOverview = useCallback(async (quiet = false) => {
     if (!supabase) return;
+    const requestId = beginOverviewRequest();
     if (!quiet) setLoading(true);
     setError(null);
 
     const generalResult = await supabase.rpc('get_or_create_general_chat', { target_workspace: workspace.id });
+    if (!isLatestOverviewRequest(requestId)) return;
     if (generalResult.error) {
       setError(chatSetupMessage(generalResult.error.message));
       setLoading(false);
@@ -118,6 +135,7 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
       .select('*')
       .eq('workspace_id', workspace.id)
       .order('updated_at', { ascending: false });
+    if (!isLatestOverviewRequest(requestId)) return;
     if (conversationResult.error) {
       setError(chatSetupMessage(conversationResult.error.message));
       setLoading(false);
@@ -138,6 +156,7 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
       supabase.from('chat_conversation_members').select('*').in('conversation_id', ids),
       supabase.from('chat_messages').select('*').in('conversation_id', ids).order('created_at', { ascending: false }).limit(300),
     ]);
+    if (!isLatestOverviewRequest(requestId)) return;
     const loadError = memberResult.error ?? messageResult.error;
     if (loadError) {
       setError(chatSetupMessage(loadError.message));
@@ -145,15 +164,28 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
       return;
     }
 
+    const nextMemberships = (memberResult.data ?? []) as ChatConversationMember[];
+    const unreadEntries = await Promise.all(nextConversations.map(async (conversation) => {
+      const ownMembership = nextMemberships.find((item) => item.conversation_id === conversation.id && item.user_id === currentUserId);
+      let query = supabase!.from('chat_messages').select('id', { count: 'exact', head: true })
+        .eq('conversation_id', conversation.id)
+        .neq('sender_id', currentUserId);
+      if (ownMembership?.last_read_at) query = query.gt('created_at', ownMembership.last_read_at);
+      const result = await query;
+      return [conversation.id, result.error ? 0 : result.count ?? 0] as const;
+    }));
+    if (!isLatestOverviewRequest(requestId)) return;
+
     setConversations(nextConversations);
-    setConversationMembers((memberResult.data ?? []) as ChatConversationMember[]);
+    setConversationMembers(nextMemberships);
     setPreviewMessages((messageResult.data ?? []) as ChatMessage[]);
+    setUnreadCounts(Object.fromEntries(unreadEntries));
     setSelectedId((current) => {
       if (current && nextConversations.some((conversation) => conversation.id === current)) return current;
       return nextConversations.find((conversation) => conversation.kind === 'general')?.id ?? nextConversations[0]?.id ?? null;
     });
     setLoading(false);
-  }, [workspace.id]);
+  }, [beginOverviewRequest, currentUserId, isLatestOverviewRequest, workspace.id]);
 
   const scheduleOverviewReload = useCallback(() => {
     if (reloadTimer.current) clearTimeout(reloadTimer.current);
@@ -165,7 +197,11 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
     setMessages([]);
     setOpen(false);
     void loadOverview();
-  }, [loadOverview, workspace.id]);
+    return () => {
+      cancelMessagesRequests();
+      cancelOverviewRequests();
+    };
+  }, [cancelMessagesRequests, cancelOverviewRequests, loadOverview, workspace.id]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -237,15 +273,12 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
       participantRows,
       otherMember: members.find((member) => member.user_id === otherId) ?? null,
       lastMessage: conversationMessages[0] ?? null,
-      unreadCount: conversationMessages.filter((message) => (
-        message.sender_id !== currentUserId
-        && (!ownMembership?.last_read_at || new Date(message.created_at) > new Date(ownMembership.last_read_at))
-      )).length,
+      unreadCount: unreadCounts[conversation.id] ?? 0,
     };
   }).sort((first, second) => {
     if (first.kind !== second.kind) return first.kind === 'general' ? -1 : 1;
     return new Date(second.updated_at).getTime() - new Date(first.updated_at).getTime();
-  }), [conversationMembers, conversations, currentUserId, members, previewMessages]);
+  }), [conversationMembers, conversations, currentUserId, members, previewMessages, unreadCounts]);
 
   const totalUnread = conversationViews.reduce((total, conversation) => total + conversation.unreadCount, 0);
   useEffect(() => onUnreadChange?.(totalUnread), [onUnreadChange, totalUnread]);
@@ -303,7 +336,7 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
   return (
     <div className={`chat-widget ${open ? 'open' : ''}`} ref={widgetRef}>
       {open ? (
-        <section className="chat-panel" role="dialog" aria-label="Mensagens da equipe">
+        <section ref={panelRef} tabIndex={-1} className="chat-panel" role="dialog" aria-modal="true" aria-label="Mensagens da equipe">
           <aside className="chat-sidebar">
             <header className="chat-sidebar-header">
               <div><span><MessageCircle size={16} /></span><div><strong>Mensagens</strong><small>{totalUnread ? `${totalUnread} não lidas` : 'Tudo em dia'}</small></div></div>
@@ -344,7 +377,7 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
                 {selectedConversation?.kind === 'general' ? <span className="chat-general-avatar"><Users size={16} /></span> : <MemberAvatar member={selectedConversation?.otherMember ?? null} />}
                 <span><strong>{selectedConversation?.kind === 'general' ? 'Geral' : selectedConversation?.otherMember?.display_name ?? 'Mensagens'}</strong><small>{selectedConversation?.kind === 'general' ? `${members.length} membros na equipe` : selectedConversation?.otherMember ? availabilityLabel(selectedConversation.otherMember) : 'Selecione uma conversa'}</small></span>
               </div>
-              <div><button type="button" onClick={() => setOpen(false)} aria-label="Minimizar chat"><Minus size={18} /></button><button type="button" onClick={() => setOpen(false)} aria-label="Fechar chat"><X size={18} /></button></div>
+              <div><button type="button" onClick={() => setOpen(false)} aria-label="Fechar chat"><X size={18} /></button></div>
             </header>
 
             <div className="chat-message-scroll" ref={scrollRef} role="log" aria-live="polite">

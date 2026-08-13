@@ -20,7 +20,9 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 let trayExplanationShown = false;
+let pendingAuthCallback: string | null = null;
 const activeNativeNotifications = new Set<ElectronNotification>();
+const authProtocol = 'editflow';
 
 type DesktopPreferences = {
   launchAtLogin: boolean;
@@ -60,6 +62,33 @@ type UsdBrlRate = {
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.editflow.desktop');
 }
+
+if (app.isPackaged) {
+  app.setAsDefaultProtocolClient(authProtocol);
+} else if (process.platform === 'win32' && process.argv[1]) {
+  app.setAsDefaultProtocolClient(authProtocol, process.execPath, [path.resolve(process.argv[1])]);
+} else {
+  app.setAsDefaultProtocolClient(authProtocol);
+}
+
+const authCallbackFromArguments = (argumentsList: string[]) => argumentsList.find((argument) => argument.startsWith(`${authProtocol}://`)) ?? null;
+
+const queueAuthCallback = (url: string | null) => {
+  if (!url) return;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== `${authProtocol}:`) return;
+  } catch {
+    return;
+  }
+  pendingAuthCallback = url;
+  showMainWindow();
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading()) {
+    mainWindow.webContents.send('auth:callback', url);
+  }
+};
+
+pendingAuthCallback = authCallbackFromArguments(process.argv);
 
 const sendUpdateStatus = (status: UpdateStatus) => {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -352,6 +381,11 @@ ipcMain.handle('system:open-external', (_event, url: unknown) => {
 });
 
 ipcMain.handle('system:get-version', () => app.getVersion());
+ipcMain.handle('auth:get-pending-callback', () => {
+  const callback = pendingAuthCallback;
+  pendingAuthCallback = null;
+  return callback;
+});
 ipcMain.handle('system:get-usd-brl-rate', () => getUsdBrlRate());
 ipcMain.handle('system:get-user-activity', () => {
   const state = powerMonitor.getSystemIdleState(300);
@@ -506,7 +540,14 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
-  app.on('second-instance', showMainWindow);
+  app.on('second-instance', (_event, argv) => {
+    queueAuthCallback(authCallbackFromArguments(argv));
+    showMainWindow();
+  });
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    queueAuthCallback(url);
+  });
   app.on('before-quit', () => { isQuitting = true; });
 
   void app.whenReady().then(async () => {

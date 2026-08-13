@@ -13,6 +13,7 @@ import {
   Users,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { isActiveTask } from '../../lib/taskStatus';
 import type { AppNotification, Task, WelcomeStartupAction, WorkspaceSummary } from './types';
 
 type SummaryCard = {
@@ -64,6 +65,8 @@ export function WelcomeScreen({
 }) {
   const [summary, setSummary] = useState<WelcomeSummary>(emptySummary);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [continuing, setContinuing] = useState(false);
   const [disableWelcome, setDisableWelcome] = useState(false);
   const firstName = getFirstName(user);
 
@@ -73,21 +76,26 @@ export function WelcomeScreen({
     let cancelled = false;
 
     const loadSummary = async () => {
+      setLoading(true);
+      setError(null);
       const workspaceIds = workspaces.map((workspace) => workspace.id);
       const now = new Date();
       const soonLimit = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
-      const [taskResult, columnResult, notificationResult, adjustmentResult] = await Promise.all([
+      const [taskResult, notificationResult, adjustmentResult] = await Promise.all([
         client.from('tasks').select('*').in('workspace_id', workspaceIds).order('created_at', { ascending: false }),
-        client.from('columns').select('id, name'),
         client.from('notifications').select('*').eq('user_id', user.id).is('read_at', null).order('created_at', { ascending: false }).limit(30),
         client.from('task_comments').select('task_id').in('workspace_id', workspaceIds).eq('kind', 'change_request').eq('is_resolved', false),
       ]);
 
       if (cancelled) return;
+      const summaryError = taskResult.error ?? notificationResult.error ?? adjustmentResult.error;
+      if (summaryError) {
+        setError(summaryError.message);
+        setLoading(false);
+        return;
+      }
       const tasks = (taskResult.data ?? []) as Task[];
-      const columnNames = new Map((columnResult.data ?? []).map((column) => [column.id as string, String(column.name).toLocaleLowerCase('pt-BR')]));
-      const isDelivered = (task: Task) => columnNames.get(task.column_id)?.includes('entregue') ?? false;
-      const activeTasks = tasks.filter((task) => !isDelivered(task));
+      const activeTasks = tasks.filter(isActiveTask);
       const overdueTasks = activeTasks.filter((task) => task.due_at && new Date(task.due_at) < now);
       const dueSoonTasks = activeTasks.filter((task) => {
         if (!task.due_at) return false;
@@ -183,7 +191,15 @@ export function WelcomeScreen({
     + invitationCount;
 
   const continueTo = async (action: WelcomeStartupAction) => {
-    if (disableWelcome) await onDisableWelcome();
+    if (continuing) return;
+    setContinuing(true);
+    if (disableWelcome) {
+      try {
+        await onDisableWelcome();
+      } catch (preferenceError) {
+        setError(preferenceError instanceof Error ? preferenceError.message : 'Não foi possível salvar a preferência de abertura.');
+      }
+    }
     onContinue(action);
   };
 
@@ -207,6 +223,8 @@ export function WelcomeScreen({
           <h1>{isFirstAccess ? `Bem-vindo ao EditFlow, ${firstName}.` : `Bem-vindo de volta, ${firstName}.`}</h1>
           <p>{loading
             ? 'Preparando um resumo do seu espaço de trabalho…'
+            : error
+              ? 'Não foi possível carregar o resumo agora. Você ainda pode entrar normalmente na produção.'
             : totalAttention
               ? `Há ${totalAttention} ${totalAttention === 1 ? 'item esperando' : 'itens esperando'} por você. Aqui está o que merece atenção primeiro.`
               : 'Tudo tranquilo por aqui. Seus trabalhos estão organizados e não há nenhuma pendência urgente.'}</p>
@@ -214,6 +232,8 @@ export function WelcomeScreen({
 
         {loading ? (
           <div className="welcome-loading"><LoaderCircle className="spinner" size={28} /><span>Sincronizando seu resumo</span></div>
+        ) : error ? (
+          <div className="welcome-summary-error" role="alert"><TriangleAlert size={18} /><span><strong>Resumo indisponível</strong><small>{error}</small></span></div>
         ) : (
           <div className="welcome-summary-grid">
             {cards.map((card, index) => {
@@ -243,13 +263,13 @@ export function WelcomeScreen({
           </label>
           <div className="welcome-footer-actions">
             {invitationCount ? <span className="welcome-invites"><Bell size={13} />{invitationCount} {invitationCount === 1 ? 'convite pendente' : 'convites pendentes'}</span> : null}
-            <button className="welcome-enter" disabled={loading} onClick={() => void continueTo({ kind: 'board' })}>
+            <button className="welcome-enter" disabled={loading || continuing} onClick={() => void continueTo({ kind: 'board' })}>
               <span>Entrar na produção</span><ArrowRight size={18} />
             </button>
           </div>
         </footer>
 
-        {!loading && totalAttention === 0 ? <div className="welcome-all-clear"><CheckCircle2 size={15} />Tudo em dia</div> : null}
+        {!loading && !error && totalAttention === 0 ? <div className="welcome-all-clear"><CheckCircle2 size={15} />Tudo em dia</div> : null}
       </section>
     </main>
   );

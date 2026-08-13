@@ -1,4 +1,5 @@
 import { type CSSProperties, DragEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { RealtimeChannel, User } from '@supabase/supabase-js';
 import {
   AlertTriangle,
@@ -19,7 +20,6 @@ import {
   Mail,
   MessageSquare,
   MoreHorizontal,
-  MoreVertical,
   Plus,
   Search,
   Settings,
@@ -33,6 +33,10 @@ import {
   X,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { useLatestRequest } from '../../lib/asyncRequest';
+import { useDialogFocus } from '../../lib/useDialogFocus';
+import { useAppDialog } from '../../components/AppDialog';
+import { isVisibleDeadline, taskDeadlineDistance } from '../../lib/taskStatus';
 import { ChatPanel, type ChatOpenRequest } from '../chat/ChatPanel';
 import { FinanceView } from '../finance/FinanceView';
 import { ClientsView, SettingsView, TeamView, type SettingsTab } from '../workspace/WorkspaceViews';
@@ -115,6 +119,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [signingOut, setSigningOut] = useState(false);
   const [liveNotification, setLiveNotification] = useState<AppNotification | null>(null);
   const [profileMemberId, setProfileMemberId] = useState<string | null>(null);
+  const [settingsDirty, setSettingsDirty] = useState(false);
   const [chatRequest, setChatRequest] = useState<ChatOpenRequest | null>(null);
   const [presenceActivity, setPresenceActivity] = useState<Record<string, 'active' | 'away'>>({});
   const [presenceReady, setPresenceReady] = useState(false);
@@ -122,10 +127,26 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const notificationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
+  const { begin: beginBoardRequest, isLatest: isLatestBoardRequest, cancel: cancelBoardRequests } = useLatestRequest();
+  const appDialog = useAppDialog();
+  useDialogFocus<HTMLElement>(showCreateWorkspace, () => setShowCreateWorkspace(false), !creatingWorkspace, '.workspace-create-dialog');
+  useDialogFocus<HTMLElement>(showLogoutConfirm, () => setShowLogoutConfirm(false), !signingOut, '.logout-dialog');
   const handleChatRequestHandled = useCallback(() => setChatRequest(null), []);
   const openSettings = (tab: SettingsTab) => {
     setSettingsNavigation((current) => ({ tab, token: current.token + 1 }));
     setView('settings');
+  };
+  const navigateTo = async (nextView: DashboardView) => {
+    if (view === 'settings' && nextView !== 'settings' && settingsDirty) {
+      const discard = await appDialog.confirm({
+        title: 'Sair sem salvar?',
+        description: 'Existem alterações nas configurações que ainda não foram salvas.',
+        confirmLabel: 'Descartar e sair',
+        tone: 'danger',
+      });
+      if (!discard) return;
+    }
+    setView(nextView);
   };
 
   useEffect(() => {
@@ -147,15 +168,20 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   }, [showWorkspaceMenu]);
 
   useEffect(() => {
-    if (!showCreateWorkspace && !showLogoutConfirm) return;
-    const closeDialogOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      if (showCreateWorkspace && !creatingWorkspace) setShowCreateWorkspace(false);
-      if (showLogoutConfirm && !signingOut) setShowLogoutConfirm(false);
+    if (!columnMenuId) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!(event.target as Element).closest('.column-header')) setColumnMenuId(null);
     };
-    document.addEventListener('keydown', closeDialogOnEscape);
-    return () => document.removeEventListener('keydown', closeDialogOnEscape);
-  }, [creatingWorkspace, showCreateWorkspace, showLogoutConfirm, signingOut]);
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setColumnMenuId(null);
+    };
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', dismissOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', dismiss);
+      document.removeEventListener('keydown', dismissOnEscape);
+    };
+  }, [columnMenuId]);
 
   const createWorkspace = async (event: FormEvent) => {
     event.preventDefault();
@@ -190,6 +216,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 
   const loadBoard = useCallback(async (quiet = false) => {
     if (!supabase) return;
+    const requestId = beginBoardRequest();
     if (!quiet) setLoading(true);
     setError(null);
 
@@ -201,6 +228,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
       .limit(1)
       .maybeSingle();
 
+    if (!isLatestBoardRequest(requestId)) return;
     if (boardError || !boardRow) {
       setError(boardError?.message ?? 'Nenhum quadro foi encontrado neste espaço.');
       setSyncStatus(navigator.onLine ? 'error' : 'offline');
@@ -218,6 +246,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     ]);
 
     const firstError = columnResult.error ?? taskResult.error ?? clientResult.error ?? membershipResult.error ?? notificationResult.error;
+    if (!isLatestBoardRequest(requestId)) return;
     if (firstError) {
       setError(firstError.message);
       setSyncStatus(navigator.onLine ? 'error' : 'offline');
@@ -241,6 +270,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     }>;
     if (memberProfileResult.error && memberIds.length) {
       const fallbackProfiles = await supabase.from('profiles').select('id, display_name, avatar_url').in('id', memberIds);
+      if (!isLatestBoardRequest(requestId)) return;
       if (fallbackProfiles.error) {
         setError(fallbackProfiles.error.message);
         setSyncStatus(navigator.onLine ? 'error' : 'offline');
@@ -278,6 +308,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
       if (!linkResult.error) nextLinks = (linkResult.data ?? []) as TaskLink[];
     }
 
+    if (!isLatestBoardRequest(requestId)) return;
+
     setBoard(currentBoard);
     setColumns((columnResult.data ?? []) as BoardColumn[]);
     setTasks(nextTasks);
@@ -288,7 +320,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     setLastSyncedAt(new Date().toISOString());
     if (navigator.onLine) setSyncStatus('connected');
     setLoading(false);
-  }, [user.id, workspace.id]);
+  }, [beginBoardRequest, isLatestBoardRequest, user.id, workspace.id]);
 
   const scheduleReload = useCallback(() => {
     if (reloadTimer.current) clearTimeout(reloadTimer.current);
@@ -310,7 +342,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 
   useEffect(() => {
     void loadBoard();
-  }, [loadBoard]);
+    return cancelBoardRequests;
+  }, [cancelBoardRequests, loadBoard]);
 
   useEffect(() => setProfileMemberId(null), [workspace.id]);
 
@@ -624,9 +657,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   };
 
   const deadlineNotifications = useMemo(() => tasks
-    .filter((task) => task.due_at)
-    .map((task) => ({ task, distance: new Date(task.due_at!).getTime() - Date.now() }))
-    .filter(({ distance }) => distance < 7 * 24 * 60 * 60 * 1000)
+    .filter((task) => isVisibleDeadline(task))
+    .map((task) => ({ task, distance: taskDeadlineDistance(task)! }))
     .sort((a, b) => a.distance - b.distance), [tasks]);
 
   const unreadNotifications = inboxNotifications.filter((notification) => !notification.read_at);
@@ -644,14 +676,23 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     if (!supabase || notification.read_at) return;
     const readAt = new Date().toISOString();
     setInboxNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, read_at: readAt } : item));
-    await supabase.from('notifications').update({ read_at: readAt }).eq('id', notification.id);
+    const { error: readError } = await supabase.from('notifications').update({ read_at: readAt }).eq('id', notification.id);
+    if (readError) {
+      setInboxNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, read_at: null } : item));
+      setError(readError.message);
+    }
   };
 
   const markAllNotificationsRead = async () => {
     if (!supabase || !unreadNotifications.length) return;
     const readAt = new Date().toISOString();
+    const previousNotifications = inboxNotifications;
     setInboxNotifications((current) => current.map((item) => ({ ...item, read_at: item.read_at ?? readAt })));
-    await supabase.from('notifications').update({ read_at: readAt }).eq('workspace_id', workspace.id).eq('user_id', user.id).is('read_at', null);
+    const { error: readError } = await supabase.from('notifications').update({ read_at: readAt }).eq('workspace_id', workspace.id).eq('user_id', user.id).is('read_at', null);
+    if (readError) {
+      setInboxNotifications(previousNotifications);
+      setError(readError.message);
+    }
   };
 
   useEffect(() => window.editflow.onNativeNotificationClicked((target) => {
@@ -740,10 +781,10 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         </div>
 
         <nav className="sidebar-nav" aria-label="Navegação principal">
-          <button className={`nav-item ${view === 'board' ? 'active' : ''}`} onClick={() => setView('board')}><LayoutDashboard size={18} /><span>Produção</span></button>
-          {canManagePlanning ? <button className={`nav-item ${view === 'clients' ? 'active' : ''}`} onClick={() => setView('clients')}><Users size={18} /><span>Clientes</span><small>{clients.length}</small></button> : null}
-          <button className={`nav-item ${view === 'team' ? 'active' : ''}`} onClick={() => setView('team')}><Users size={18} /><span>Equipe</span><small>{liveMembers.length}</small></button>
-          {workspace.role === 'owner' ? <button className={`nav-item ${view === 'finance' ? 'active' : ''}`} onClick={() => setView('finance')}><WalletCards size={18} /><span>Ganhos</span></button> : null}
+          <button className={`nav-item ${view === 'board' ? 'active' : ''}`} onClick={() => void navigateTo('board')}><LayoutDashboard size={18} /><span>Produção</span></button>
+          {canManagePlanning ? <button className={`nav-item ${view === 'clients' ? 'active' : ''}`} onClick={() => void navigateTo('clients')}><Users size={18} /><span>Clientes</span><small>{clients.length}</small></button> : null}
+          <button className={`nav-item ${view === 'team' ? 'active' : ''}`} onClick={() => void navigateTo('team')}><Users size={18} /><span>Equipe</span><small>{liveMembers.length}</small></button>
+          {workspace.role === 'owner' ? <button className={`nav-item ${view === 'finance' ? 'active' : ''}`} onClick={() => void navigateTo('finance')}><WalletCards size={18} /><span>Ganhos</span></button> : null}
         </nav>
 
         <div className="sidebar-spacer" />
@@ -849,8 +890,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                   {canManagePlanning ? <button aria-label={`Opções de ${column.name}`} onClick={() => setColumnMenuId((current) => current === column.id ? null : column.id)}><MoreHorizontal size={17} /></button> : null}
                   {canManagePlanning && columnMenuId === column.id ? (
                     <div className="column-menu">
-                      <button onClick={() => { setEditingColumn(column); setColumnMenuId(null); }}>Editar nome e cor</button>
-                      <button className="danger" onClick={() => { setEditingColumn(column); setColumnMenuId(null); }}>Gerenciar coluna</button>
+                      <button onClick={() => { setEditingColumn(column); setColumnMenuId(null); }}>Editar e gerenciar</button>
                     </div>
                   ) : null}
                 </header>
@@ -903,7 +943,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         {view === 'clients' && canManagePlanning ? <ClientsView workspace={workspace} clients={clients} tasks={tasks} onChanged={() => loadBoard(true)} /> : null}
         {view === 'team' ? <TeamView userId={user.id} workspace={workspace} members={liveMembers} tasks={tasks} onChanged={() => loadBoard(true)} onMemberProfile={setProfileMemberId} onMemberTasks={(member) => { setSearch(member.display_name); setView('board'); }} /> : null}
         {view === 'finance' && workspace.role === 'owner' ? <FinanceView workspace={workspace} clients={clients} tasks={tasks} /> : null}
-        {view === 'settings' ? <SettingsView user={user} workspace={workspace} tasks={tasks} currentAvailability={currentUserMember?.availability ?? 'offline'} requestedTab={settingsNavigation.tab} requestedTabToken={settingsNavigation.token} onWorkspacesChanged={onWorkspacesChanged} onProfileChanged={async (profile) => {
+        {view === 'settings' ? <SettingsView user={user} workspace={workspace} tasks={tasks} currentAvailability={currentUserMember?.availability ?? 'offline'} requestedTab={settingsNavigation.tab} requestedTabToken={settingsNavigation.token} onDirtyChange={setSettingsDirty} onWorkspacesChanged={onWorkspacesChanged} onProfileChanged={async (profile) => {
           if (profile) setMembers((current) => current.map((member) => member.user_id === user.id ? {
             ...member,
             ...('displayName' in profile ? { display_name: profile.displayName } : {}),
@@ -915,6 +955,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 
       {editor && board && columns[0] ? (
         <TaskEditor
+          key={`${editor.mode}:${editor.task?.id ?? editor.columnId ?? 'new'}`}
           mode={editor.mode}
           task={editor.task}
           board={board}
@@ -1002,6 +1043,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           <footer><button type="button" className="app-dialog-cancel" autoFocus disabled={signingOut} onClick={() => setShowLogoutConfirm(false)}>Cancelar</button><button type="button" className="app-dialog-confirm danger" disabled={signingOut} onClick={() => void signOut()}>{signingOut ? <LoaderCircle className="spinner" size={15} /> : <LogOut size={15} />}Sim, sair</button></footer>
         </section>
       </div> : null}
+      {appDialog.host}
     </main>
   );
 }
@@ -1028,6 +1070,7 @@ function ColumnEditor({
   const [saving, setSaving] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useDialogFocus<HTMLElement>(true, onClose, !saving);
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -1055,9 +1098,9 @@ function ColumnEditor({
   };
 
   return (
-    <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section className="column-editor-modal" role="dialog" aria-modal="true" aria-label={column ? 'Editar coluna' : 'Criar coluna'}>
-        <header><div><p>CONFIGURAÇÃO DA COLUNA</p><h2>{column ? 'Editar coluna' : 'Criar coluna'}</h2></div><button onClick={onClose} aria-label="Fechar"><X size={19} /></button></header>
+    <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) onClose(); }}>
+      <section ref={dialogRef} tabIndex={-1} className="column-editor-modal" role="dialog" aria-modal="true" aria-label={column ? 'Editar coluna' : 'Criar coluna'}>
+        <header><div><p>CONFIGURAÇÃO DA COLUNA</p><h2>{column ? 'Editar coluna' : 'Criar coluna'}</h2></div><button disabled={saving} onClick={onClose} aria-label="Fechar"><X size={19} /></button></header>
         <form onSubmit={save}>
           <label><span>Nome</span><input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} autoFocus /></label>
           <fieldset><legend>Cor</legend><div className="color-palette">{columnColors.map((option) => <button type="button" key={option} className={color === option ? 'selected' : ''} style={{ background: option }} onClick={() => setColor(option)} aria-label={`Usar cor ${option}`}>{color === option ? '✓' : ''}</button>)}</div></fieldset>
@@ -1114,6 +1157,9 @@ function TaskCard({
   const [showAssignees, setShowAssignees] = useState(false);
   const [assigning, setAssigning] = useState(false);
   const assigneePickerRef = useRef<HTMLDivElement>(null);
+  const assigneeButtonRef = useRef<HTMLButtonElement>(null);
+  const assigneePopoverRef = useRef<HTMLElement>(null);
+  const [assigneePopoverStyle, setAssigneePopoverStyle] = useState<CSSProperties | null>(null);
   const countdown = taskCountdown(task.due_at);
   const subtitle = client?.name || task.description || priorityLabel(task.priority);
   const downloadLinks = taskLinks.filter((link) => link.category === 'download');
@@ -1130,11 +1176,42 @@ function TaskCard({
 
   useEffect(() => {
     if (!showAssignees) return;
-    const closeAssigneesOnOutsidePointer = (event: PointerEvent) => {
-      if (!assigneePickerRef.current?.contains(event.target as Node)) setShowAssignees(false);
+    const positionAssigneePopover = () => {
+      const anchor = assigneeButtonRef.current;
+      if (!anchor) return;
+      const rect = anchor.getBoundingClientRect();
+      const width = 210;
+      const gap = 8;
+      const viewportPadding = 12;
+      const availableAbove = rect.top - gap - viewportPadding;
+      const availableBelow = window.innerHeight - rect.bottom - gap - viewportPadding;
+      const openAbove = availableAbove >= 150 || availableAbove >= availableBelow;
+      const maxHeight = Math.max(110, Math.min(250, openAbove ? availableAbove : availableBelow));
+      const left = Math.min(
+        window.innerWidth - width - viewportPadding,
+        Math.max(viewportPadding, rect.left - 68),
+      );
+      const top = openAbove
+        ? Math.max(viewportPadding, rect.top - gap - maxHeight)
+        : Math.min(window.innerHeight - viewportPadding - maxHeight, rect.bottom + gap);
+
+      setAssigneePopoverStyle({ left, top, width, maxHeight });
     };
+    const closeAssigneesOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!assigneePickerRef.current?.contains(target) && !assigneePopoverRef.current?.contains(target)) {
+        setShowAssignees(false);
+      }
+    };
+    positionAssigneePopover();
     document.addEventListener('pointerdown', closeAssigneesOnOutsidePointer);
-    return () => document.removeEventListener('pointerdown', closeAssigneesOnOutsidePointer);
+    window.addEventListener('resize', positionAssigneePopover);
+    window.addEventListener('scroll', positionAssigneePopover, true);
+    return () => {
+      document.removeEventListener('pointerdown', closeAssigneesOnOutsidePointer);
+      window.removeEventListener('resize', positionAssigneePopover);
+      window.removeEventListener('scroll', positionAssigneePopover, true);
+    };
   }, [showAssignees]);
 
   const chooseAssignee = async (memberId: string | null) => {
@@ -1153,7 +1230,7 @@ function TaskCard({
     setShowLinks((show) => !show);
   };
 
-  return (
+  return <>
     <div
       className={`task-card compact ${dragging ? 'dragging' : ''} ${dropEdge ? `task-drop-${dropEdge}` : ''}`}
       style={cardStyle}
@@ -1172,7 +1249,6 @@ function TaskCard({
         <span className="task-card-surface">
           <span className="task-card-top">
             <span className="task-card-date">{task.due_at ? formatCardDate(task.due_at) : 'SEM PRAZO'}</span>
-            <MoreVertical size={15} />
           </span>
           <span className="task-card-title-block">
             <strong>{task.title}</strong>
@@ -1203,12 +1279,7 @@ function TaskCard({
             ><Download size={11} />{downloadLinks.length > 1 ? downloadLinks.length : null}</button>
           ) : null}
           {canAssign ? <div className="task-assignee-picker" ref={assigneePickerRef}>
-            <button type="button" className={`task-card-add-person ${showAssignees ? 'active' : ''}`} title={assignee ? 'Trocar responsável' : 'Definir responsável'} aria-label={assignee ? 'Trocar responsável' : 'Definir responsável'} onClick={() => { setShowLinks(false); setShowAssignees((show) => !show); }}><Plus size={11} /></button>
-            {showAssignees ? <aside className="task-assignee-popover" aria-label="Escolher responsável">
-              <strong>RESPONSÁVEL</strong>
-              <button type="button" className={!task.assignee_id ? 'selected' : ''} disabled={assigning} onClick={() => void chooseAssignee(null)}><span className="task-assignee-avatar empty">?</span><span><b>Sem responsável</b><small>Deixar a tarefa livre</small></span></button>
-              {members.map((member) => <button type="button" className={task.assignee_id === member.user_id ? 'selected' : ''} disabled={assigning} key={member.user_id} onClick={() => void chooseAssignee(member.user_id)}><span className="task-assignee-avatar">{member.avatar_url ? <img src={member.avatar_url} alt="" /> : memberInitials(member.display_name)}</span><span><b>{member.display_name}</b><small>{availabilityLabel(member.availability)}</small></span></button>)}
-            </aside> : null}
+            <button ref={assigneeButtonRef} type="button" className={`task-card-add-person ${showAssignees ? 'active' : ''}`} title={assignee ? 'Trocar responsável' : 'Definir responsável'} aria-label={assignee ? 'Trocar responsável' : 'Definir responsável'} onClick={() => { setShowLinks(false); setShowAssignees((show) => !show); }}><Plus size={11} /></button>
           </div> : null}
         </span>
         <span className={`task-card-countdown ${countdown.state}`}>{countdown.label}</span>
@@ -1224,7 +1295,15 @@ function TaskCard({
         </aside>
       ) : null}
     </div>
-  );
+    {showAssignees && assigneePopoverStyle ? createPortal(
+      <aside ref={assigneePopoverRef} className="task-assignee-popover task-assignee-popover-portal" style={assigneePopoverStyle} aria-label="Escolher responsável">
+        <strong>RESPONSÁVEL</strong>
+        <button type="button" className={!task.assignee_id ? 'selected' : ''} disabled={assigning} onClick={() => void chooseAssignee(null)}><span className="task-assignee-avatar empty">?</span><span><b>Sem responsável</b><small>Deixar a tarefa livre</small></span></button>
+        {members.map((member) => <button type="button" className={task.assignee_id === member.user_id ? 'selected' : ''} disabled={assigning} key={member.user_id} onClick={() => void chooseAssignee(member.user_id)}><span className="task-assignee-avatar">{member.avatar_url ? <img src={member.avatar_url} alt="" /> : memberInitials(member.display_name)}</span><span><b>{member.display_name}</b><small>{availabilityLabel(member.availability)}</small></span></button>)}
+      </aside>,
+      document.body,
+    ) : null}
+  </>;
 }
 
 function MemberProfilePanel({
@@ -1256,6 +1335,8 @@ function MemberProfilePanel({
 }) {
   const [saving, setSaving] = useState<'role' | 'remove' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const appDialog = useAppDialog();
+  const dialogRef = useDialogFocus<HTMLElement>(!appDialog.open, onClose, saving === null);
   const isCurrentUser = member.user_id === currentUserId;
   const assignedTasks = useMemo(() => tasks
     .filter((task) => task.assignee_id === member.user_id)
@@ -1281,7 +1362,13 @@ function MemberProfilePanel({
 
   const removeMember = async () => {
     if (!supabase || !canManage || member.role === 'owner' || isCurrentUser) return;
-    if (!window.confirm(`Remover ${member.display_name} desta equipe? As tarefas atribuídas ficarão sem responsável.`)) return;
+    const confirmed = await appDialog.confirm({
+      title: `Remover ${member.display_name}?`,
+      description: 'O membro perderá o acesso e as tarefas atribuídas ficarão sem responsável.',
+      confirmLabel: 'Remover membro',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
     setSaving('remove');
     setError(null);
     const { error: removeError } = await supabase.rpc('remove_workspace_member', {
@@ -1294,12 +1381,12 @@ function MemberProfilePanel({
   };
 
   return (
-    <div className="member-profile-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <aside className="member-profile-panel" role="dialog" aria-modal="true" aria-label={`Perfil de ${member.display_name}`}>
+    <div className="member-profile-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && saving === null) onClose(); }}>
+      <aside ref={dialogRef} tabIndex={-1} className="member-profile-panel" role="dialog" aria-modal="true" aria-label={`Perfil de ${member.display_name}`}>
         <div className="member-profile-glow" aria-hidden="true" />
         <header className="member-profile-header">
           <div><p>PERFIL DO COLABORADOR</p><span>Informações e carga de trabalho</span></div>
-          <button type="button" onClick={onClose} aria-label="Fechar perfil"><X size={19} /></button>
+          <button type="button" disabled={saving !== null} onClick={onClose} aria-label="Fechar perfil"><X size={19} /></button>
         </header>
 
         <section className="member-profile-identity">
@@ -1357,6 +1444,7 @@ function MemberProfilePanel({
 
         {error ? <div className="panel-error member-profile-error">{error}</div> : null}
       </aside>
+      {appDialog.host}
     </div>
   );
 }
@@ -1392,7 +1480,8 @@ function TaskEditor({
   onChanged: () => Promise<void>;
   onLinksChanged: () => Promise<void>;
 }) {
-  const [draft, setDraft] = useState<TaskDraft>(() => task ? taskToDraft(task) : emptyDraft);
+  const initialDraft = useMemo<TaskDraft>(() => task ? taskToDraft(task) : emptyDraft, [task]);
+  const [draft, setDraft] = useState<TaskDraft>(initialDraft);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newClientName, setNewClientName] = useState('');
@@ -1405,7 +1494,29 @@ function TaskEditor({
   const [commentBody, setCommentBody] = useState('');
   const [commentKind, setCommentKind] = useState<TaskCommentKind>('change_request');
   const [commentSaving, setCommentSaving] = useState(false);
+  const [linkSaving, setLinkSaving] = useState(false);
+  const [resolvingCommentId, setResolvingCommentId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [activityError, setActivityError] = useState<string | null>(null);
+  const appDialog = useAppDialog();
+  const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(initialDraft)
+    || (mode === 'new' && Boolean(linkUrl.trim())), [draft, initialDraft, linkUrl, mode]);
+  const busy = saving || linkSaving || commentSaving || resolvingCommentId !== null || deleting;
+
+  const requestClose = async () => {
+    if (busy) return;
+    if (dirty) {
+      const discard = await appDialog.confirm({
+        title: 'Descartar alterações?',
+        description: 'As informações que ainda não foram salvas serão perdidas.',
+        confirmLabel: 'Descartar',
+        tone: 'danger',
+      });
+      if (!discard) return;
+    }
+    onClose();
+  };
+  const dialogRef = useDialogFocus<HTMLElement>(!appDialog.open, () => void requestClose(), !busy);
 
   const loadReviewData = useCallback(async () => {
     if (!supabase || !task) return;
@@ -1505,7 +1616,8 @@ function TaskEditor({
   };
 
   const addLink = async () => {
-    if (!supabase || !task || !linkLabel.trim() || !linkUrl.trim()) return;
+    if (!supabase || !task || !linkLabel.trim() || !linkUrl.trim() || linkSaving) return;
+    setLinkSaving(true);
     let normalizedUrl = linkUrl.trim();
     if (!normalizedUrl.startsWith('https://')) normalizedUrl = `https://${normalizedUrl}`;
     const { error: linkError } = await supabase.from('task_links').insert({
@@ -1515,10 +1627,11 @@ function TaskEditor({
       category: linkCategory,
       created_by: userId,
     });
-    if (linkError) { setError(linkError.message); return; }
+    if (linkError) { setError(linkError.message); setLinkSaving(false); return; }
     setLinkUrl('');
     await onLinksChanged();
     await loadReviewData();
+    setLinkSaving(false);
   };
 
   const removeLink = async (linkId: string) => {
@@ -1550,7 +1663,8 @@ function TaskEditor({
   };
 
   const toggleCommentResolved = async (comment: TaskComment) => {
-    if (!supabase) return;
+    if (!supabase || resolvingCommentId) return;
+    setResolvingCommentId(comment.id);
     const nextResolved = !comment.is_resolved;
     const { error: commentError } = await supabase
       .from('task_comments')
@@ -1560,23 +1674,32 @@ function TaskEditor({
         resolved_at: nextResolved ? new Date().toISOString() : null,
       })
       .eq('id', comment.id);
-    if (commentError) { setError(commentError.message); return; }
+    if (commentError) { setError(commentError.message); setResolvingCommentId(null); return; }
     await loadReviewData();
+    setResolvingCommentId(null);
   };
 
   const deleteTask = async () => {
-    if (!supabase || !task || !window.confirm(`Excluir “${task.title}”? Esta ação não pode ser desfeita.`)) return;
+    if (!supabase || !task || deleting) return;
+    const confirmed = await appDialog.confirm({
+      title: `Excluir “${task.title}”?`,
+      description: 'A tarefa, seus links, comentários e histórico serão removidos permanentemente.',
+      confirmLabel: 'Excluir tarefa',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
+    setDeleting(true);
     const { error: deleteError } = await supabase.from('tasks').delete().eq('id', task.id);
-    if (deleteError) setError(deleteError.message);
+    if (deleteError) { setError(deleteError.message); setDeleting(false); }
     else await onChanged();
   };
 
   return (
-    <div className="editor-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <aside className="task-editor" aria-modal="true" role="dialog" aria-label={mode === 'new' ? 'Nova tarefa' : 'Editar tarefa'}>
+    <div className="editor-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) void requestClose(); }}>
+      <aside ref={dialogRef} tabIndex={-1} className="task-editor" aria-modal="true" role="dialog" aria-label={mode === 'new' ? 'Nova tarefa' : 'Editar tarefa'}>
         <header className="editor-header">
           <div><p>{mode === 'new' ? 'NOVO TRABALHO' : 'DETALHES DO TRABALHO'}</p><h2>{mode === 'new' ? 'Criar tarefa' : task?.title}</h2></div>
-          <button onClick={onClose} aria-label="Fechar"><X size={20} /></button>
+          <button type="button" disabled={busy} onClick={() => void requestClose()} aria-label="Fechar"><X size={20} /></button>
         </header>
 
         <form className="editor-form" onSubmit={saveTask}>
@@ -1643,7 +1766,7 @@ function TaskEditor({
               <select value={linkCategory} onChange={(event) => setLinkCategory(event.target.value as TaskLinkCategory)}><option value="download">Download</option><option value="briefing">Briefing</option><option value="reference">Referência</option><option value="review">Revisão</option><option value="delivery">Entrega</option></select>
               <input value={linkLabel} onChange={(event) => setLinkLabel(event.target.value)} placeholder="Nome do link" />
               <input value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} placeholder="https://drive.google.com/..." />
-              <button type="button" onClick={() => void addLink()}><Plus size={16} />Adicionar link</button>
+              <button type="button" disabled={linkSaving || !linkLabel.trim() || !linkUrl.trim()} onClick={() => void addLink()}>{linkSaving ? <LoaderCircle className="spinner" size={16} /> : <Plus size={16} />}Adicionar link</button>
             </div>
           </section>
         ) : null}
@@ -1666,7 +1789,7 @@ function TaskEditor({
                   <article className={`comment-item ${comment.is_resolved ? 'resolved' : ''}`} key={comment.id}>
                     <header><span className={`comment-kind ${comment.kind}`}>{comment.kind === 'change_request' ? 'Ajuste' : 'Comentário'}</span><b>V{comment.revision_round}</b><small>{formatActivityDate(comment.created_at)}</small></header>
                     <p>{comment.body}</p>
-                    <footer><span>{comment.kind === 'change_request' ? 'Solicitado por' : 'Enviado por'} <strong>{author?.display_name || 'Membro'}</strong></span><button type="button" onClick={() => void toggleCommentResolved(comment)}>{comment.is_resolved ? 'Reabrir' : 'Marcar como resolvido'}</button></footer>
+                    <footer><span>{comment.kind === 'change_request' ? 'Solicitado por' : 'Enviado por'} <strong>{author?.display_name || 'Membro'}</strong></span><button type="button" disabled={resolvingCommentId !== null} onClick={() => void toggleCommentResolved(comment)}>{resolvingCommentId === comment.id ? 'Salvando...' : comment.is_resolved ? 'Reabrir' : 'Marcar como resolvido'}</button></footer>
                   </article>
                 );
               })}
@@ -1694,8 +1817,9 @@ function TaskEditor({
           </section>
         ) : null}
 
-        {mode === 'edit' && canManagePlanning ? <button className="delete-task" onClick={() => void deleteTask()}><Trash2 size={16} />Excluir tarefa</button> : null}
+        {mode === 'edit' && canManagePlanning ? <button type="button" className="delete-task" disabled={deleting} onClick={() => void deleteTask()}>{deleting ? <LoaderCircle className="spinner" size={16} /> : <Trash2 size={16} />}Excluir tarefa</button> : null}
       </aside>
+      {appDialog.host}
     </div>
   );
 }

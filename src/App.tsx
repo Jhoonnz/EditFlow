@@ -1,17 +1,21 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { ArrowLeft, Download, LoaderCircle, RotateCw, X } from 'lucide-react';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 import { watchThemePreference } from './lib/theme';
+import { parseAuthRecoveryCallback } from './lib/authRecovery';
 import { AuthenticatedApp } from './features/workspace/AuthenticatedApp';
 
-type AuthMode = 'signin' | 'signup' | 'forgot';
+type AuthMode = 'signin' | 'signup' | 'forgot' | 'recovery';
 type Notice = { kind: 'error' | 'success' | 'info'; message: string } | null;
 
 function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [sessionLoading, setSessionLoading] = useState(isSupabaseConfigured);
   const [themePreference, setThemePreference] = useState<EditFlowDesktopPreferences['theme']>('light');
+  const [recoveryMode, setRecoveryMode] = useState(false);
+  const [authCallbackNotice, setAuthCallbackNotice] = useState<Notice>(null);
+  const handledAuthCallbacks = useRef(new Set<string>());
 
   useEffect(() => {
     void window.editflow.getDesktopPreferences().then((preferences) => setThemePreference(preferences.theme));
@@ -28,12 +32,42 @@ function App() {
       setSessionLoading(false);
     });
 
-    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data } = supabase.auth.onAuthStateChange((event, nextSession) => {
       setSession(nextSession);
       setSessionLoading(false);
+      if (event === 'PASSWORD_RECOVERY') setRecoveryMode(true);
     });
 
     return () => data.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!supabase || !window.editflow?.onAuthCallback) return;
+    const client = supabase;
+    const handleCallback = async (rawUrl: string | null) => {
+      if (!rawUrl || handledAuthCallbacks.current.has(rawUrl)) return;
+      handledAuthCallbacks.current.add(rawUrl);
+      try {
+        const { code, accessToken, refreshToken } = parseAuthRecoveryCallback(rawUrl);
+        if (code) {
+          const { error } = await client.auth.exchangeCodeForSession(code);
+          if (error) throw error;
+        } else if (accessToken && refreshToken) {
+          const { error } = await client.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+          if (error) throw error;
+        }
+        setAuthCallbackNotice(null);
+        setRecoveryMode(true);
+      } catch (error) {
+        setAuthCallbackNotice({ kind: 'error', message: translateAuthError(error instanceof Error ? error.message : 'Link de recuperação inválido.') });
+      } finally {
+        setSessionLoading(false);
+      }
+    };
+
+    const unsubscribe = window.editflow.onAuthCallback((url) => void handleCallback(url));
+    void window.editflow.getPendingAuthCallback().then((url) => void handleCallback(url));
+    return unsubscribe;
   }, []);
 
   if (sessionLoading) {
@@ -42,6 +76,15 @@ function App() {
         <main className="loading-screen">
           <LoaderCircle className="spinner" size={28} />
         </main>
+        <UpdateNotice />
+      </>
+    );
+  }
+
+  if (recoveryMode) {
+    return (
+      <>
+        <AuthScreen recoveryMode onRecoveryComplete={() => setRecoveryMode(false)} initialNotice={authCallbackNotice} />
         <UpdateNotice />
       </>
     );
@@ -58,7 +101,7 @@ function App() {
 
   return (
     <>
-      <AuthScreen />
+      <AuthScreen initialNotice={authCallbackNotice} />
       <UpdateNotice />
     </>
   );
@@ -140,14 +183,20 @@ function UpdateNotice() {
   );
 }
 
-function AuthScreen() {
-  const [mode, setMode] = useState<AuthMode>('signin');
+function AuthScreen({ recoveryMode = false, onRecoveryComplete, initialNotice = null }: {
+  recoveryMode?: boolean;
+  onRecoveryComplete?: () => void;
+  initialNotice?: Notice;
+}) {
+  const [mode, setMode] = useState<AuthMode>(recoveryMode ? 'recovery' : 'signin');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [notice, setNotice] = useState<Notice>(null);
+  const [notice, setNotice] = useState<Notice>(initialNotice);
+
+  useEffect(() => setNotice(initialNotice), [initialNotice]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -158,7 +207,7 @@ function AuthScreen() {
       return;
     }
 
-    if (!email.trim()) {
+    if (mode !== 'recovery' && !email.trim()) {
       setNotice({ kind: 'error', message: 'Digite seu e-mail para continuar.' });
       return;
     }
@@ -166,14 +215,32 @@ function AuthScreen() {
     setSubmitting(true);
     try {
       if (mode === 'forgot') {
-        const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+        const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+          redirectTo: 'editflow://auth/recovery',
+        });
         if (error) throw error;
-        setNotice({ kind: 'success', message: 'Enviamos as instruções para o seu e-mail.' });
+        setNotice({ kind: 'success', message: 'Enviamos as instruções. Abra o link neste computador para voltar ao EditFlow.' });
         return;
       }
 
       if (!password) {
         setNotice({ kind: 'error', message: 'Digite sua senha para continuar.' });
+        return;
+      }
+
+      if (mode === 'recovery') {
+        if (password.length < 6) {
+          setNotice({ kind: 'error', message: 'A nova senha precisa ter pelo menos 6 caracteres.' });
+          return;
+        }
+        if (password !== confirmPassword) {
+          setNotice({ kind: 'error', message: 'As senhas não são iguais.' });
+          return;
+        }
+        const { error } = await supabase.auth.updateUser({ password });
+        if (error) throw error;
+        setNotice({ kind: 'success', message: 'Senha atualizada com sucesso.' });
+        window.setTimeout(() => onRecoveryComplete?.(), 700);
         return;
       }
 
@@ -219,13 +286,6 @@ function AuthScreen() {
     }
   };
 
-  const showSocialNotice = (provider: string) => {
-    setNotice({
-      kind: 'info',
-      message: `O acesso com ${provider} será habilitado na configuração de autenticação social.`,
-    });
-  };
-
   return (
     <main className="liquid-page">
       <div className="color-cloud cloud-blue" />
@@ -243,13 +303,15 @@ function AuthScreen() {
         ) : null}
 
         <header className="login-heading">
-          <h1>{mode === 'signin' ? 'Welcome Back' : mode === 'signup' ? 'Create Account' : 'Reset Password'}</h1>
+          <h1>{mode === 'signin' ? 'Welcome Back' : mode === 'signup' ? 'Create Account' : mode === 'recovery' ? 'Create New Password' : 'Reset Password'}</h1>
           <p>
             {mode === 'signin'
               ? 'Sign in to your account to continue'
               : mode === 'signup'
                 ? 'Create your account to start editing'
-              : 'Enter your email to receive instructions'}
+                : mode === 'recovery'
+                  ? 'Choose a secure password for your account'
+                  : 'Enter your email to receive instructions'}
           </p>
         </header>
 
@@ -261,7 +323,7 @@ function AuthScreen() {
             </label>
           ) : null}
 
-          <label className="plain-field">
+          {mode !== 'recovery' ? <label className="plain-field">
             <span>Email Address</span>
             <input
               type="email"
@@ -271,14 +333,14 @@ function AuthScreen() {
               onChange={(event) => setEmail(event.target.value)}
               placeholder="Enter your email"
             />
-          </label>
+          </label> : null}
 
           {mode !== 'forgot' ? (
             <label className="plain-field">
               <span>Password</span>
               <input
                 type="password"
-                autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+                autoComplete={mode === 'signup' || mode === 'recovery' ? 'new-password' : 'current-password'}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="Enter your password"
@@ -286,7 +348,7 @@ function AuthScreen() {
             </label>
           ) : null}
 
-          {mode === 'signup' ? (
+          {mode === 'signup' || mode === 'recovery' ? (
             <label className="plain-field">
               <span>Confirm Password</span>
               <input type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Enter your password again" />
@@ -296,11 +358,11 @@ function AuthScreen() {
           {notice ? <div className={`notice ${notice.kind}`} role="status">{notice.message}</div> : null}
 
           <button className="sign-in-button" type="submit" disabled={submitting}>
-            {submitting ? <LoaderCircle className="spinner" size={20} /> : mode === 'signin' ? 'Sign In' : mode === 'signup' ? 'Create Account' : 'Send Instructions'}
+            {submitting ? <LoaderCircle className="spinner" size={20} /> : mode === 'signin' ? 'Sign In' : mode === 'signup' ? 'Create Account' : mode === 'recovery' ? 'Save New Password' : 'Send Instructions'}
           </button>
         </form>
 
-        {mode !== 'forgot' ? (
+        {mode !== 'forgot' && mode !== 'recovery' ? (
           <p className="auth-switch">
             {mode === 'signin' ? 'Ainda não possui uma conta?' : 'Já possui uma conta?'}
             <button type="button" onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setNotice(null); setPassword(''); setConfirmPassword(''); }}>
@@ -314,17 +376,17 @@ function AuthScreen() {
             <div className="continue-label">OR CONTINUE WITH</div>
 
             <div className="social-stack">
-              <button type="button" className="social-button" onClick={() => showSocialNotice('Google')}>
+              <button type="button" className="social-button" disabled title="Login com Google em breve">
                 <GoogleIcon />
-                <span>Continue with Google</span>
+                <span>Google · em breve</span>
               </button>
-              <button type="button" className="social-button" onClick={() => showSocialNotice('Apple')}>
+              <button type="button" className="social-button" disabled title="Login com Apple em breve">
                 <AppleIcon />
-                <span>Continue with Apple</span>
+                <span>Apple · em breve</span>
               </button>
-              <button type="button" className="social-button" onClick={() => showSocialNotice('Meta')}>
+              <button type="button" className="social-button" disabled title="Login com Meta em breve">
                 <MetaIcon />
-                <span>Continue with Meta</span>
+                <span>Meta · em breve</span>
               </button>
             </div>
 
@@ -368,6 +430,8 @@ function translateAuthError(message: string) {
   if (normalized.includes('user already registered')) return 'Já existe uma conta com este e-mail.';
   if (normalized.includes('password should be')) return 'A senha não atende aos requisitos de segurança.';
   if (normalized.includes('rate limit')) return 'Muitas tentativas. Aguarde um instante e tente novamente.';
+  if (normalized.includes('redirect') && normalized.includes('allow')) return 'O endereço de recuperação do EditFlow ainda não está autorizado no Supabase.';
+  if (normalized.includes('code verifier') || normalized.includes('expired')) return 'Este link expirou ou já foi utilizado. Solicite uma nova recuperação de senha.';
   return message;
 }
 

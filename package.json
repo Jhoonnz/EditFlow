@@ -1,7 +1,7 @@
 {
   "name": "editflow",
   "productName": "EditFlow",
-  "version": "0.1.34",
+  "version": "0.1.35",
   "description": "Gestao de producao para equipes de edicao.",
   "author": "EditFlow",
   "main": ".vite/build/main.js",
@@ -11,7 +11,8 @@
     "package": "electron-forge package",
     "make": "npm run package && electron-builder --win nsis --prepackaged out/EditFlow-win32-x64 --publish never",
     "release": "npm run package && electron-builder --win nsis --prepackaged out/EditFlow-win32-x64 --publish always",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.2",
@@ -32,11 +33,20 @@
     "electron": "^43.3.0",
     "electron-builder": "^26.15.3",
     "typescript": "^7.0.2",
-    "vite": "^8.2.1"
+    "vite": "^8.2.1",
+    "vitest": "^4.1.10"
   },
   "build": {
     "appId": "com.editflow.desktop",
     "productName": "EditFlow",
+    "protocols": [
+      {
+        "name": "EditFlow Password Recovery",
+        "schemes": [
+          "editflow"
+        ]
+      }
+    ],
     "directories": {
       "output": "release"
     },

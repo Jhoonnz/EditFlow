@@ -66,5 +66,7 @@ interface Window {
     showNativeNotification: (notification: EditFlowNativeNotification) => Promise<boolean>;
     onNativeNotificationClicked: (callback: (target: EditFlowNativeNotificationTarget) => void) => () => void;
     onUpdateStatus: (callback: (status: EditFlowUpdateStatus) => void) => () => void;
+    getPendingAuthCallback: () => Promise<string | null>;
+    onAuthCallback: (callback: (url: string) => void) => () => void;
   };
 }

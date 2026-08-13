@@ -20,6 +20,9 @@ import {
   X,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { useAppDialog } from '../../components/AppDialog';
+import { useLatestRequest } from '../../lib/asyncRequest';
+import { useDialogFocus } from '../../lib/useDialogFocus';
 import { paymentFeeRule, paymentMethodLabel } from './paymentFees';
 import type {
   Client,
@@ -63,10 +66,18 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
   const [migrationMissing, setMigrationMissing] = useState(false);
   const [receivingEarning, setReceivingEarning] = useState<Earning | null>(null);
   const [actualReceivedBrl, setActualReceivedBrl] = useState('');
-  const [manualEditor, setManualEditor] = useState<Earning | 'new' | null>(null);
+  const [manualEditor, setManualEditorState] = useState<Earning | 'new' | null>(null);
   const [manualDraft, setManualDraft] = useState<ManualEarningDraft>(() => emptyManualDraft());
   const [syncing, setSyncing] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
+  const setManualEditor = (value: Earning | 'new' | null) => {
+    if (saving && value === null) return;
+    setManualEditorState(value);
+  };
+  const appDialog = useAppDialog();
+  const { begin: beginFinanceRequest, isLatest: isLatestFinanceRequest, cancel: cancelFinanceRequests } = useLatestRequest();
+  useDialogFocus<HTMLElement>(Boolean(manualEditor) && !appDialog.open, () => setManualEditor(null), !saving, '.manual-earning-dialog');
+  useDialogFocus<HTMLElement>(Boolean(receivingEarning) && !appDialog.open, () => setReceivingEarning(null), !saving, '.receive-dialog');
 
   const loadRate = useCallback(async () => {
     setRateLoading(true);
@@ -81,6 +92,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
 
   const loadFinance = useCallback(async (quiet = false) => {
     if (!supabase) return;
+    const requestId = beginFinanceRequest();
     if (!quiet) setLoading(true);
     setError(null);
     const [settingsResult, earningsResult, eventsResult] = await Promise.all([
@@ -89,6 +101,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
       supabase.from('earning_events').select('id, workspace_id, client_id, task_id, task_title, completed_at, pricing_model, amount_usd, bundle_size, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, earning_id, created_at').eq('workspace_id', workspace.id).order('completed_at', { ascending: false }),
     ]);
     const loadError = settingsResult.error ?? earningsResult.error ?? eventsResult.error;
+    if (!isLatestFinanceRequest(requestId)) return;
     if (loadError) {
       setMigrationMissing(isMissingFinanceSchema(loadError.message));
       if (!isMissingFinanceSchema(loadError.message)) setError(loadError.message);
@@ -101,11 +114,12 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     setEarnings((earningsResult.data ?? []).map(normalizeEarning));
     setEvents((eventsResult.data ?? []).map(normalizeEarningEvent));
     setLoading(false);
-  }, [workspace.id]);
+  }, [beginFinanceRequest, isLatestFinanceRequest, workspace.id]);
 
   useEffect(() => {
     void Promise.all([loadFinance(), loadRate()]);
-  }, [loadFinance, loadRate]);
+    return cancelFinanceRequests;
+  }, [cancelFinanceRequests, loadFinance, loadRate]);
 
   useEffect(() => {
     if (!supabase || migrationMissing) return;
@@ -252,7 +266,14 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
   };
 
   const deleteManualEarning = async (earning: Earning) => {
-    if (!supabase || earning.source_type !== 'manual' || !window.confirm(`Excluir o lançamento “${earning.description}”?`)) return;
+    if (!supabase || earning.source_type !== 'manual' || saving) return;
+    const confirmed = await appDialog.confirm({
+      title: `Excluir “${earning.description}”?`,
+      description: 'O lançamento manual será removido definitivamente do resumo financeiro.',
+      confirmLabel: 'Excluir lançamento',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
     setSaving(true);
     setSuccess(null);
     const { error: deleteError } = await supabase.rpc('delete_manual_earning', { earning_target: earning.id });
@@ -403,9 +424,9 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
       {manualEditor ? <div className="manual-earning-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setManualEditor(null); }}><section className="manual-earning-dialog" role="dialog" aria-modal="true" aria-labelledby="manual-earning-title"><header><span><FilePlus2 size={18} /></span><div><h3 id="manual-earning-title">{manualEditor === 'new' ? 'Novo lançamento' : 'Editar lançamento'}</h3><p>Registre bônus, extras ou trabalhos que não vieram de uma tarefa.</p></div><button onClick={() => setManualEditor(null)} aria-label="Fechar"><X size={17} /></button></header><div className="manual-earning-grid"><label><span>Cliente</span><select value={manualDraft.clientId} onChange={(event) => applyManualClient(event.target.value)}><option value="">Sem cliente específico</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label><span>Data do lançamento</span><input type="date" value={manualDraft.earnedDate} onChange={(event) => setManualDraft({ ...manualDraft, earnedDate: event.target.value })} /></label><label className="wide"><span>Descrição</span><input maxLength={300} value={manualDraft.description} onChange={(event) => setManualDraft({ ...manualDraft, description: event.target.value })} placeholder="Ex.: Bônus do projeto especial" /></label><label><span>Valor bruto</span><div className="manual-money-input"><b>US$</b><input inputMode="decimal" value={manualDraft.amountUsd} onChange={(event) => setManualDraft({ ...manualDraft, amountUsd: event.target.value })} placeholder="0.00" /></div></label><label><span>Meio de pagamento</span><select value={manualDraft.paymentMethod} onChange={(event) => applyManualPaymentMethod(event.target.value as PaymentMethod)}><option value="none">Sem taxas</option><option value="paypal_international">PayPal internacional</option><option value="wise_ach">Wise ACH</option><option value="wise_wire">Wise Wire</option><option value="custom">Taxa personalizada</option></select></label><label><span>Taxa percentual</span><div className="manual-money-input"><input inputMode="decimal" value={manualDraft.feePercent} onChange={(event) => setManualDraft({ ...manualDraft, feePercent: event.target.value })} /><b>%</b></div></label><label><span>Taxa fixa</span><div className="manual-money-input"><b>US$</b><input inputMode="decimal" value={manualDraft.feeFixedUsd} onChange={(event) => setManualDraft({ ...manualDraft, feeFixedUsd: event.target.value })} /></div></label><label><span>Spread de conversão</span><div className="manual-money-input"><input inputMode="decimal" value={manualDraft.conversionSpreadPercent} onChange={(event) => setManualDraft({ ...manualDraft, conversionSpreadPercent: event.target.value })} /><b>%</b></div></label><label><span>Status</span><select value={manualDraft.status} onChange={(event) => setManualDraft({ ...manualDraft, status: event.target.value as 'pending' | 'received' })}><option value="pending">Pendente</option><option value="received">Recebido</option></select></label>{manualDraft.status === 'received' ? <label className="wide"><span>Valor real recebido</span><div className="manual-money-input received"><b>R$</b><input inputMode="decimal" value={manualDraft.actualAmountBrl} onChange={(event) => setManualDraft({ ...manualDraft, actualAmountBrl: event.target.value })} placeholder="0,00" /></div></label> : null}</div>{error ? <div className="panel-error manual-earning-error">{error}</div> : null}<footer><button className="secondary-button" disabled={saving} onClick={() => setManualEditor(null)}>Cancelar</button><button className="primary-button" disabled={saving} onClick={() => void saveManualEarning()}>{saving ? <LoaderCircle className="spinner" size={15} /> : <Save size={15} />}{manualEditor === 'new' ? 'Criar lançamento' : 'Salvar alterações'}</button></footer></section></div> : null}
 
       {receivingEarning ? (
-        <div className="receive-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setReceivingEarning(null); }}>
+        <div className="receive-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setReceivingEarning(null); }}>
           <section className="receive-dialog" role="dialog" aria-modal="true" aria-labelledby="receive-dialog-title">
-            <header><span><Banknote size={18} /></span><div><h3 id="receive-dialog-title">Confirmar recebimento</h3><p>Registre o valor real após todas as taxas e conversões.</p></div><button onClick={() => setReceivingEarning(null)} aria-label="Fechar"><X size={17} /></button></header>
+            <header><span><Banknote size={18} /></span><div><h3 id="receive-dialog-title">Confirmar recebimento</h3><p>Registre o valor real após todas as taxas e conversões.</p></div><button disabled={saving} onClick={() => setReceivingEarning(null)} aria-label="Fechar"><X size={17} /></button></header>
             <div className="receive-dialog-summary"><div><span>Bruto</span><strong>{formatUsd(receivingEarning.amount_usd)}</strong></div><div><span>Líquido estimado</span><strong>{formatUsd(receivingEarning.net_amount_usd)}</strong></div><div><span>Meio</span><strong>{paymentMethodLabel(receivingEarning.payment_method)}</strong></div></div>
             <label><span>Quanto realmente caiu na conta?</span><div><b>R$</b><input autoFocus inputMode="decimal" value={actualReceivedBrl} onChange={(event) => setActualReceivedBrl(event.target.value)} placeholder="0,00" /></div></label>
             <small>Esse valor substituirá a estimativa e ficará registrado no histórico.</small>
@@ -414,6 +435,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
           </section>
         </div>
       ) : null}
+      {appDialog.host}
     </div>
   );
 }
