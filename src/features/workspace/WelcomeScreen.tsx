@@ -68,7 +68,14 @@ export function WelcomeScreen({
   const [error, setError] = useState<string | null>(null);
   const [continuing, setContinuing] = useState(false);
   const [disableWelcome, setDisableWelcome] = useState(false);
+  const [showIntro, setShowIntro] = useState(true);
   const firstName = getFirstName(user);
+
+  useEffect(() => {
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const timer = window.setTimeout(() => setShowIntro(false), reducedMotion ? 250 : 1450);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (!supabase) return;
@@ -211,65 +218,77 @@ export function WelcomeScreen({
       <div className="welcome-grid" />
       <div className="page-noise" />
 
-      <section className="welcome-glass">
+      <section className={`welcome-glass ${showIntro ? 'showing-intro' : 'showing-summary'}`}>
         <div className="welcome-glass-shine" />
-        <header className="welcome-header">
-          <div className="welcome-brand"><span><Sparkles size={18} /></span>EditFlow</div>
-          <span className="welcome-date">{formatLongDate(new Date())}</span>
-        </header>
-
-        <div className="welcome-hero">
-          <span className="welcome-kicker">{isFirstAccess ? 'SEU NOVO ESPAÇO DE PRODUÇÃO' : `${timeGreeting()}, ${firstName}`}</span>
-          <h1>{isFirstAccess ? `Bem-vindo ao EditFlow, ${firstName}.` : `Bem-vindo de volta, ${firstName}.`}</h1>
-          <p>{loading
-            ? 'Preparando um resumo do seu espaço de trabalho…'
-            : error
-              ? 'Não foi possível carregar o resumo agora. Você ainda pode entrar normalmente na produção.'
-            : totalAttention
-              ? `Há ${totalAttention} ${totalAttention === 1 ? 'item esperando' : 'itens esperando'} por você. Aqui está o que merece atenção primeiro.`
-              : 'Tudo tranquilo por aqui. Seus trabalhos estão organizados e não há nenhuma pendência urgente.'}</p>
-        </div>
-
-        {loading ? (
-          <div className="welcome-loading"><LoaderCircle className="spinner" size={28} /><span>Sincronizando seu resumo</span></div>
-        ) : error ? (
-          <div className="welcome-summary-error" role="alert"><TriangleAlert size={18} /><span><strong>Resumo indisponível</strong><small>{error}</small></span></div>
+        {showIntro ? (
+          <div className="welcome-intro" aria-live="polite">
+            <div className="welcome-intro-mark"><span><Sparkles size={28} /></span><i /><i /></div>
+            <span className="welcome-intro-eyebrow">EDITFLOW</span>
+            <h1>{isFirstAccess ? `Bem-vindo, ${firstName}` : `${timeGreeting()}, ${firstName}`}</h1>
+            <p>{isFirstAccess ? 'Seu novo espaço de produção está pronto.' : 'Organizando o seu dia de produção.'}</p>
+            <span className="welcome-intro-progress"><i /></span>
+          </div>
         ) : (
-          <div className="welcome-summary-grid">
-            {cards.map((card, index) => {
-              const Icon = card.icon;
-              return (
-                <button
-                  className={`welcome-summary-card ${card.tone}`}
-                  style={{ '--welcome-delay': `${140 + index * 70}ms` } as React.CSSProperties}
-                  key={card.key}
-                  onClick={() => void continueTo(card.action)}
-                >
-                  <span className="welcome-card-icon"><Icon size={18} /></span>
-                  <span className="welcome-card-value">{card.value}</span>
-                  <strong>{card.label}</strong>
-                  <small>{card.detail}</small>
-                  <ArrowRight className="welcome-card-arrow" size={15} />
+          <div className="welcome-content">
+            <header className="welcome-header">
+              <div className="welcome-brand"><span><Sparkles size={18} /></span>EditFlow</div>
+              <span className="welcome-date">{formatLongDate(new Date())}</span>
+            </header>
+
+            <div className="welcome-hero">
+              <span className="welcome-kicker">{isFirstAccess ? 'SEU NOVO ESPAÇO DE PRODUÇÃO' : `${timeGreeting()}, ${firstName}`}</span>
+              <h1>{isFirstAccess ? `Tudo pronto para começar, ${firstName}.` : `Aqui está o seu resumo, ${firstName}.`}</h1>
+              <p>{loading
+                ? 'Preparando um resumo do seu espaço de trabalho…'
+                : error
+                  ? 'Não foi possível carregar o resumo agora. Você ainda pode entrar normalmente na produção.'
+                : totalAttention
+                  ? `Há ${totalAttention} ${totalAttention === 1 ? 'item esperando' : 'itens esperando'} por você. Aqui está o que merece atenção primeiro.`
+                  : 'Tudo tranquilo por aqui. Seus trabalhos estão organizados e não há nenhuma pendência urgente.'}</p>
+            </div>
+
+            {loading ? (
+              <div className="welcome-loading"><LoaderCircle className="spinner" size={28} /><span>Sincronizando seu resumo</span></div>
+            ) : error ? (
+              <div className="welcome-summary-error" role="alert"><TriangleAlert size={18} /><span><strong>Resumo indisponível</strong><small>{error}</small></span></div>
+            ) : (
+              <div className="welcome-summary-grid">
+                {cards.map((card, index) => {
+                  const Icon = card.icon;
+                  return (
+                    <button
+                      className={`welcome-summary-card ${card.tone}`}
+                      style={{ '--welcome-delay': `${80 + index * 65}ms` } as React.CSSProperties}
+                      key={card.key}
+                      onClick={() => void continueTo(card.action)}
+                    >
+                      <span className="welcome-card-icon"><Icon size={18} /></span>
+                      <span className="welcome-card-value">{card.value}</span>
+                      <strong>{card.label}</strong>
+                      <small>{card.detail}</small>
+                      <ArrowRight className="welcome-card-arrow" size={15} />
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            <footer className="welcome-footer">
+              <label className="welcome-hide-option">
+                <input type="checkbox" checked={disableWelcome} onChange={(event) => setDisableWelcome(event.target.checked)} />
+                <span>Não mostrar este resumo ao abrir</span>
+              </label>
+              <div className="welcome-footer-actions">
+                {invitationCount ? <span className="welcome-invites"><Bell size={13} />{invitationCount} {invitationCount === 1 ? 'convite pendente' : 'convites pendentes'}</span> : null}
+                <button className="welcome-enter" disabled={loading || continuing} onClick={() => void continueTo({ kind: 'board' })}>
+                  <span>Entrar na produção</span><ArrowRight size={18} />
                 </button>
-              );
-            })}
+              </div>
+            </footer>
+
+            {!loading && !error && totalAttention === 0 ? <div className="welcome-all-clear"><CheckCircle2 size={15} />Tudo em dia</div> : null}
           </div>
         )}
-
-        <footer className="welcome-footer">
-          <label className="welcome-hide-option">
-            <input type="checkbox" checked={disableWelcome} onChange={(event) => setDisableWelcome(event.target.checked)} />
-            <span>Não mostrar este resumo ao abrir</span>
-          </label>
-          <div className="welcome-footer-actions">
-            {invitationCount ? <span className="welcome-invites"><Bell size={13} />{invitationCount} {invitationCount === 1 ? 'convite pendente' : 'convites pendentes'}</span> : null}
-            <button className="welcome-enter" disabled={loading || continuing} onClick={() => void continueTo({ kind: 'board' })}>
-              <span>Entrar na produção</span><ArrowRight size={18} />
-            </button>
-          </div>
-        </footer>
-
-        {!loading && !error && totalAttention === 0 ? <div className="welcome-all-clear"><CheckCircle2 size={15} />Tudo em dia</div> : null}
       </section>
     </main>
   );
