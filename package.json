@@ -1,13 +1,14 @@
 {
   "name": "editflow",
   "productName": "EditFlow",
-  "version": "0.1.39",
+  "version": "0.1.40",
   "description": "Gestao de producao para equipes de edicao.",
   "author": "EditFlow",
   "main": ".vite/build/main.js",
   "private": true,
   "scripts": {
     "start": "electron-forge start",
+    "prepackage": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File build/compile-update-helper.ps1",
     "package": "electron-forge package",
     "make": "npm run package && electron-builder --win nsis --prepackaged out/EditFlow-win32-x64 --publish never",
     "release": "npm run package && electron-builder --win nsis --prepackaged out/EditFlow-win32-x64 --publish always",

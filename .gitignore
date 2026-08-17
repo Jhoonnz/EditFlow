@@ -3,6 +3,7 @@ node_modules/
 out/
 dist/
 release/
+build/EditFlowUpdateHelper.exe
 .env
 .env.local
 *.log

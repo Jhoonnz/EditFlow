@@ -100,6 +100,7 @@ const sendUpdateStatus = (status: UpdateStatus) => {
 const updateLogPath = () => path.join(app.getPath('userData'), 'logs', 'updater.log');
 const updateMarkerPath = () => path.join(app.getPath('userData'), 'pending-update.json');
 const updateHelperPath = () => path.join(app.getPath('userData'), 'update-progress.ps1');
+const updateHelperExecutablePath = () => path.join(process.resourcesPath, 'EditFlowUpdateHelper.exe');
 const updateHelperReadyPath = () => path.join(app.getPath('userData'), 'update-progress.ready');
 const updateHelperErrorPath = () => path.join(app.getPath('userData'), 'logs', 'update-progress-error.log');
 const desktopPreferencesPath = () => path.join(app.getPath('userData'), 'desktop-preferences.json');
@@ -344,63 +345,92 @@ trap {
     if (-not [string]::IsNullOrWhiteSpace($errorDirectory)) {
       [System.IO.Directory]::CreateDirectory($errorDirectory) | Out-Null
     }
-    ($_ | Out-String) | Set-Content -LiteralPath $ErrorPath -Encoding UTF8
+    $details = ($_ | Out-String)
+    $innerError = $_.Exception.InnerException
+    while ($null -ne $innerError) {
+      $details += [Environment]::NewLine + $innerError.Message
+      $innerError = $innerError.InnerException
+    }
+    $details | Set-Content -LiteralPath $ErrorPath -Encoding UTF8
   } catch {}
   exit 1
 }
 
-Add-Type -AssemblyName PresentationFramework
-Add-Type -AssemblyName PresentationCore
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
-[xml]$xaml = @'
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Width="390" Height="168" WindowStyle="None" AllowsTransparency="True"
-        Background="Transparent" ResizeMode="NoResize" ShowInTaskbar="False"
-        Topmost="True" WindowStartupLocation="CenterScreen">
-  <Border Margin="8" Padding="23" CornerRadius="24" BorderThickness="1"
-          BorderBrush="#35FFFFFF" Background="#F6232148">
-    <Border.Effect>
-      <DropShadowEffect BlurRadius="34" ShadowDepth="12" Opacity="0.40" Color="#17152F" />
-    </Border.Effect>
-    <Grid>
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="58" />
-        <ColumnDefinition Width="17" />
-        <ColumnDefinition Width="*" />
-      </Grid.ColumnDefinitions>
-      <Border Grid.Column="0" Width="58" Height="58" CornerRadius="18" Background="#675DCE">
-        <Ellipse Width="28" Height="28" Stroke="#55FFFFFF" StrokeThickness="3"
-                 StrokeDashArray="5 3" RenderTransformOrigin="0.5,0.5">
-          <Ellipse.RenderTransform>
-            <RotateTransform x:Name="SpinnerRotation" Angle="0" />
-          </Ellipse.RenderTransform>
-        </Ellipse>
-      </Border>
-      <StackPanel Grid.Column="2" VerticalAlignment="Center">
-        <TextBlock Foreground="White" FontFamily="Segoe UI" FontSize="16" FontWeight="SemiBold"
-                   Text="Aplicando atualização" />
-        <TextBlock x:Name="StatusText" Margin="0,7,0,0" Foreground="#C0BFD3" FontFamily="Segoe UI"
-                   FontSize="11" LineHeight="16" TextWrapping="Wrap"
-                   Text="O EditFlow será reiniciado automaticamente. Não desligue o computador." />
-        <StackPanel Margin="0,8,0,0" Orientation="Horizontal">
-          <Ellipse x:Name="DotOne" Width="5" Height="5" Margin="0,0,5,0" Fill="#9E95EF" />
-          <Ellipse x:Name="DotTwo" Width="5" Height="5" Margin="0,0,5,0" Fill="#9E95EF" Opacity="0.55" />
-          <Ellipse x:Name="DotThree" Width="5" Height="5" Fill="#9E95EF" Opacity="0.30" />
-        </StackPanel>
-      </StackPanel>
-    </Grid>
-  </Border>
-</Window>
-'@
+function Convert-HexColor([string]$value) {
+  return [System.Drawing.ColorTranslator]::FromHtml($value)
+}
 
-$reader = New-Object System.Xml.XmlNodeReader $xaml
-$window = [Windows.Markup.XamlReader]::Load($reader)
-$rotation = $window.FindName('SpinnerRotation')
-$statusText = $window.FindName('StatusText')
-$dotOne = $window.FindName('DotOne')
-$dotTwo = $window.FindName('DotTwo')
-$dotThree = $window.FindName('DotThree')
+function Set-RoundedRegion($control, [int]$radius) {
+  $path = New-Object System.Drawing.Drawing2D.GraphicsPath
+  $diameter = $radius * 2
+  $width = $control.Width - 1
+  $height = $control.Height - 1
+  $path.AddArc(0, 0, $diameter, $diameter, 180, 90)
+  $path.AddArc($width - $diameter, 0, $diameter, $diameter, 270, 90)
+  $path.AddArc($width - $diameter, $height - $diameter, $diameter, $diameter, 0, 90)
+  $path.AddArc(0, $height - $diameter, $diameter, $diameter, 90, 90)
+  $path.CloseFigure()
+  $control.Region = New-Object System.Drawing.Region($path)
+  $path.Dispose()
+}
+
+$window = New-Object System.Windows.Forms.Form
+$window.Text = 'EditFlow'
+$window.ClientSize = New-Object System.Drawing.Size(390, 168)
+$window.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+$window.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+$window.ShowInTaskbar = $false
+$window.TopMost = $true
+$window.BackColor = Convert-HexColor '#171623'
+$window.Opacity = 0.98
+Set-RoundedRegion $window 24
+
+$iconPanel = New-Object System.Windows.Forms.Panel
+$iconPanel.Location = New-Object System.Drawing.Point(24, 55)
+$iconPanel.Size = New-Object System.Drawing.Size(58, 58)
+$iconPanel.BackColor = Convert-HexColor '#675DCE'
+Set-RoundedRegion $iconPanel 18
+
+$spinner = New-Object System.Windows.Forms.Panel
+$spinner.Location = New-Object System.Drawing.Point(14, 14)
+$spinner.Size = New-Object System.Drawing.Size(30, 30)
+$spinner.BackColor = [System.Drawing.Color]::Transparent
+$iconPanel.Controls.Add($spinner)
+
+$title = New-Object System.Windows.Forms.Label
+$title.AutoSize = $false
+$title.Location = New-Object System.Drawing.Point(100, 45)
+$title.Size = New-Object System.Drawing.Size(260, 25)
+$title.Font = New-Object System.Drawing.Font('Segoe UI', 12, [System.Drawing.FontStyle]::Bold)
+$title.ForeColor = [System.Drawing.Color]::White
+$title.Text = 'Aplicando atualização'
+
+$statusText = New-Object System.Windows.Forms.Label
+$statusText.AutoSize = $false
+$statusText.Location = New-Object System.Drawing.Point(100, 73)
+$statusText.Size = New-Object System.Drawing.Size(260, 38)
+$statusText.Font = New-Object System.Drawing.Font('Segoe UI', 8.5)
+$statusText.ForeColor = Convert-HexColor '#C0BFD3'
+$statusText.Text = 'O EditFlow será reiniciado automaticamente. Não desligue o computador.'
+
+$dotOne = New-Object System.Windows.Forms.Panel
+$dotTwo = New-Object System.Windows.Forms.Panel
+$dotThree = New-Object System.Windows.Forms.Panel
+$dots = @($dotOne, $dotTwo, $dotThree)
+for ($index = 0; $index -lt $dots.Count; $index++) {
+  $dots[$index].Location = New-Object System.Drawing.Point((100 + ($index * 11)), 119)
+  $dots[$index].Size = New-Object System.Drawing.Size(5, 5)
+  $dots[$index].BackColor = Convert-HexColor '#9E95EF'
+  Set-RoundedRegion $dots[$index] 2
+  $window.Controls.Add($dots[$index])
+}
+
+$window.Controls.Add($iconPanel)
+$window.Controls.Add($title)
+$window.Controls.Add($statusText)
 $startedAt = Get-Date
 $state = @{ Angle = 0; Tick = 0 }
 
@@ -408,16 +438,27 @@ if (-not [string]::IsNullOrWhiteSpace($TargetVersion)) {
   $statusText.Text = "Instalando a versão $TargetVersion. O EditFlow abrirá novamente em instantes."
 }
 
-$timer = New-Object Windows.Threading.DispatcherTimer
-$timer.Interval = [TimeSpan]::FromMilliseconds(45)
+$spinner.Add_Paint({
+  param($sender, $paintEvent)
+  $paintEvent.Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+  $trackPen = New-Object System.Drawing.Pen((Convert-HexColor '#665F79'), 3)
+  $accentPen = New-Object System.Drawing.Pen([System.Drawing.Color]::White, 3)
+  $paintEvent.Graphics.DrawArc($trackPen, 4, 4, 21, 21, 0, 360)
+  $paintEvent.Graphics.DrawArc($accentPen, 4, 4, 21, 21, $state.Angle, 255)
+  $trackPen.Dispose()
+  $accentPen.Dispose()
+})
+
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 45
 $timer.Add_Tick({
   $state.Angle = ($state.Angle + 11) % 360
   $state.Tick = ($state.Tick + 1) % 60
-  $rotation.Angle = $state.Angle
+  $spinner.Invalidate()
   $phase = [Math]::Floor($state.Tick / 10) % 3
-  $dotOne.Opacity = if ($phase -eq 0) { 1 } else { 0.3 }
-  $dotTwo.Opacity = if ($phase -eq 1) { 1 } else { 0.3 }
-  $dotThree.Opacity = if ($phase -eq 2) { 1 } else { 0.3 }
+  $dotOne.BackColor = Convert-HexColor $(if ($phase -eq 0) { '#BDB6FF' } else { '#554F73' })
+  $dotTwo.BackColor = Convert-HexColor $(if ($phase -eq 1) { '#BDB6FF' } else { '#554F73' })
+  $dotThree.BackColor = Convert-HexColor $(if ($phase -eq 2) { '#BDB6FF' } else { '#554F73' })
 
   if (-not (Test-Path -LiteralPath $MarkerPath) -or ((Get-Date) - $startedAt).TotalMinutes -ge 3) {
     $timer.Stop()
@@ -425,36 +466,26 @@ $timer.Add_Tick({
   }
 })
 
-$window.Add_ContentRendered({
+$window.Add_Shown({
   [System.IO.File]::WriteAllText($ReadyPath, (Get-Date).ToString('O'))
   $timer.Start()
 })
 [void]$window.ShowDialog()
+$timer.Dispose()
+$window.Dispose()
 `;
 
 const launchExternalUpdateHelper = async () => {
   if (process.platform !== 'win32') return false;
 
   try {
-    const helperPath = updateHelperPath();
+    const helperPath = updateHelperExecutablePath();
     const readyPath = updateHelperReadyPath();
     const errorPath = updateHelperErrorPath();
     await mkdir(path.dirname(errorPath), { recursive: true });
     await Promise.all([removeFileIfPresent(readyPath), removeFileIfPresent(errorPath)]);
-    // Windows PowerShell 5.1 requires the UTF-8 BOM to preserve Portuguese
-    // text correctly when a script is launched through -File.
-    await writeFile(helperPath, `\uFEFF${updateHelperScript}`, 'utf8');
-    const helper = spawn('powershell.exe', [
-      '-NoLogo',
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-STA',
-      '-WindowStyle',
-      'Hidden',
-      '-File',
-      helperPath,
+    await access(helperPath);
+    const helper = spawn(helperPath, [
       updateMarkerPath(),
       readyPath,
       errorPath,
