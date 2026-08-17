@@ -40,6 +40,7 @@ import { isVisibleDeadline, taskDeadlineDistance } from '../../lib/taskStatus';
 import { ChatPanel, type ChatOpenRequest } from '../chat/ChatPanel';
 import { FinanceView } from '../finance/FinanceView';
 import { ClientsView, SettingsView, TeamView, type SettingsTab } from '../workspace/WorkspaceViews';
+import { NotificationsMenu } from './NotificationsMenu';
 import type {
   AppNotification,
   Board,
@@ -667,6 +668,9 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     if (notification.conversation_id) {
       setChatRequest({ token: Date.now(), conversationId: notification.conversation_id });
     }
+    if (notification.type === 'invite_accepted') {
+      setView('team');
+    }
     const notificationTask = tasks.find((task) => task.id === notification.task_id);
     if (notificationTask) {
       setView('board');
@@ -812,13 +816,15 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
             <div className="notification-wrap" ref={notificationRef}>
               <button className={`round-action ${unreadNotifications.length || deadlineNotifications.length ? 'has-notifications' : ''}`} aria-label="Notificações" onClick={() => setShowNotifications((show) => !show)}><Bell size={19} />{unreadNotifications.length ? <i /> : null}</button>
               {showNotifications ? (
-                <div className="notification-popover">
-                  <div className="notification-heading"><strong>Notificações</strong>{unreadNotifications.length ? <button onClick={() => void markAllNotificationsRead()}>Marcar como lidas</button> : null}</div>
-                  {inboxNotifications.slice(0, 8).map((notification) => <button className={notification.read_at ? '' : 'unread'} key={notification.id} onClick={() => void openInboxNotification(notification)}><span>{notification.message}</span><small>{formatActivityDate(notification.created_at)}</small></button>)}
-                  {!inboxNotifications.length ? <p>Nenhum comentário ou atribuição nova.</p> : null}
-                  {deadlineNotifications.length ? <div className="notification-divider">PRAZOS PRÓXIMOS</div> : null}
-                  {deadlineNotifications.map(({ task, distance }) => <button key={`deadline-${task.id}`} onClick={() => { setView('board'); setEditor({ mode: 'edit', task }); setShowNotifications(false); }}><span>{task.title}</span><small className={distance < 0 ? 'overdue' : ''}>{distance < 0 ? 'Atrasado' : formatDate(task.due_at!)}</small></button>)}
-                </div>
+                <NotificationsMenu
+                  notifications={inboxNotifications}
+                  deadlines={deadlineNotifications}
+                  members={members}
+                  onOpenNotification={(notification) => void openInboxNotification(notification)}
+                  onOpenDeadline={(task) => { setView('board'); setEditor({ mode: 'edit', task }); setShowNotifications(false); }}
+                  onMarkAllRead={() => void markAllNotificationsRead()}
+                  onOpenSettings={() => { setShowNotifications(false); openSettings('application'); }}
+                />
               ) : null}
             </div>
             {view === 'board' && canManagePlanning ? <button className="new-task-button" onClick={() => setEditor({ mode: 'new', task: null, columnId: columns[0]?.id })}><Plus size={18} />Nova tarefa</button> : null}
