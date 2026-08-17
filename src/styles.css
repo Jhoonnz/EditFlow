@@ -579,9 +579,10 @@ button { color: inherit; }
 .task-assignee-picker { position: relative; display: flex; }
 .task-card-download { display: flex; align-items: center; justify-content: center; gap: 2px; min-width: 23px; height: 23px; margin: 0 2px 0 4px; padding: 0 5px; border: 1px solid rgba(205,206,215,.55); border-radius: 8px; background: rgba(255,255,255,.52); color: #666772; font-size: 7px; font-weight: 800; cursor: pointer; transition: transform .15s ease,background .15s ease,color .15s ease,border-color .15s ease; }
 .task-card-download:hover { transform: translateY(-2px); border-color: color-mix(in srgb,var(--task-accent) 28%,#d4d4dc); background: color-mix(in srgb,var(--task-accent) 12%,rgba(255,255,255,.68)); color: color-mix(in srgb,var(--task-accent) 75%,#40414b); }
-.task-card-countdown { display: inline-flex; align-items: center; justify-content: center; min-width: 94px; height: 31px; padding: 0 10px; border: 1px solid rgba(213,214,222,.58); border-radius: 99px; background: rgba(255,255,255,.7); color: #4b4c57; font-size: 8px; font-weight: 770; white-space: nowrap; box-shadow: 0 2px 7px rgba(43,43,57,.045); }
+.task-card-countdown { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 94px; height: 31px; padding: 0 10px; border: 1px solid rgba(213,214,222,.58); border-radius: 99px; background: rgba(255,255,255,.7); color: #4b4c57; font-size: 8px; font-weight: 770; white-space: nowrap; box-shadow: 0 2px 7px rgba(43,43,57,.045); }
 .task-card-countdown.soon { color: #a36518; background: #fff4df; }
 .task-card-countdown.overdue { color: #b34454; background: #ffeaed; }
+.task-card-countdown.completed { border-color: rgba(61,177,119,.2); color: #24784e; background: #e8f8ef; }
 .task-card.compact { min-height: 128px; border-radius: 16px; }
 .task-card.compact .task-card-open { border-radius: 15px 15px 0 0; }
 .task-card.compact .task-card-surface { min-height: 87px; padding: 9px 12px 10px; }
@@ -1487,6 +1488,7 @@ button { color: inherit; }
 :root[data-theme="dark"] .task-card-countdown { border-color: rgba(255,255,255,.075); background: rgba(255,255,255,.065); color: #e2e0e7; box-shadow: 0 2px 8px rgba(0,0,0,.13); }
 :root[data-theme="dark"] .task-card-countdown.soon { background: #3a2e1f; color: #ffc66d; }
 :root[data-theme="dark"] .task-card-countdown.overdue { background: #3a2229; color: #ff96a6; }
+:root[data-theme="dark"] .task-card-countdown.completed { border-color: rgba(83,211,146,.16); background: #1f3a2d; color: #72dba5; }
 :root[data-theme="dark"] .task-profile-popover,
 :root[data-theme="dark"] .task-download-popover { border-color: #414049; background: #29282f; box-shadow: 0 16px 38px rgba(0,0,0,.42); }
 :root[data-theme="dark"] .task-profile-popover strong { color: #eeecf1; }

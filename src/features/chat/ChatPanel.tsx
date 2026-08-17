@@ -62,6 +62,7 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedIdRef = useRef<string | null>(null);
   const openRef = useRef(false);
+  const unreadCountsRef = useRef<Record<string, number>>({});
   const widgetRef = useRef<HTMLDivElement>(null);
   const { begin: beginMessagesRequest, isLatest: isLatestMessagesRequest, cancel: cancelMessagesRequests } = useLatestRequest();
   const { begin: beginOverviewRequest, isLatest: isLatestOverviewRequest, cancel: cancelOverviewRequests } = useLatestRequest();
@@ -69,6 +70,7 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
 
   useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
   useEffect(() => { openRef.current = open; }, [open]);
+  useEffect(() => { unreadCountsRef.current = unreadCounts; }, [unreadCounts]);
   useEffect(() => {
     if (!open) return;
     const closeChatOnOutsidePointer = (event: PointerEvent) => {
@@ -113,12 +115,12 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
     if (!supabase) return;
     const readAt = new Date().toISOString();
     let previousReadAt: string | null | undefined;
+    const previousUnread = unreadCountsRef.current[conversationId] ?? 0;
     setConversationMembers((current) => current.map((item) => (
       item.conversation_id === conversationId && item.user_id === currentUserId
         ? (previousReadAt = item.last_read_at, { ...item, last_read_at: readAt })
         : item
     )));
-    const previousUnread = unreadCounts[conversationId] ?? 0;
     setUnreadCounts((current) => ({ ...current, [conversationId]: 0 }));
     const { error: readError } = await supabase
       .from('chat_conversation_members')
@@ -128,9 +130,9 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
     if (readError) {
       setError(chatSetupMessage(readError.message));
       setConversationMembers((current) => current.map((item) => item.conversation_id === conversationId && item.user_id === currentUserId ? { ...item, last_read_at: previousReadAt ?? null } : item));
-      setUnreadCounts((current) => ({ ...current, [conversationId]: previousUnread }));
+      setUnreadCounts((current) => current[conversationId] === 0 ? { ...current, [conversationId]: previousUnread } : current);
     }
-  }, [currentUserId, unreadCounts]);
+  }, [currentUserId]);
 
   const loadOverview = useCallback(async (quiet = false) => {
     if (!supabase) return;
@@ -138,69 +140,70 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
     if (!quiet) setLoading(true);
     setError(null);
 
-    const generalResult = await supabase.rpc('get_or_create_general_chat', { target_workspace: workspace.id });
-    if (!isLatestOverviewRequest(requestId)) return;
-    if (generalResult.error) {
-      setError(chatSetupMessage(generalResult.error.message));
-      setLoading(false);
-      return;
+    try {
+      const generalResult = await supabase.rpc('get_or_create_general_chat', { target_workspace: workspace.id });
+      if (!isLatestOverviewRequest(requestId)) return;
+      if (generalResult.error) {
+        setError(chatSetupMessage(generalResult.error.message));
+        return;
+      }
+
+      const conversationResult = await supabase
+        .from('chat_conversations')
+        .select('*')
+        .eq('workspace_id', workspace.id)
+        .order('updated_at', { ascending: false });
+      if (!isLatestOverviewRequest(requestId)) return;
+      if (conversationResult.error) {
+        setError(chatSetupMessage(conversationResult.error.message));
+        return;
+      }
+
+      const nextConversations = (conversationResult.data ?? []) as ChatConversation[];
+      const ids = nextConversations.map((conversation) => conversation.id);
+      if (!ids.length) {
+        setConversations([]);
+        setConversationMembers([]);
+        setPreviewMessages([]);
+        return;
+      }
+
+      const [memberResult, messageResult] = await Promise.all([
+        supabase.from('chat_conversation_members').select('*').in('conversation_id', ids),
+        supabase.from('chat_messages').select('*').in('conversation_id', ids).order('created_at', { ascending: false }).limit(300),
+      ]);
+      if (!isLatestOverviewRequest(requestId)) return;
+      const loadError = memberResult.error ?? messageResult.error;
+      if (loadError) {
+        setError(chatSetupMessage(loadError.message));
+        return;
+      }
+
+      const nextMemberships = (memberResult.data ?? []) as ChatConversationMember[];
+      const unreadEntries = await Promise.all(nextConversations.map(async (conversation) => {
+        const ownMembership = nextMemberships.find((item) => item.conversation_id === conversation.id && item.user_id === currentUserId);
+        let query = supabase!.from('chat_messages').select('id', { count: 'exact', head: true })
+          .eq('conversation_id', conversation.id)
+          .neq('sender_id', currentUserId);
+        if (ownMembership?.last_read_at) query = query.gt('created_at', ownMembership.last_read_at);
+        const result = await query;
+        return [conversation.id, result.error ? 0 : result.count ?? 0] as const;
+      }));
+      if (!isLatestOverviewRequest(requestId)) return;
+
+      setConversations(nextConversations);
+      setConversationMembers(nextMemberships);
+      setPreviewMessages((messageResult.data ?? []) as ChatMessage[]);
+      setUnreadCounts(Object.fromEntries(unreadEntries));
+      setSelectedId((current) => {
+        if (current && nextConversations.some((conversation) => conversation.id === current)) return current;
+        return nextConversations.find((conversation) => conversation.kind === 'general')?.id ?? nextConversations[0]?.id ?? null;
+      });
+    } catch (loadError) {
+      if (isLatestOverviewRequest(requestId)) setError(chatSetupMessage(errorMessage(loadError)));
+    } finally {
+      if (isLatestOverviewRequest(requestId)) setLoading(false);
     }
-
-    const conversationResult = await supabase
-      .from('chat_conversations')
-      .select('*')
-      .eq('workspace_id', workspace.id)
-      .order('updated_at', { ascending: false });
-    if (!isLatestOverviewRequest(requestId)) return;
-    if (conversationResult.error) {
-      setError(chatSetupMessage(conversationResult.error.message));
-      setLoading(false);
-      return;
-    }
-
-    const nextConversations = (conversationResult.data ?? []) as ChatConversation[];
-    const ids = nextConversations.map((conversation) => conversation.id);
-    if (!ids.length) {
-      setConversations([]);
-      setConversationMembers([]);
-      setPreviewMessages([]);
-      setLoading(false);
-      return;
-    }
-
-    const [memberResult, messageResult] = await Promise.all([
-      supabase.from('chat_conversation_members').select('*').in('conversation_id', ids),
-      supabase.from('chat_messages').select('*').in('conversation_id', ids).order('created_at', { ascending: false }).limit(300),
-    ]);
-    if (!isLatestOverviewRequest(requestId)) return;
-    const loadError = memberResult.error ?? messageResult.error;
-    if (loadError) {
-      setError(chatSetupMessage(loadError.message));
-      setLoading(false);
-      return;
-    }
-
-    const nextMemberships = (memberResult.data ?? []) as ChatConversationMember[];
-    const unreadEntries = await Promise.all(nextConversations.map(async (conversation) => {
-      const ownMembership = nextMemberships.find((item) => item.conversation_id === conversation.id && item.user_id === currentUserId);
-      let query = supabase!.from('chat_messages').select('id', { count: 'exact', head: true })
-        .eq('conversation_id', conversation.id)
-        .neq('sender_id', currentUserId);
-      if (ownMembership?.last_read_at) query = query.gt('created_at', ownMembership.last_read_at);
-      const result = await query;
-      return [conversation.id, result.error ? 0 : result.count ?? 0] as const;
-    }));
-    if (!isLatestOverviewRequest(requestId)) return;
-
-    setConversations(nextConversations);
-    setConversationMembers(nextMemberships);
-    setPreviewMessages((messageResult.data ?? []) as ChatMessage[]);
-    setUnreadCounts(Object.fromEntries(unreadEntries));
-    setSelectedId((current) => {
-      if (current && nextConversations.some((conversation) => conversation.id === current)) return current;
-      return nextConversations.find((conversation) => conversation.kind === 'general')?.id ?? nextConversations[0]?.id ?? null;
-    });
-    setLoading(false);
   }, [beginOverviewRequest, currentUserId, isLatestOverviewRequest, workspace.id]);
 
   const scheduleOverviewReload = useCallback(() => {

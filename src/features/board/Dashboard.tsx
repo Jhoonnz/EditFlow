@@ -1160,7 +1160,8 @@ function TaskCard({
   const assigneeButtonRef = useRef<HTMLButtonElement>(null);
   const assigneePopoverRef = useRef<HTMLElement>(null);
   const [assigneePopoverStyle, setAssigneePopoverStyle] = useState<CSSProperties | null>(null);
-  const countdown = taskCountdown(task.due_at);
+  const taskFinished = column.is_completion || Boolean(task.completed_at);
+  const countdown = taskCountdown(task.due_at, taskFinished);
   const subtitle = client?.name || task.description || priorityLabel(task.priority);
   const downloadLinks = taskLinks.filter((link) => link.category === 'download');
   const cardStyle = {
@@ -1282,7 +1283,7 @@ function TaskCard({
             <button ref={assigneeButtonRef} type="button" className={`task-card-add-person ${showAssignees ? 'active' : ''}`} title={assignee ? 'Trocar responsável' : 'Definir responsável'} aria-label={assignee ? 'Trocar responsável' : 'Definir responsável'} onClick={() => { setShowLinks(false); setShowAssignees((show) => !show); }}><Plus size={11} /></button>
           </div> : null}
         </span>
-        <span className={`task-card-countdown ${countdown.state}`}>{countdown.label}</span>
+        <span className={`task-card-countdown ${countdown.state}`}>{taskFinished ? <CheckCircle2 size={11} /> : null}{countdown.label}</span>
       </span>
       {showLinks && downloadLinks.length > 1 ? (
         <aside className="task-download-popover" aria-label="Links de download">
@@ -1911,7 +1912,8 @@ function formatCardDate(date: string) {
   return `${day} ${month} ${parsed.getFullYear()}`;
 }
 
-function taskCountdown(date: string | null): { label: string; state: 'neutral' | 'soon' | 'overdue' } {
+function taskCountdown(date: string | null, completed = false): { label: string; state: 'neutral' | 'soon' | 'overdue' | 'completed' } {
+  if (completed) return { label: 'Finalizado', state: 'completed' };
   if (!date) return { label: 'Sem prazo', state: 'neutral' };
   const today = new Date();
   today.setHours(0, 0, 0, 0);
