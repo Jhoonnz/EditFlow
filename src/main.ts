@@ -100,6 +100,8 @@ const sendUpdateStatus = (status: UpdateStatus) => {
 const updateLogPath = () => path.join(app.getPath('userData'), 'logs', 'updater.log');
 const updateMarkerPath = () => path.join(app.getPath('userData'), 'pending-update.json');
 const updateHelperPath = () => path.join(app.getPath('userData'), 'update-progress.ps1');
+const updateHelperReadyPath = () => path.join(app.getPath('userData'), 'update-progress.ready');
+const updateHelperErrorPath = () => path.join(app.getPath('userData'), 'logs', 'update-progress-error.log');
 const desktopPreferencesPath = () => path.join(app.getPath('userData'), 'desktop-preferences.json');
 const currencyRateCachePath = () => path.join(app.getPath('userData'), 'usd-brl-rate.json');
 
@@ -230,6 +232,33 @@ const clearUpdateMarker = async () => {
   }
 };
 
+const removeFileIfPresent = async (targetPath: string) => {
+  try {
+    await unlink(targetPath);
+  } catch {
+    // Cleanup is best effort because the file may not exist yet.
+  }
+};
+
+const waitForWindowToShow = (window: BrowserWindow, timeoutMs = 2500) => new Promise<boolean>((resolve) => {
+  if (window.isVisible()) {
+    resolve(true);
+    return;
+  }
+
+  let settled = false;
+  const finish = (visible: boolean) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeout);
+    window.removeListener('show', onShow);
+    resolve(visible);
+  };
+  const onShow = () => finish(true);
+  const timeout = setTimeout(() => finish(window.isVisible()), timeoutMs);
+  window.once('show', onShow);
+});
+
 const createUpdateSplash = (phase: 'installing' | 'finishing') => {
   if (updateSplashWindow && !updateSplashWindow.isDestroyed()) updateSplashWindow.close();
 
@@ -303,10 +332,23 @@ const createUpdateSplash = (phase: 'installing' | 'finishing') => {
 // removes the marker below, which tells the helper that it can close.
 const updateHelperScript = String.raw`param(
   [Parameter(Mandatory = $true)][string]$MarkerPath,
+  [Parameter(Mandatory = $true)][string]$ReadyPath,
+  [Parameter(Mandatory = $true)][string]$ErrorPath,
   [string]$TargetVersion = ''
 )
 
 $ErrorActionPreference = 'Stop'
+trap {
+  try {
+    $errorDirectory = [System.IO.Path]::GetDirectoryName($ErrorPath)
+    if (-not [string]::IsNullOrWhiteSpace($errorDirectory)) {
+      [System.IO.Directory]::CreateDirectory($errorDirectory) | Out-Null
+    }
+    ($_ | Out-String) | Set-Content -LiteralPath $ErrorPath -Encoding UTF8
+  } catch {}
+  exit 1
+}
+
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 
@@ -383,7 +425,10 @@ $timer.Add_Tick({
   }
 })
 
-$window.Add_ContentRendered({ $timer.Start() })
+$window.Add_ContentRendered({
+  [System.IO.File]::WriteAllText($ReadyPath, (Get-Date).ToString('O'))
+  $timer.Start()
+})
 [void]$window.ShowDialog()
 `;
 
@@ -392,6 +437,10 @@ const launchExternalUpdateHelper = async () => {
 
   try {
     const helperPath = updateHelperPath();
+    const readyPath = updateHelperReadyPath();
+    const errorPath = updateHelperErrorPath();
+    await mkdir(path.dirname(errorPath), { recursive: true });
+    await Promise.all([removeFileIfPresent(readyPath), removeFileIfPresent(errorPath)]);
     // Windows PowerShell 5.1 requires the UTF-8 BOM to preserve Portuguese
     // text correctly when a script is launched through -File.
     await writeFile(helperPath, `\uFEFF${updateHelperScript}`, 'utf8');
@@ -407,17 +456,42 @@ const launchExternalUpdateHelper = async () => {
       '-File',
       helperPath,
       updateMarkerPath(),
+      readyPath,
+      errorPath,
       updateVersion ?? '',
     ], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
     });
-    helper.once('error', (error) => {
-      void writeUpdateLog('Falha ao iniciar tela externa da atualização', error.message);
-    });
+    const processState: { error: Error | null; exited: boolean } = { error: null, exited: false };
+    helper.once('error', (error) => { processState.error = error; });
+    helper.once('exit', () => { processState.exited = true; });
     helper.unref();
-    return true;
+
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline) {
+      try {
+        await access(readyPath);
+        await writeUpdateLog('Tela externa renderizada', updateVersion ?? 'versão baixada');
+        return true;
+      } catch {
+        // WPF is still loading.
+      }
+
+      if (processState.error || processState.exited) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    let helperDetails = processState.error?.message ?? 'A janela externa não confirmou que foi exibida.';
+    try {
+      helperDetails = (await readFile(errorPath, 'utf8')).trim() || helperDetails;
+    } catch {
+      // Keep the generic diagnostic when the helper could not write its log.
+    }
+    await writeUpdateLog('Falha ao exibir tela externa da atualização', helperDetails);
+    if (!processState.exited) helper.kill();
+    return false;
   } catch (error) {
     await writeUpdateLog(
       'Falha ao preparar tela externa da atualização',
@@ -652,18 +726,34 @@ const configureAutoUpdater = () => {
     await writeFile(updateMarkerPath(), JSON.stringify({ version: updateVersion, startedAt: new Date().toISOString() }), 'utf8');
 
     const currentWindows = BrowserWindow.getAllWindows();
-    createUpdateSplash('installing');
+    const splash = createUpdateSplash('installing');
+    await waitForWindowToShow(splash);
+    for (const window of currentWindows) window.hide();
+
     const externalHelperStarted = await launchExternalUpdateHelper();
     await writeUpdateLog(
       'Tela contínua da atualização',
-      externalHelperStarted ? 'iniciada' : 'usando tela interna de fallback',
+      externalHelperStarted ? 'renderizada e pronta' : 'falhou; instalação cancelada',
     );
-    for (const window of currentWindows) window.hide();
+
+    if (!externalHelperStarted) {
+      installingUpdate = false;
+      await clearUpdateMarker();
+      if (!splash.isDestroyed()) splash.close();
+      for (const window of currentWindows) {
+        if (!window.isDestroyed()) window.show();
+      }
+      sendUpdateStatus({
+        state: 'error',
+        message: 'Não foi possível abrir a tela de atualização. O aplicativo permaneceu aberto; tente novamente.',
+      });
+      return false;
+    }
 
     setTimeout(() => {
       // /S keeps the NSIS installer invisible; force-run reopens the updated app.
       autoUpdater.quitAndInstall(true, true);
-    }, 900);
+    }, 350);
     return true;
   });
 
@@ -699,6 +789,7 @@ if (!hasSingleInstanceLock) {
       syncTrayWithPreferences();
       if (!splash.isDestroyed()) splash.close();
       void clearUpdateMarker();
+      void removeFileIfPresent(updateHelperReadyPath());
       configureAutoUpdater();
     }, 1800);
   } else {
