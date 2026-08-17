@@ -7,6 +7,7 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     executableName: 'editflow',
+    icon: 'build/installerIcon.ico',
     extraResource: ['build/app-update.yml'],
   },
   rebuildConfig: {},

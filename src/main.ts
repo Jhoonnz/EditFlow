@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification as ElectronNotification, powerMonitor, shell, Tray } from 'electron';
 import { autoUpdater, type NsisUpdater } from 'electron-updater';
+import { spawn } from 'node:child_process';
 import { access, appendFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -98,6 +99,7 @@ const sendUpdateStatus = (status: UpdateStatus) => {
 
 const updateLogPath = () => path.join(app.getPath('userData'), 'logs', 'updater.log');
 const updateMarkerPath = () => path.join(app.getPath('userData'), 'pending-update.json');
+const updateHelperPath = () => path.join(app.getPath('userData'), 'update-progress.ps1');
 const desktopPreferencesPath = () => path.join(app.getPath('userData'), 'desktop-preferences.json');
 const currencyRateCachePath = () => path.join(app.getPath('userData'), 'usd-brl-rate.json');
 
@@ -294,6 +296,135 @@ const createUpdateSplash = (phase: 'installing' | 'finishing') => {
   void splash.loadURL(`data:text/html;charset=UTF-8,${encodeURIComponent(html)}`);
   updateSplashWindow = splash;
   return splash;
+};
+
+// A separate Windows process keeps this progress window visible while
+// Electron exits and NSIS replaces the application files. The restarted app
+// removes the marker below, which tells the helper that it can close.
+const updateHelperScript = String.raw`param(
+  [Parameter(Mandatory = $true)][string]$MarkerPath,
+  [string]$TargetVersion = ''
+)
+
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName PresentationFramework
+Add-Type -AssemblyName PresentationCore
+
+[xml]$xaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Width="390" Height="168" WindowStyle="None" AllowsTransparency="True"
+        Background="Transparent" ResizeMode="NoResize" ShowInTaskbar="False"
+        Topmost="True" WindowStartupLocation="CenterScreen">
+  <Border Margin="8" Padding="23" CornerRadius="24" BorderThickness="1"
+          BorderBrush="#35FFFFFF" Background="#F6232148">
+    <Border.Effect>
+      <DropShadowEffect BlurRadius="34" ShadowDepth="12" Opacity="0.40" Color="#17152F" />
+    </Border.Effect>
+    <Grid>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="58" />
+        <ColumnDefinition Width="17" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+      <Border Grid.Column="0" Width="58" Height="58" CornerRadius="18" Background="#675DCE">
+        <Ellipse Width="28" Height="28" Stroke="#55FFFFFF" StrokeThickness="3"
+                 StrokeDashArray="5 3" RenderTransformOrigin="0.5,0.5">
+          <Ellipse.RenderTransform>
+            <RotateTransform x:Name="SpinnerRotation" Angle="0" />
+          </Ellipse.RenderTransform>
+        </Ellipse>
+      </Border>
+      <StackPanel Grid.Column="2" VerticalAlignment="Center">
+        <TextBlock Foreground="White" FontFamily="Segoe UI" FontSize="16" FontWeight="SemiBold"
+                   Text="Aplicando atualização" />
+        <TextBlock x:Name="StatusText" Margin="0,7,0,0" Foreground="#C0BFD3" FontFamily="Segoe UI"
+                   FontSize="11" LineHeight="16" TextWrapping="Wrap"
+                   Text="O EditFlow será reiniciado automaticamente. Não desligue o computador." />
+        <StackPanel Margin="0,8,0,0" Orientation="Horizontal">
+          <Ellipse x:Name="DotOne" Width="5" Height="5" Margin="0,0,5,0" Fill="#9E95EF" />
+          <Ellipse x:Name="DotTwo" Width="5" Height="5" Margin="0,0,5,0" Fill="#9E95EF" Opacity="0.55" />
+          <Ellipse x:Name="DotThree" Width="5" Height="5" Fill="#9E95EF" Opacity="0.30" />
+        </StackPanel>
+      </StackPanel>
+    </Grid>
+  </Border>
+</Window>
+'@
+
+$reader = New-Object System.Xml.XmlNodeReader $xaml
+$window = [Windows.Markup.XamlReader]::Load($reader)
+$rotation = $window.FindName('SpinnerRotation')
+$statusText = $window.FindName('StatusText')
+$dotOne = $window.FindName('DotOne')
+$dotTwo = $window.FindName('DotTwo')
+$dotThree = $window.FindName('DotThree')
+$startedAt = Get-Date
+$state = @{ Angle = 0; Tick = 0 }
+
+if (-not [string]::IsNullOrWhiteSpace($TargetVersion)) {
+  $statusText.Text = "Instalando a versão $TargetVersion. O EditFlow abrirá novamente em instantes."
+}
+
+$timer = New-Object Windows.Threading.DispatcherTimer
+$timer.Interval = [TimeSpan]::FromMilliseconds(45)
+$timer.Add_Tick({
+  $state.Angle = ($state.Angle + 11) % 360
+  $state.Tick = ($state.Tick + 1) % 60
+  $rotation.Angle = $state.Angle
+  $phase = [Math]::Floor($state.Tick / 10) % 3
+  $dotOne.Opacity = if ($phase -eq 0) { 1 } else { 0.3 }
+  $dotTwo.Opacity = if ($phase -eq 1) { 1 } else { 0.3 }
+  $dotThree.Opacity = if ($phase -eq 2) { 1 } else { 0.3 }
+
+  if (-not (Test-Path -LiteralPath $MarkerPath) -or ((Get-Date) - $startedAt).TotalMinutes -ge 3) {
+    $timer.Stop()
+    $window.Close()
+  }
+})
+
+$window.Add_ContentRendered({ $timer.Start() })
+[void]$window.ShowDialog()
+`;
+
+const launchExternalUpdateHelper = async () => {
+  if (process.platform !== 'win32') return false;
+
+  try {
+    const helperPath = updateHelperPath();
+    // Windows PowerShell 5.1 requires the UTF-8 BOM to preserve Portuguese
+    // text correctly when a script is launched through -File.
+    await writeFile(helperPath, `\uFEFF${updateHelperScript}`, 'utf8');
+    const helper = spawn('powershell.exe', [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-STA',
+      '-WindowStyle',
+      'Hidden',
+      '-File',
+      helperPath,
+      updateMarkerPath(),
+      updateVersion ?? '',
+    ], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    helper.once('error', (error) => {
+      void writeUpdateLog('Falha ao iniciar tela externa da atualização', error.message);
+    });
+    helper.unref();
+    return true;
+  } catch (error) {
+    await writeUpdateLog(
+      'Falha ao preparar tela externa da atualização',
+      error instanceof Error ? error.message : String(error),
+    );
+    return false;
+  }
 };
 
 const writeUpdateLog = async (event: string, details = '') => {
@@ -522,6 +653,11 @@ const configureAutoUpdater = () => {
 
     const currentWindows = BrowserWindow.getAllWindows();
     createUpdateSplash('installing');
+    const externalHelperStarted = await launchExternalUpdateHelper();
+    await writeUpdateLog(
+      'Tela contínua da atualização',
+      externalHelperStarted ? 'iniciada' : 'usando tela interna de fallback',
+    );
     for (const window of currentWindows) window.hide();
 
     setTimeout(() => {

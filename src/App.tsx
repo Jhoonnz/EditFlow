@@ -155,7 +155,7 @@ function UpdateNotice() {
             <div className="update-progress"><i style={{ width: `${status.percent}%` }} /></div>
           </>
         ) : null}
-        {status.state === 'downloaded' ? <span>Reinicie agora para aplicar a atualização automaticamente.</span> : null}
+        {status.state === 'downloaded' ? <span>A atualização será aplicada automaticamente e o EditFlow abrirá novamente.</span> : null}
         {status.state === 'up-to-date' ? <span>Você está usando a versão {status.version}.</span> : null}
         {status.state === 'error' ? (
           <>
@@ -171,7 +171,7 @@ function UpdateNotice() {
       </div>
       {status.state === 'downloaded' ? (
         <button className="update-install" type="button" onClick={() => void window.editflow.installUpdate()}>
-          Reiniciar e atualizar
+          Atualizar agora
         </button>
       ) : null}
       {!isBusy && status.state !== 'downloaded' ? (

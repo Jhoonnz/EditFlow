@@ -4,6 +4,7 @@ import {
   LoaderCircle,
   MessageCircle,
   MessageSquarePlus,
+  RefreshCw,
   Search,
   Send,
   Users,
@@ -80,17 +81,32 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
   const loadMessages = useCallback(async (conversationId: string, quiet = false) => {
     if (!supabase) return;
     const requestId = beginMessagesRequest();
-    if (!quiet) setMessagesLoading(true);
-    const { data, error: messageError } = await supabase
-      .from('chat_messages')
-      .select('*')
-      .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: false })
-      .limit(150);
-    if (!isLatestMessagesRequest(requestId) || selectedIdRef.current !== conversationId) return;
-    if (messageError) setError(messageError.message);
-    else setMessages(((data ?? []) as ChatMessage[]).reverse());
-    setMessagesLoading(false);
+    if (!quiet) {
+      setMessagesLoading(true);
+      setError(null);
+    }
+
+    try {
+      const { data, error: messageError } = await supabase
+        .from('chat_messages')
+        .select('*')
+        .eq('conversation_id', conversationId)
+        .order('created_at', { ascending: false })
+        .limit(150);
+      if (!isLatestMessagesRequest(requestId) || selectedIdRef.current !== conversationId) return;
+      if (messageError) setError(chatSetupMessage(messageError.message));
+      else {
+        setMessages(((data ?? []) as ChatMessage[]).reverse());
+        setError(null);
+      }
+    } catch (loadError) {
+      if (isLatestMessagesRequest(requestId) && selectedIdRef.current === conversationId) {
+        setError(chatSetupMessage(errorMessage(loadError)));
+      }
+    } finally {
+      // A failed or superseded request must never leave the room spinner active.
+      if (isLatestMessagesRequest(requestId)) setMessagesLoading(false);
+    }
   }, [beginMessagesRequest, isLatestMessagesRequest]);
 
   const markConversationRead = useCallback(async (conversationId: string) => {
@@ -192,6 +208,13 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
     reloadTimer.current = setTimeout(() => void loadOverview(true), 120);
   }, [loadOverview]);
 
+  const retryChat = useCallback(() => {
+    setError(null);
+    void loadOverview();
+    const conversationId = selectedIdRef.current;
+    if (conversationId && openRef.current) void loadMessages(conversationId);
+  }, [loadMessages, loadOverview]);
+
   useEffect(() => {
     setSelectedId(null);
     setMessages([]);
@@ -202,6 +225,12 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
       cancelOverviewRequests();
     };
   }, [cancelMessagesRequests, cancelOverviewRequests, loadOverview, workspace.id]);
+
+  useEffect(() => {
+    const retryWhenConnectionReturns = () => retryChat();
+    window.addEventListener('online', retryWhenConnectionReturns);
+    return () => window.removeEventListener('online', retryWhenConnectionReturns);
+  }, [retryChat]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -407,7 +436,15 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
               })}
             </div>
 
-            {error ? <div className="chat-error">{error}</div> : null}
+            {error ? (
+              <div className="chat-error" role="alert">
+                <span>{error}</span>
+                <button type="button" onClick={retryChat}>
+                  <RefreshCw size={12} />
+                  Tentar novamente
+                </button>
+              </div>
+            ) : null}
             <form className="chat-composer" onSubmit={(event) => void submitMessage(event)}>
               <div>
                 <textarea value={composer} onChange={(event) => setComposer(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder={selectedConversation ? `Mensagem para ${selectedConversation.kind === 'general' ? 'a equipe' : selectedConversation.otherMember?.display_name ?? 'o membro'}...` : 'Selecione uma conversa'} disabled={!selectedConversation || sending} maxLength={4000} rows={1} />
@@ -486,8 +523,21 @@ function dayLabel(value: string) {
 
 function chatSetupMessage(message: string) {
   const normalized = message.toLocaleLowerCase('en-US');
+  if (
+    normalized.includes('failed to fetch')
+    || normalized.includes('networkerror')
+    || normalized.includes('network error')
+    || normalized.includes('load failed')
+    || normalized.includes('fetch failed')
+  ) {
+    return 'Não foi possível carregar as mensagens. Verifique sua conexão e tente novamente.';
+  }
   if (normalized.includes('chat_conversations') || normalized.includes('get_or_create_general_chat') || normalized.includes('schema cache')) {
     return 'O banco do chat ainda não foi ativado. Execute a migração 017_team_chat.sql no Supabase.';
   }
   return message;
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : 'Falha de conexão ao carregar o chat.';
 }
