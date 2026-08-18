@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useLatestRequest } from '../../lib/asyncRequest';
+import { fetchAllRows } from '../../lib/paginatedQuery';
 import { useDialogFocus } from '../../lib/useDialogFocus';
 import { useAppDialog } from '../../components/AppDialog';
 import { isVisibleDeadline, taskDeadlineDistance } from '../../lib/taskStatus';
@@ -85,6 +86,24 @@ const emptyDraft: TaskDraft = {
 
 const columnColors = ['#8b8fa3', '#a78bfa', '#60a5fa', '#f59e0b', '#f97316', '#fb7185', '#34d399', '#22c55e'];
 
+function mergeRealtimeRow<T extends { id: string }>(
+  current: T[],
+  eventType: string,
+  nextRow: Partial<T>,
+  previousRow: Partial<T>,
+  sort?: (first: T, second: T) => number,
+) {
+  const rowId = (eventType === 'DELETE' ? previousRow.id : nextRow.id) ?? previousRow.id;
+  if (!rowId) return current;
+  if (eventType === 'DELETE') return current.filter((row) => row.id !== rowId);
+
+  const existing = current.find((row) => row.id === rowId);
+  const merged = existing
+    ? current.map((row) => row.id === rowId ? { ...row, ...nextRow } as T : row)
+    : [...current, nextRow as T];
+  return sort ? merged.slice().sort(sort) : merged;
+}
+
 export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWorkspacesChanged, startupAction, onStartupActionHandled }: Props) {
   const canManagePlanning = workspace.role === 'owner' || workspace.role === 'admin';
   const [board, setBoard] = useState<Board | null>(null);
@@ -94,6 +113,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [links, setLinks] = useState<TaskLink[]>([]);
   const [inboxNotifications, setInboxNotifications] = useState<AppNotification[]>([]);
+  const [hasMoreNotifications, setHasMoreNotifications] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -128,11 +148,24 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const notificationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
+  const notificationLimitRef = useRef(30);
+  const notificationWorkspaceRef = useRef(workspace.id);
+  const boardRef = useRef<Board | null>(null);
+  const columnsRef = useRef<BoardColumn[]>([]);
+  const tasksRef = useRef<Task[]>([]);
+  const membersRef = useRef<WorkspaceMember[]>([]);
+  const notificationsRef = useRef<AppNotification[]>([]);
   const { begin: beginBoardRequest, isLatest: isLatestBoardRequest, cancel: cancelBoardRequests } = useLatestRequest();
   const appDialog = useAppDialog();
   useDialogFocus<HTMLElement>(showCreateWorkspace, () => setShowCreateWorkspace(false), !creatingWorkspace, '.workspace-create-dialog');
   useDialogFocus<HTMLElement>(showLogoutConfirm, () => setShowLogoutConfirm(false), !signingOut, '.logout-dialog');
   const handleChatRequestHandled = useCallback(() => setChatRequest(null), []);
+
+  useEffect(() => { boardRef.current = board; }, [board]);
+  useEffect(() => { columnsRef.current = columns; }, [columns]);
+  useEffect(() => { tasksRef.current = tasks; }, [tasks]);
+  useEffect(() => { membersRef.current = members; }, [members]);
+  useEffect(() => { notificationsRef.current = inboxNotifications; }, [inboxNotifications]);
   const openSettings = (tab: SettingsTab) => {
     setSettingsNavigation((current) => ({ tab, token: current.token + 1 }));
     setView('settings');
@@ -217,6 +250,12 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 
   const loadBoard = useCallback(async (quiet = false) => {
     if (!supabase) return;
+    const client = supabase;
+    if (notificationWorkspaceRef.current !== workspace.id) {
+      notificationWorkspaceRef.current = workspace.id;
+      notificationLimitRef.current = 30;
+      setHasMoreNotifications(false);
+    }
     const requestId = beginBoardRequest();
     if (!quiet) setLoading(true);
     setError(null);
@@ -239,11 +278,11 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 
     const currentBoard = boardRow as Board;
     const [columnResult, taskResult, clientResult, membershipResult, notificationResult] = await Promise.all([
-      supabase.from('columns').select('*').eq('board_id', currentBoard.id).order('position'),
-      supabase.from('tasks').select('*').eq('board_id', currentBoard.id).order('position'),
-      supabase.from('clients').select('*').eq('workspace_id', workspace.id).order('name'),
+      fetchAllRows<BoardColumn>(async (from, to) => await client.from('columns').select('*').eq('board_id', currentBoard.id).order('position').range(from, to)),
+      fetchAllRows<Task>(async (from, to) => await client.from('tasks').select('*').eq('board_id', currentBoard.id).order('position').range(from, to)),
+      fetchAllRows<Client>(async (from, to) => await client.from('clients').select('*').eq('workspace_id', workspace.id).order('name').range(from, to)),
       supabase.from('workspace_members').select('user_id, role').eq('workspace_id', workspace.id),
-      supabase.from('notifications').select('*').eq('workspace_id', workspace.id).eq('user_id', user.id).order('created_at', { ascending: false }).limit(30),
+      supabase.from('notifications').select('*').eq('workspace_id', workspace.id).eq('user_id', user.id).order('created_at', { ascending: false }).limit(notificationLimitRef.current + 1),
     ]);
 
     const firstError = columnResult.error ?? taskResult.error ?? clientResult.error ?? membershipResult.error ?? notificationResult.error;
@@ -301,23 +340,38 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     }));
     let nextLinks: TaskLink[] = [];
     if (nextTasks.length) {
-      const linkResult = await supabase
-        .from('task_links')
-        .select('*')
-        .in('task_id', nextTasks.map((task) => task.id))
-        .order('created_at');
-      if (!linkResult.error) nextLinks = (linkResult.data ?? []) as TaskLink[];
+      const taskIds = nextTasks.map((task) => task.id);
+      for (let start = 0; start < taskIds.length; start += 100) {
+        const taskIdBatch = taskIds.slice(start, start + 100);
+        const linkResult = await fetchAllRows<TaskLink>(async (from, to) => await client
+          .from('task_links')
+          .select('*')
+          .in('task_id', taskIdBatch)
+          .order('created_at')
+          .range(from, to));
+        if (linkResult.error) {
+          setError(linkResult.error.message);
+          setSyncStatus(navigator.onLine ? 'error' : 'offline');
+          setLoading(false);
+          return;
+        }
+        nextLinks.push(...(linkResult.data ?? []));
+      }
     }
 
     if (!isLatestBoardRequest(requestId)) return;
 
     setBoard(currentBoard);
-    setColumns((columnResult.data ?? []) as BoardColumn[]);
+    setColumns(columnResult.data ?? []);
     setTasks(nextTasks);
-    setClients((clientResult.data ?? []) as Client[]);
+    setClients(clientResult.data ?? []);
     setMembers(nextMembers);
     setLinks(nextLinks);
-    setInboxNotifications((notificationResult.data ?? []) as AppNotification[]);
+    const nextNotifications = (notificationResult.data ?? []) as AppNotification[];
+    setHasMoreNotifications(nextNotifications.length > notificationLimitRef.current);
+    const visibleNotifications = nextNotifications.slice(0, notificationLimitRef.current);
+    notificationsRef.current = visibleNotifications;
+    setInboxNotifications(visibleNotifications);
     setLastSyncedAt(new Date().toISOString());
     if (navigator.onLine) setSyncStatus('connected');
     setLoading(false);
@@ -346,7 +400,9 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     return cancelBoardRequests;
   }, [cancelBoardRequests, loadBoard]);
 
-  useEffect(() => setProfileMemberId(null), [workspace.id]);
+  useEffect(() => {
+    setProfileMemberId(null);
+  }, [workspace.id]);
 
   useEffect(() => {
     if (!canManagePlanning && view === 'clients') setView('board');
@@ -379,6 +435,24 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
       }, 2_000);
     };
 
+    const noteRealtimeChange = () => {
+      setLastSyncedAt(new Date().toISOString());
+      setSyncStatus('connected');
+    };
+
+    const loadLinksForTask = async (taskId: string) => {
+      const { data, error: linkError } = await realtimeClient
+        .from('task_links')
+        .select('*')
+        .eq('task_id', taskId)
+        .order('created_at');
+      if (disposed || linkError) return;
+      setLinks((current) => {
+        const withoutTask = current.filter((link) => link.task_id !== taskId);
+        return [...withoutTask, ...((data ?? []) as TaskLink[])];
+      });
+    };
+
     const connect = () => {
       if (disposed) return;
       generation += 1;
@@ -406,17 +480,57 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 
       subscribe(realtimeClient
         .channel(channelName('tasks'))
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `workspace_id=eq.${workspace.id}` }, scheduleReload), true);
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `workspace_id=eq.${workspace.id}` }, (payload) => {
+          const nextTask = payload.new as Partial<Task>;
+          const previousTask = payload.old as Partial<Task>;
+          setTasks((current) => mergeRealtimeRow(current, payload.eventType, nextTask, previousTask, (first, second) => Number(first.position) - Number(second.position)));
+          if (payload.eventType === 'DELETE' && previousTask.id) {
+            setLinks((current) => current.filter((link) => link.task_id !== previousTask.id));
+          } else if (payload.eventType === 'INSERT' && nextTask.id) {
+            void loadLinksForTask(nextTask.id);
+          }
+          noteRealtimeChange();
+        }), true);
 
       subscribe(realtimeClient
         .channel(channelName('clients'))
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'clients', filter: `workspace_id=eq.${workspace.id}` }, scheduleReload));
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'clients', filter: `workspace_id=eq.${workspace.id}` }, (payload) => {
+          setClients((current) => mergeRealtimeRow(current, payload.eventType, payload.new as Partial<Client>, payload.old as Partial<Client>, (first, second) => first.name.localeCompare(second.name, 'pt-BR')));
+          noteRealtimeChange();
+        }));
 
       subscribe(realtimeClient
         .channel(channelName('board-support'))
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'task_links' }, scheduleReload)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'columns' }, scheduleReload)
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, scheduleReload));
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'task_links' }, (payload) => {
+          const nextLink = payload.new as Partial<TaskLink>;
+          const previousLink = payload.old as Partial<TaskLink>;
+          const taskId = nextLink.task_id ?? previousLink.task_id;
+          const belongsToBoard = taskId ? tasksRef.current.some((task) => task.id === taskId) : payload.eventType === 'DELETE';
+          if (!belongsToBoard) return;
+          setLinks((current) => mergeRealtimeRow(current, payload.eventType, nextLink, previousLink, (first, second) => first.created_at.localeCompare(second.created_at)));
+          noteRealtimeChange();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'columns' }, (payload) => {
+          const nextColumn = payload.new as Partial<BoardColumn>;
+          const previousColumn = payload.old as Partial<BoardColumn>;
+          const belongsToBoard = nextColumn.board_id === boardRef.current?.id
+            || columnsRef.current.some((column) => column.id === (nextColumn.id ?? previousColumn.id));
+          if (!belongsToBoard) return;
+          setColumns((current) => mergeRealtimeRow(current, payload.eventType, nextColumn, previousColumn, (first, second) => Number(first.position) - Number(second.position)));
+          noteRealtimeChange();
+        })
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, (payload) => {
+          const profile = payload.new as { id?: string; display_name?: string; avatar_url?: string | null; specialty?: string; bio?: string };
+          if (!profile.id || !membersRef.current.some((member) => member.user_id === profile.id)) return;
+          setMembers((current) => current.map((member) => member.user_id === profile.id ? {
+            ...member,
+            display_name: profile.display_name ?? member.display_name,
+            avatar_url: Object.prototype.hasOwnProperty.call(profile, 'avatar_url') ? profile.avatar_url ?? null : member.avatar_url,
+            specialty: profile.specialty ?? member.specialty,
+            bio: profile.bio ?? member.bio,
+          } : member));
+          noteRealtimeChange();
+        }));
 
       subscribe(realtimeClient
         .channel(channelName('members'))
@@ -425,19 +539,29 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
       subscribe(realtimeClient
         .channel(channelName('notifications'))
         .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` }, (payload) => {
-          scheduleReload();
-          if (payload.eventType !== 'INSERT') return;
-          const notification = payload.new as AppNotification;
+          const notification = payload.new as Partial<AppNotification>;
+          const previousNotification = payload.old as Partial<AppNotification>;
+          const targetWorkspace = notification.workspace_id ?? previousNotification.workspace_id;
+          if (targetWorkspace === workspace.id) {
+            const merged = mergeRealtimeRow(notificationsRef.current, payload.eventType, notification, previousNotification, (first, second) => second.created_at.localeCompare(first.created_at));
+            setHasMoreNotifications((current) => current || merged.length > notificationLimitRef.current);
+            const visibleNotifications = merged.slice(0, notificationLimitRef.current);
+            notificationsRef.current = visibleNotifications;
+            setInboxNotifications(visibleNotifications);
+            noteRealtimeChange();
+          }
+          if (payload.eventType !== 'INSERT' || !notification.id || !notification.type || !notification.message || !notification.workspace_id) return;
+          const insertedNotification = notification as AppNotification;
           void window.editflow.showNativeNotification({
-            notificationId: notification.id,
-            title: nativeNotificationTitle(notification.type),
-            body: notification.message,
-            taskId: notification.task_id,
-            conversationId: notification.conversation_id,
-            workspaceId: notification.workspace_id,
+            notificationId: insertedNotification.id,
+            title: nativeNotificationTitle(insertedNotification.type),
+            body: insertedNotification.message,
+            taskId: insertedNotification.task_id,
+            conversationId: insertedNotification.conversation_id,
+            workspaceId: insertedNotification.workspace_id,
           });
-          if (notification.workspace_id !== workspace.id) return;
-          setLiveNotification(notification);
+          if (insertedNotification.workspace_id !== workspace.id) return;
+          setLiveNotification(insertedNotification);
           if (notificationTimer.current) clearTimeout(notificationTimer.current);
           notificationTimer.current = setTimeout(() => setLiveNotification(null), 6500);
         }));
@@ -455,7 +579,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     window.addEventListener('focus', handleFocus);
     const reconciliationTimer = window.setInterval(() => {
       if (navigator.onLine && document.visibilityState === 'visible') scheduleReload();
-    }, 5_000);
+    }, 45_000);
 
     return () => {
       disposed = true;
@@ -699,6 +823,11 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     }
   };
 
+  const loadMoreNotifications = async () => {
+    notificationLimitRef.current += 30;
+    await loadBoard(true);
+  };
+
   useEffect(() => window.editflow.onNativeNotificationClicked((target) => {
     if (target.workspaceId !== workspace.id) {
       window.sessionStorage.setItem('editflow:pending-notification', JSON.stringify(target));
@@ -823,6 +952,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                   onOpenNotification={(notification) => void openInboxNotification(notification)}
                   onOpenDeadline={(task) => { setView('board'); setEditor({ mode: 'edit', task }); setShowNotifications(false); }}
                   onMarkAllRead={() => void markAllNotificationsRead()}
+                  hasMore={hasMoreNotifications}
+                  onLoadMore={() => void loadMoreNotifications()}
                   onOpenSettings={() => { setShowNotifications(false); openSettings('application'); }}
                 />
               ) : null}
@@ -1497,6 +1628,8 @@ function TaskEditor({
   const [linkUrl, setLinkUrl] = useState('');
   const [linkCategory, setLinkCategory] = useState<TaskLinkCategory>('download');
   const [activities, setActivities] = useState<TaskActivity[]>([]);
+  const [activityLimit, setActivityLimit] = useState(40);
+  const [hasMoreActivities, setHasMoreActivities] = useState(false);
   const [comments, setComments] = useState<TaskComment[]>([]);
   const [commentBody, setCommentBody] = useState('');
   const [commentKind, setCommentKind] = useState<TaskCommentKind>('change_request');
@@ -1528,7 +1661,7 @@ function TaskEditor({
   const loadReviewData = useCallback(async () => {
     if (!supabase || !task) return;
     const [activityResult, commentResult] = await Promise.all([
-      supabase.from('task_activities').select('*').eq('task_id', task.id).order('created_at', { ascending: false }).limit(60),
+      supabase.from('task_activities').select('*').eq('task_id', task.id).order('created_at', { ascending: false }).limit(activityLimit + 1),
       supabase.from('task_comments').select('*').eq('task_id', task.id).order('created_at', { ascending: true }),
     ]);
     const loadError = activityResult.error ?? commentResult.error;
@@ -1537,9 +1670,11 @@ function TaskEditor({
       return;
     }
     setActivityError(null);
-    setActivities((activityResult.data ?? []) as TaskActivity[]);
+    const nextActivities = (activityResult.data ?? []) as TaskActivity[];
+    setHasMoreActivities(nextActivities.length > activityLimit);
+    setActivities(nextActivities.slice(0, activityLimit));
     setComments((commentResult.data ?? []) as TaskComment[]);
-  }, [task]);
+  }, [activityLimit, task]);
 
   useEffect(() => { void loadReviewData(); }, [loadReviewData]);
 
@@ -1821,6 +1956,7 @@ function TaskEditor({
               })}
               {!activities.length && !activityError ? <p className="no-links">Nenhuma atividade registrada ainda.</p> : null}
             </div>
+            {hasMoreActivities ? <button type="button" className="activity-load-more" onClick={() => setActivityLimit((current) => current + 40)}>Carregar atividades anteriores</button> : null}
           </section>
         ) : null}
 

@@ -26,6 +26,8 @@ type Props = {
   onOpenNotification: (notification: AppNotification) => void;
   onOpenDeadline: (task: Task) => void;
   onMarkAllRead: () => void;
+  hasMore: boolean;
+  onLoadMore: () => void;
   onOpenSettings: () => void;
 };
 
@@ -43,6 +45,8 @@ export function NotificationsMenu({
   onOpenNotification,
   onOpenDeadline,
   onMarkAllRead,
+  hasMore,
+  onLoadMore,
   onOpenSettings,
 }: Props) {
   const [activeCategory, setActiveCategory] = useState<NotificationCategory>('all');
@@ -136,6 +140,12 @@ export function NotificationsMenu({
             <strong>Nada novo por aqui</strong>
             <small>{activeCategory === 'all' ? 'Você está em dia com sua equipe.' : 'Não há notificações nesta categoria.'}</small>
           </div>
+        ) : null}
+
+        {hasMore ? (
+          <button type="button" className="notification-load-more" onClick={onLoadMore}>
+            Carregar notificações anteriores
+          </button>
         ) : null}
       </div>
     </section>

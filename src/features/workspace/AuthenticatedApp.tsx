@@ -16,6 +16,23 @@ type WorkspaceSnapshot = {
 };
 
 const wait = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+const workspaceCacheKey = (userId: string) => `editflow:workspaces:${userId}`;
+
+function readCachedWorkspaces(userId: string): WorkspaceSummary[] {
+  try {
+    const cached = JSON.parse(window.localStorage.getItem(workspaceCacheKey(userId)) ?? '[]') as WorkspaceSummary[];
+    return Array.isArray(cached)
+      ? cached.filter((workspace) => workspace && typeof workspace.id === 'string' && typeof workspace.name === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCachedWorkspaces(userId: string, workspaces: WorkspaceSummary[]) {
+  if (workspaces.length) window.localStorage.setItem(workspaceCacheKey(userId), JSON.stringify(workspaces));
+  else window.localStorage.removeItem(workspaceCacheKey(userId));
+}
 
 export function AuthenticatedApp({ user }: Props) {
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
@@ -38,6 +55,9 @@ export function AuthenticatedApp({ user }: Props) {
   const loadWorkspaces = useCallback(async () => {
     const requestSequence = ++workspaceRequestSequence.current;
     const hadLoadedWorkspace = workspacesRef.current.length > 0;
+    const cachedWorkspaces = readCachedWorkspaces(user.id);
+    const emptyConfirmationTarget = hadLoadedWorkspace || cachedWorkspaces.length ? 5 : 2;
+    const maximumAttempts = emptyConfirmationTarget;
 
     if (!supabase) {
       setError('O Supabase não está configurado neste aplicativo.');
@@ -51,10 +71,20 @@ export function AuthenticatedApp({ user }: Props) {
     let lastError: string | null = null;
     let confirmedEmptyResponses = 0;
 
+    if (!hadLoadedWorkspace) {
+      const { data: currentUser, error: sessionError } = await supabase.auth.getUser();
+      if (requestSequence !== workspaceRequestSequence.current) return;
+      if (sessionError || currentUser.user?.id !== user.id) {
+        setError(sessionError?.message ?? 'A sessão ainda não foi restaurada. Tente novamente.');
+        setWorkspaceLoadState('error');
+        return;
+      }
+    }
+
     // An empty response is checked twice. During session restoration or a
     // short network interruption Supabase can transiently return no visible
     // memberships, which must not be interpreted as a new account.
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
       try {
         const [membershipResult, invitationResult] = await Promise.all([
           supabase.from('workspace_members').select('workspace_id, role').eq('user_id', user.id),
@@ -109,7 +139,7 @@ export function AuthenticatedApp({ user }: Props) {
             }
 
             confirmedEmptyResponses += 1;
-            if (confirmedEmptyResponses >= 2) {
+            if (confirmedEmptyResponses >= emptyConfirmationTarget) {
               snapshot = { workspaces: [], invitations: [] };
               break;
             }
@@ -119,7 +149,7 @@ export function AuthenticatedApp({ user }: Props) {
         lastError = loadException instanceof Error ? loadException.message : 'Falha de conexão ao carregar as equipes.';
       }
 
-      if (attempt < 2) await wait(350 * (attempt + 1));
+      if (attempt < maximumAttempts - 1) await wait(Math.min(1500, 350 * (attempt + 1)));
     }
 
     // Realtime and the initial load may overlap. Only the newest request is
@@ -134,6 +164,7 @@ export function AuthenticatedApp({ user }: Props) {
 
     setInvitations(snapshot.invitations);
     setWorkspaces(snapshot.workspaces);
+    writeCachedWorkspaces(user.id, snapshot.workspaces);
     setActiveWorkspaceId((current) =>
       current && snapshot.workspaces.some((workspace) => workspace.id === current)
         ? current

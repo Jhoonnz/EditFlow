@@ -23,6 +23,7 @@ import { supabase } from '../../lib/supabase';
 import { useAppDialog } from '../../components/AppDialog';
 import { useLatestRequest } from '../../lib/asyncRequest';
 import { useDialogFocus } from '../../lib/useDialogFocus';
+import { fetchAllRows } from '../../lib/paginatedQuery';
 import { paymentFeeRule, paymentMethodLabel } from './paymentFees';
 import type {
   Client,
@@ -92,13 +93,14 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
 
   const loadFinance = useCallback(async (quiet = false) => {
     if (!supabase) return;
+    const client = supabase;
     const requestId = beginFinanceRequest();
     if (!quiet) setLoading(true);
     setError(null);
     const [settingsResult, earningsResult, eventsResult] = await Promise.all([
-      supabase.from('client_billing_settings').select('client_id, workspace_id, currency, pricing_model, amount_usd, bundle_size, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, created_at, updated_at').eq('workspace_id', workspace.id).order('created_at'),
-      supabase.from('earnings').select('id, workspace_id, client_id, source_type, description, item_count, amount_usd, net_amount_usd, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, status, earned_at, received_at, exchange_rate_brl, amount_brl, created_at, updated_at').eq('workspace_id', workspace.id).order('earned_at', { ascending: false }),
-      supabase.from('earning_events').select('id, workspace_id, client_id, task_id, task_title, completed_at, pricing_model, amount_usd, bundle_size, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, earning_id, created_at').eq('workspace_id', workspace.id).order('completed_at', { ascending: false }),
+      fetchAllRows<ClientBillingSetting>(async (from, to) => await client.from('client_billing_settings').select('client_id, workspace_id, currency, pricing_model, amount_usd, bundle_size, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, created_at, updated_at').eq('workspace_id', workspace.id).order('created_at').range(from, to)),
+      fetchAllRows<Earning>(async (from, to) => await client.from('earnings').select('id, workspace_id, client_id, source_type, description, item_count, amount_usd, net_amount_usd, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, status, earned_at, received_at, exchange_rate_brl, amount_brl, created_at, updated_at').eq('workspace_id', workspace.id).order('earned_at', { ascending: false }).range(from, to)),
+      fetchAllRows<EarningEvent>(async (from, to) => await client.from('earning_events').select('id, workspace_id, client_id, task_id, task_title, completed_at, pricing_model, amount_usd, bundle_size, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, earning_id, created_at').eq('workspace_id', workspace.id).order('completed_at', { ascending: false }).range(from, to)),
     ]);
     const loadError = settingsResult.error ?? earningsResult.error ?? eventsResult.error;
     if (!isLatestFinanceRequest(requestId)) return;

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { isActiveTask } from '../../lib/taskStatus';
+import { fetchAllRows } from '../../lib/paginatedQuery';
 import type { AppNotification, Task, WelcomeStartupAction, WorkspaceSummary } from './types';
 
 type SummaryCard = {
@@ -89,9 +90,9 @@ export function WelcomeScreen({
       const now = new Date();
       const soonLimit = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
       const [taskResult, notificationResult, adjustmentResult] = await Promise.all([
-        client.from('tasks').select('*').in('workspace_id', workspaceIds).order('created_at', { ascending: false }),
+        fetchAllRows<Task>(async (from, to) => await client.from('tasks').select('*').in('workspace_id', workspaceIds).order('created_at', { ascending: false }).range(from, to)),
         client.from('notifications').select('*').eq('user_id', user.id).is('read_at', null).order('created_at', { ascending: false }).limit(30),
-        client.from('task_comments').select('task_id').in('workspace_id', workspaceIds).eq('kind', 'change_request').eq('is_resolved', false),
+        fetchAllRows<{ task_id: string }>(async (from, to) => await client.from('task_comments').select('task_id').in('workspace_id', workspaceIds).eq('kind', 'change_request').eq('is_resolved', false).range(from, to)),
       ]);
 
       if (cancelled) return;
@@ -101,7 +102,7 @@ export function WelcomeScreen({
         setLoading(false);
         return;
       }
-      const tasks = (taskResult.data ?? []) as Task[];
+      const tasks = taskResult.data ?? [];
       const activeTasks = tasks.filter(isActiveTask);
       const overdueTasks = activeTasks.filter((task) => task.due_at && new Date(task.due_at) < now);
       const dueSoonTasks = activeTasks.filter((task) => {

@@ -690,7 +690,9 @@ const configureAutoUpdater = () => {
   });
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
-  (autoUpdater as NsisUpdater).disableDifferentialDownload = true;
+  // Prefer blockmap-based differential downloads. electron-updater falls back
+  // to the complete installer when the previous package cannot be reused.
+  (autoUpdater as NsisUpdater).disableDifferentialDownload = false;
 
   // Automatic checks stay silent unless an update is actually found.
   autoUpdater.on('checking-for-update', () => {
