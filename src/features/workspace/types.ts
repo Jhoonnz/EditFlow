@@ -29,6 +29,13 @@ export type WorkspaceInvitation = {
   created_at: string;
 };
 
+export type EditFlowAccountSearchResult = {
+  user_id: string;
+  display_name: string;
+  email: string;
+  avatar_url: string | null;
+};
+
 export type WelcomeStartupAction =
   | { kind: 'board' }
   | { kind: 'notifications'; workspaceId?: string }
@@ -87,12 +94,13 @@ export type Task = {
 };
 
 export type BillingPricingModel = 'per_video' | 'bundle';
+export type BillingCurrency = 'USD' | 'BRL';
 export type PaymentMethod = 'none' | 'paypal_international' | 'wise_ach' | 'wise_wire' | 'custom';
 
 export type ClientBillingSetting = {
   client_id: string;
   workspace_id: string;
-  currency: 'USD';
+  currency: BillingCurrency;
   pricing_model: BillingPricingModel;
   amount_usd: number;
   bundle_size: number;
@@ -113,6 +121,7 @@ export type Earning = {
   source_type: BillingPricingModel | 'manual';
   description: string;
   item_count: number;
+  currency: BillingCurrency;
   amount_usd: number;
   net_amount_usd: number;
   payment_method: PaymentMethod;
@@ -136,6 +145,7 @@ export type EarningEvent = {
   task_title: string;
   completed_at: string;
   pricing_model: BillingPricingModel;
+  currency: BillingCurrency;
   amount_usd: number;
   bundle_size: number;
   payment_method: PaymentMethod;

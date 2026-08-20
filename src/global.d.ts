@@ -50,12 +50,48 @@ type EditFlowUsdBrlRate = {
   stale: boolean;
 };
 
+type EditFlowFinancialReportRow = {
+  client: string;
+  description: string;
+  date: string;
+  source: string;
+  currency: 'USD' | 'BRL';
+  gross: number;
+  fees: number;
+  net: number;
+  netBrl: number | null;
+  status: 'pending' | 'received';
+};
+
+type EditFlowFinancialReport = {
+  workspaceName: string;
+  month: string;
+  monthLabel: string;
+  generatedAt: string;
+  usdBrlRate: number | null;
+  totals: {
+    grossBrl: number | null;
+    feesBrl: number | null;
+    netBrl: number | null;
+    receivedBrl: number;
+    pendingBrl: number | null;
+    entries: number;
+  };
+  rows: EditFlowFinancialReportRow[];
+};
+
+type EditFlowFinancialReportResult = {
+  cancelled: boolean;
+  filePath?: string;
+};
+
 interface Window {
   editflow: {
     platform: string;
     openExternal: (url: string) => Promise<boolean>;
     getVersion: () => Promise<string>;
     getUsdBrlRate: () => Promise<EditFlowUsdBrlRate>;
+    exportFinancialReport: (report: EditFlowFinancialReport) => Promise<EditFlowFinancialReportResult>;
     getUserActivity: () => Promise<'active' | 'away'>;
     checkForUpdates: () => Promise<boolean>;
     installUpdate: () => Promise<void>;

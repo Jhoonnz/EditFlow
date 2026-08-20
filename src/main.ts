@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification as ElectronNotification, powerMonitor, shell, Tray } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification as ElectronNotification, powerMonitor, shell, Tray } from 'electron';
 import { autoUpdater, type NsisUpdater } from 'electron-updater';
 import { spawn } from 'node:child_process';
 import { access, appendFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
@@ -151,6 +151,115 @@ const getUsdBrlRate = async (): Promise<UsdBrlRate> => {
     if (cached) return { ...cached, stale: true };
     throw error;
   }
+};
+
+const escapeReportHtml = (value: string) => value
+  .replaceAll('&', '&amp;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;')
+  .replaceAll('"', '&quot;')
+  .replaceAll("'", '&#039;');
+
+const reportCurrency = (value: number, currency: 'USD' | 'BRL') => new Intl.NumberFormat(
+  currency === 'BRL' ? 'pt-BR' : 'en-US',
+  { style: 'currency', currency },
+).format(value);
+
+const reportBrl = (value: number | null) => value === null
+  ? 'Indisponível'
+  : new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+
+const validReportNumber = (value: unknown, nullable = false) => (
+  (nullable && value === null)
+  || (typeof value === 'number' && Number.isFinite(value))
+);
+
+const isFinancialReport = (value: unknown): value is EditFlowFinancialReport => {
+  if (!value || typeof value !== 'object') return false;
+  const report = value as Partial<EditFlowFinancialReport>;
+  if (typeof report.workspaceName !== 'string'
+    || typeof report.month !== 'string'
+    || !/^\d{4}-\d{2}$/.test(report.month)
+    || typeof report.monthLabel !== 'string'
+    || typeof report.generatedAt !== 'string'
+    || !validReportNumber(report.usdBrlRate, true)
+    || !report.totals
+    || !Array.isArray(report.rows)
+    || report.rows.length > 10_000) return false;
+  const totals = report.totals;
+  if (!validReportNumber(totals.grossBrl, true)
+    || !validReportNumber(totals.feesBrl, true)
+    || !validReportNumber(totals.netBrl, true)
+    || !validReportNumber(totals.receivedBrl)
+    || !validReportNumber(totals.pendingBrl, true)
+    || !validReportNumber(totals.entries)) return false;
+  return report.rows.every((row) => row
+    && typeof row.client === 'string'
+    && typeof row.description === 'string'
+    && typeof row.date === 'string'
+    && typeof row.source === 'string'
+    && (row.currency === 'USD' || row.currency === 'BRL')
+    && validReportNumber(row.gross)
+    && validReportNumber(row.fees)
+    && validReportNumber(row.net)
+    && validReportNumber(row.netBrl, true)
+    && (row.status === 'pending' || row.status === 'received'));
+};
+
+const financialReportHtml = (report: EditFlowFinancialReport) => {
+  const rows = report.rows.map((row) => `
+    <tr>
+      <td><strong>${escapeReportHtml(row.client)}</strong><small>${escapeReportHtml(row.description)} · ${escapeReportHtml(row.source)}</small></td>
+      <td>${escapeReportHtml(row.date)}</td>
+      <td><span class="currency">${row.currency}</span>${escapeReportHtml(reportCurrency(row.gross, row.currency))}</td>
+      <td>${escapeReportHtml(reportCurrency(row.fees, row.currency))}</td>
+      <td><strong>${escapeReportHtml(reportBrl(row.netBrl))}</strong><small>${escapeReportHtml(reportCurrency(row.net, row.currency))} líquido</small></td>
+      <td><span class="status ${row.status}">${row.status === 'received' ? 'Recebido' : 'Pendente'}</span></td>
+    </tr>`).join('');
+  return `<!doctype html>
+  <html lang="pt-BR"><head><meta charset="utf-8"><style>
+    @page { size: A4 landscape; margin: 12mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #2d2b38; background: #fff; font-family: "Segoe UI", Arial, sans-serif; font-size: 9.5px; }
+    header { display: flex; align-items: flex-end; justify-content: space-between; padding: 4px 2px 16px; border-bottom: 2px solid #6557cb; }
+    .brand { display: flex; align-items: center; gap: 11px; }
+    .logo { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; background: linear-gradient(145deg,#6d5ee1,#2d247d); color: #fff; font-size: 17px; font-weight: 800; }
+    h1 { margin: 0 0 2px; font-size: 18px; letter-spacing: -.4px; }
+    header p, header small { margin: 0; color: #807c8d; }
+    .period { text-align: right; }
+    .period strong { display: block; margin-bottom: 3px; color: #5e52bd; font-size: 13px; text-transform: capitalize; }
+    .summary { display: grid; grid-template-columns: repeat(5,1fr); gap: 8px; margin: 15px 0; }
+    .summary article { min-height: 62px; padding: 10px; border: 1px solid #e7e3ef; border-radius: 10px; background: linear-gradient(145deg,#faf9ff,#f5f4fa); }
+    .summary span { display: block; margin-bottom: 7px; color: #8b8796; font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
+    .summary strong { color: #35323f; font-size: 13px; }
+    .summary article.net { border-color: #d8d1ff; background: linear-gradient(145deg,#f2efff,#eae7ff); }
+    .summary article.net strong { color: #5546b6; }
+    table { width: 100%; border-collapse: separate; border-spacing: 0; overflow: hidden; border: 1px solid #e4e1e9; border-radius: 10px; }
+    thead { display: table-header-group; }
+    th { padding: 8px 9px; background: #f1eff5; color: #777280; font-size: 7.5px; text-align: left; text-transform: uppercase; letter-spacing: .45px; }
+    td { padding: 8px 9px; border-top: 1px solid #ece9f0; vertical-align: middle; }
+    tbody tr { break-inside: avoid; }
+    td:first-child { width: 31%; }
+    td strong, td small { display: block; }
+    td small { margin-top: 2px; color: #8d8995; font-size: 7.8px; }
+    .currency { display: inline-block; margin-right: 5px; padding: 2px 4px; border-radius: 4px; background: #ece9fb; color: #6257b5; font-size: 7px; font-weight: 800; }
+    .status { display: inline-block; padding: 4px 7px; border-radius: 99px; font-size: 7.5px; font-weight: 700; }
+    .status.received { background: #e6f7ee; color: #33835a; }
+    .status.pending { background: #fff1dc; color: #a36a17; }
+    .empty { padding: 34px; border: 1px dashed #d9d5df; border-radius: 10px; color: #918d99; text-align: center; }
+    footer { display: flex; justify-content: space-between; margin-top: 12px; padding: 8px 2px 0; border-top: 1px solid #ece9f0; color: #8c8894; font-size: 7.5px; }
+  </style></head><body>
+    <header><div class="brand"><div class="logo">E</div><div><h1>EditFlow</h1><p>${escapeReportHtml(report.workspaceName)} · Relatório financeiro mensal</p></div></div><div class="period"><strong>${escapeReportHtml(report.monthLabel)}</strong><small>Gerado em ${escapeReportHtml(report.generatedAt)}</small></div></header>
+    <section class="summary">
+      <article><span>Faturamento bruto</span><strong>${escapeReportHtml(reportBrl(report.totals.grossBrl))}</strong></article>
+      <article><span>Taxas estimadas</span><strong>${escapeReportHtml(reportBrl(report.totals.feesBrl))}</strong></article>
+      <article class="net"><span>Líquido do mês</span><strong>${escapeReportHtml(reportBrl(report.totals.netBrl))}</strong></article>
+      <article><span>Já recebido</span><strong>${escapeReportHtml(reportBrl(report.totals.receivedBrl))}</strong></article>
+      <article><span>Pendente</span><strong>${escapeReportHtml(reportBrl(report.totals.pendingBrl))}</strong></article>
+    </section>
+    ${report.rows.length ? `<table><thead><tr><th>Cliente / lançamento</th><th>Data</th><th>Bruto original</th><th>Taxas</th><th>Líquido</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="empty">Nenhum lançamento registrado no período.</div>'}
+    <footer><span>${report.totals.entries} lançamento(s) no período</span><span>${report.usdBrlRate ? `Cotação de referência: USD 1 = ${reportBrl(report.usdBrlRate)}` : 'Sem conversão USD/BRL disponível'} · Valores recebidos usam o valor real registrado.</span></footer>
+  </body></html>`;
 };
 
 const readDesktopPreferences = async () => {
@@ -623,6 +732,42 @@ ipcMain.handle('auth:get-pending-callback', () => {
   return callback;
 });
 ipcMain.handle('system:get-usd-brl-rate', () => getUsdBrlRate());
+ipcMain.handle('finance:export-pdf', async (_event, value: unknown) => {
+  if (!isFinancialReport(value)) throw new Error('Os dados do relatório financeiro são inválidos.');
+
+  const defaultName = `EditFlow-Relatorio-${value.month}.pdf`;
+  const saveOptions = {
+    title: 'Exportar relatório financeiro',
+    defaultPath: path.join(app.getPath('documents'), defaultName),
+    filters: [{ name: 'Documento PDF', extensions: ['pdf'] }],
+    properties: ['createDirectory', 'showOverwriteConfirmation'] as Array<'createDirectory' | 'showOverwriteConfirmation'>,
+  };
+  const selection = mainWindow && !mainWindow.isDestroyed()
+    ? await dialog.showSaveDialog(mainWindow, saveOptions)
+    : await dialog.showSaveDialog(saveOptions);
+  if (selection.canceled || !selection.filePath) return { cancelled: true };
+
+  const reportWindow = new BrowserWindow({
+    show: false,
+    width: 1200,
+    height: 800,
+    webPreferences: { sandbox: true },
+  });
+  try {
+    const html = financialReportHtml(value);
+    await reportWindow.loadURL(`data:text/html;charset=UTF-8,${encodeURIComponent(html)}`);
+    const pdf = await reportWindow.webContents.printToPDF({
+      pageSize: 'A4',
+      landscape: true,
+      printBackground: true,
+      preferCSSPageSize: true,
+    });
+    await writeFile(selection.filePath, pdf);
+    return { cancelled: false, filePath: selection.filePath };
+  } finally {
+    if (!reportWindow.isDestroyed()) reportWindow.destroy();
+  }
+});
 ipcMain.handle('system:get-user-activity', () => {
   const state = powerMonitor.getSystemIdleState(300);
   return state === 'idle' || state === 'locked' ? 'away' : 'active';

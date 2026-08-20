@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   CircleDollarSign,
   Clock3,
+  FileDown,
   FilePlus2,
   LoaderCircle,
   Pencil,
@@ -28,6 +29,7 @@ import { paymentFeeRule, paymentMethodLabel } from './paymentFees';
 import type {
   Client,
   ClientBillingSetting,
+  BillingCurrency,
   Earning,
   EarningEvent,
   PaymentMethod,
@@ -44,6 +46,7 @@ type Props = {
 type ManualEarningDraft = {
   clientId: string;
   description: string;
+  currency: BillingCurrency;
   amountUsd: string;
   earnedDate: string;
   paymentMethod: PaymentMethod;
@@ -70,6 +73,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
   const [manualEditor, setManualEditorState] = useState<Earning | 'new' | null>(null);
   const [manualDraft, setManualDraft] = useState<ManualEarningDraft>(() => emptyManualDraft());
   const [syncing, setSyncing] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
   const setManualEditor = (value: Earning | 'new' | null) => {
     if (saving && value === null) return;
@@ -99,8 +103,8 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     setError(null);
     const [settingsResult, earningsResult, eventsResult] = await Promise.all([
       fetchAllRows<ClientBillingSetting>(async (from, to) => await client.from('client_billing_settings').select('client_id, workspace_id, currency, pricing_model, amount_usd, bundle_size, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, created_at, updated_at').eq('workspace_id', workspace.id).order('created_at').range(from, to)),
-      fetchAllRows<Earning>(async (from, to) => await client.from('earnings').select('id, workspace_id, client_id, source_type, description, item_count, amount_usd, net_amount_usd, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, status, earned_at, received_at, exchange_rate_brl, amount_brl, created_at, updated_at').eq('workspace_id', workspace.id).order('earned_at', { ascending: false }).range(from, to)),
-      fetchAllRows<EarningEvent>(async (from, to) => await client.from('earning_events').select('id, workspace_id, client_id, task_id, task_title, completed_at, pricing_model, amount_usd, bundle_size, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, earning_id, created_at').eq('workspace_id', workspace.id).order('completed_at', { ascending: false }).range(from, to)),
+      fetchAllRows<Earning>(async (from, to) => await client.from('earnings').select('id, workspace_id, client_id, source_type, description, item_count, currency, amount_usd, net_amount_usd, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, status, earned_at, received_at, exchange_rate_brl, amount_brl, created_at, updated_at').eq('workspace_id', workspace.id).order('earned_at', { ascending: false }).range(from, to)),
+      fetchAllRows<EarningEvent>(async (from, to) => await client.from('earning_events').select('id, workspace_id, client_id, task_id, task_title, completed_at, pricing_model, currency, amount_usd, bundle_size, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, earning_id, created_at').eq('workspace_id', workspace.id).order('completed_at', { ascending: false }).range(from, to)),
     ]);
     const loadError = settingsResult.error ?? earningsResult.error ?? eventsResult.error;
     if (!isLatestFinanceRequest(requestId)) return;
@@ -144,16 +148,19 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
   }, [loadFinance, migrationMissing, workspace.id]);
 
   const monthlyEarnings = useMemo(() => earnings.filter((earning) => monthKey(earning.earned_at) === month), [earnings, month]);
-  const grossUsd = sum(monthlyEarnings.map((earning) => earning.amount_usd));
-  const netUsd = sum(monthlyEarnings.map((earning) => earning.net_amount_usd));
-  const feeUsd = grossUsd - netUsd;
+  const usdEarnings = monthlyEarnings.filter((earning) => earning.currency === 'USD');
+  const brlEarnings = monthlyEarnings.filter((earning) => earning.currency === 'BRL');
+  const grossUsd = sum(usdEarnings.map((earning) => earning.amount_usd));
+  const netUsd = sum(usdEarnings.map((earning) => earning.net_amount_usd));
+  const netNativeBrl = sum(brlEarnings.map((earning) => earning.net_amount_usd));
   const pendingEarnings = monthlyEarnings.filter((earning) => earning.status === 'pending');
   const receivedEarnings = monthlyEarnings.filter((earning) => earning.status === 'received');
   const receivedBrl = sum(receivedEarnings.map((earning) => earning.amount_brl ?? 0));
-  const pendingNetUsd = sum(pendingEarnings.map((earning) => earning.net_amount_usd));
-  const grossBrl = rate ? grossUsd * rate.rate : null;
-  const feeBrl = rate ? feeUsd * rate.rate : null;
-  const expectedNetBrl = rate ? receivedBrl + pendingNetUsd * rate.rate : null;
+  const pendingNetBrl = totalEarningsBrl(pendingEarnings, (earning) => earning.net_amount_usd, rate);
+  const grossBrl = totalEarningsBrl(monthlyEarnings, (earning) => earning.amount_usd, rate);
+  const feeBrl = totalEarningsBrl(monthlyEarnings, (earning) => earning.amount_usd - earning.net_amount_usd, rate);
+  const expectedNetBrl = pendingNetBrl === null ? null : receivedBrl + pendingNetBrl;
+  const nativeNetSummary = [grossUsd ? formatUsd(netUsd) : '', netNativeBrl ? formatBrl(netNativeBrl) : ''].filter(Boolean).join(' + ');
   const clientSummaries = useMemo(() => clients.map((client) => {
     const clientEarnings = monthlyEarnings.filter((earning) => earning.client_id === client.id);
     const setting = settings.find((item) => item.client_id === client.id);
@@ -161,12 +168,12 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     return {
       client,
       setting,
-      grossUsd: sum(clientEarnings.map((earning) => earning.amount_usd)),
-      netUsd: sum(clientEarnings.map((earning) => earning.net_amount_usd)),
+      grossBrl: totalEarningsBrl(clientEarnings, (earning) => earning.amount_usd, rate),
+      netBrl: totalNetEarningsBrl(clientEarnings, rate),
       itemCount: sum(clientEarnings.map((earning) => earning.item_count)),
       pendingItems: unallocated.length,
     };
-  }).filter((summary) => summary.setting || summary.grossUsd), [clients, events, monthlyEarnings, settings]);
+  }).filter((summary) => summary.setting || summary.grossBrl), [clients, events, monthlyEarnings, rate, settings]);
   const completedMonthTasks = useMemo(() => tasks.filter((task) => task.completed_at && monthKey(task.completed_at) === month), [month, tasks]);
   const deliveryIssues = useMemo(() => completedMonthTasks.flatMap((task) => {
     const event = events.find((item) => item.task_id === task.id);
@@ -197,6 +204,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     setManualDraft({
       clientId: earning.client_id ?? '',
       description: earning.description,
+      currency: earning.currency,
       amountUsd: String(earning.amount_usd),
       earnedDate: earning.earned_at.slice(0, 10),
       paymentMethod: earning.payment_method,
@@ -213,10 +221,11 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     setManualDraft((current) => setting ? {
       ...current,
       clientId,
+      currency: setting.currency,
       paymentMethod: setting.payment_method,
       feePercent: String(setting.fee_percent),
       feeFixedUsd: String(setting.fee_fixed_usd),
-      conversionSpreadPercent: String(setting.conversion_spread_percent),
+      conversionSpreadPercent: String(setting.currency === 'BRL' ? 0 : setting.conversion_spread_percent),
     } : { ...current, clientId });
   };
 
@@ -231,6 +240,18 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     }));
   };
 
+  const applyManualCurrency = (currency: BillingCurrency) => {
+    setManualDraft((current) => ({
+      ...current,
+      currency,
+      paymentMethod: currency === 'BRL' ? 'none' : current.paymentMethod,
+      feePercent: currency === 'BRL' ? '0' : current.feePercent,
+      feeFixedUsd: currency === 'BRL' ? '0' : current.feeFixedUsd,
+      conversionSpreadPercent: currency === 'BRL' ? '0' : current.conversionSpreadPercent,
+      actualAmountBrl: current.status === 'received' && currency === 'BRL' ? current.amountUsd : current.actualAmountBrl,
+    }));
+  };
+
   const saveManualEarning = async () => {
     if (!supabase || !manualEditor) return;
     const amountUsd = Number(manualDraft.amountUsd.replace(',', '.'));
@@ -239,7 +260,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     const conversionSpreadPercent = Number(manualDraft.conversionSpreadPercent.replace(',', '.'));
     const actualAmountBrl = manualDraft.actualAmountBrl ? Number(manualDraft.actualAmountBrl.replace(',', '.')) : null;
     if (!manualDraft.description.trim()) return setError('Digite uma descrição para o lançamento.');
-    if (!Number.isFinite(amountUsd) || amountUsd <= 0) return setError('Informe um valor bruto em dólar maior que zero.');
+    if (!Number.isFinite(amountUsd) || amountUsd <= 0) return setError(`Informe um valor bruto em ${manualDraft.currency === 'BRL' ? 'real' : 'dólar'} maior que zero.`);
     if (![feePercent, feeFixedUsd, conversionSpreadPercent].every(Number.isFinite)) return setError('Revise os valores das taxas.');
     if (manualDraft.status === 'received' && (!actualAmountBrl || actualAmountBrl <= 0)) return setError('Informe quanto realmente caiu em reais.');
     setSaving(true);
@@ -248,12 +269,13 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     const commonValues = {
       client_target: manualDraft.clientId || null,
       earning_description: manualDraft.description.trim(),
+      earning_currency: manualDraft.currency,
       gross_amount_usd: amountUsd,
       earning_date: new Date(`${manualDraft.earnedDate}T12:00:00`).toISOString(),
       earning_payment_method: manualDraft.paymentMethod,
       earning_fee_percent: feePercent,
       earning_fee_fixed_usd: feeFixedUsd,
-      earning_conversion_spread_percent: conversionSpreadPercent,
+      earning_conversion_spread_percent: manualDraft.currency === 'BRL' ? 0 : conversionSpreadPercent,
       mark_as_received: manualDraft.status === 'received',
       actual_amount_brl: actualAmountBrl,
     };
@@ -299,7 +321,10 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
 
   const openReceiveDialog = (earning: Earning) => {
     setReceivingEarning(earning);
-    setActualReceivedBrl(rate ? String(roundCurrency(earning.net_amount_usd * rate.rate)).replace('.', ',') : '');
+    const estimatedBrl = earning.currency === 'BRL'
+      ? earning.net_amount_usd
+      : (rate ? earning.net_amount_usd * rate.rate : null);
+    setActualReceivedBrl(estimatedBrl === null ? '' : String(roundCurrency(estimatedBrl)).replace('.', ','));
     setError(null);
   };
 
@@ -312,7 +337,9 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     const { error: updateError } = await supabase.from('earnings').update({
       status: 'received',
       received_at: new Date().toISOString(),
-      exchange_rate_brl: receivingEarning.net_amount_usd > 0
+      exchange_rate_brl: receivingEarning.currency === 'BRL'
+        ? 1
+        : receivingEarning.net_amount_usd > 0
         ? roundRate(amountBrl / receivingEarning.net_amount_usd)
         : (rate?.rate ?? 1),
       amount_brl: roundCurrency(amountBrl),
@@ -338,6 +365,50 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     await loadFinance(true);
   };
 
+  const exportMonthlyReport = async () => {
+    if (exporting) return;
+    setExporting(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const result = await window.editflow.exportFinancialReport({
+        workspaceName: workspace.name,
+        month,
+        monthLabel: formatMonth(month),
+        generatedAt: new Intl.DateTimeFormat('pt-BR', { dateStyle: 'long', timeStyle: 'short' }).format(new Date()),
+        usdBrlRate: rate?.rate ?? null,
+        totals: {
+          grossBrl,
+          feesBrl: feeBrl,
+          netBrl: expectedNetBrl,
+          receivedBrl,
+          pendingBrl: pendingNetBrl,
+          entries: monthlyEarnings.length,
+        },
+        rows: monthlyEarnings.map((earning) => {
+          const client = clients.find((item) => item.id === earning.client_id);
+          return {
+            client: client?.name || (earning.source_type === 'manual' ? 'Lançamento avulso' : 'Cliente removido'),
+            description: earning.description,
+            date: new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(earning.earned_at)),
+            source: earningSourceLabel(earning.source_type),
+            currency: earning.currency,
+            gross: earning.amount_usd,
+            fees: earning.amount_usd - earning.net_amount_usd,
+            net: earning.net_amount_usd,
+            netBrl: earningNetBrl(earning, rate),
+            status: earning.status,
+          };
+        }),
+      });
+      if (!result.cancelled) setSuccess(`Relatório de ${formatMonth(month)} exportado em PDF.`);
+    } catch (exportError) {
+      setError(exportError instanceof Error ? exportError.message : 'Não foi possível exportar o relatório em PDF.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   if (loading) return <div className="finance-loading"><LoaderCircle className="spinner" size={24} />Carregando ganhos…</div>;
 
   if (migrationMissing) {
@@ -345,7 +416,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
       <div className="finance-view finance-empty-state">
         <span><WalletCards size={25} /></span>
         <h2>Ative o módulo financeiro</h2>
-        <p>Execute as migrations <strong>012_financial_tracking.sql</strong> e <strong>013_payment_fees.sql</strong> no SQL Editor do Supabase. Depois, volte aqui e tente novamente.</p>
+        <p>Execute as migrations financeiras pendentes, incluindo <strong>020_financial_currencies.sql</strong>, no SQL Editor do Supabase. Depois, volte aqui e tente novamente.</p>
         <button className="secondary-button" onClick={() => void loadFinance()}><RefreshCw size={15} />Tentar novamente</button>
       </div>
     );
@@ -357,7 +428,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
         <div className="finance-hero-copy">
           <p>VISÃO FINANCEIRA</p>
           <h2>{expectedNetBrl === null ? 'Cotação indisponível' : formatBrl(expectedNetBrl)}</h2>
-          <span>Líquido estimado em {formatMonth(month)} · {formatUsd(netUsd)} após taxas</span>
+          <span>Líquido estimado em {formatMonth(month)}{nativeNetSummary ? ` · ${nativeNetSummary} nas moedas originais` : ''}</span>
         </div>
         <div className="finance-rate-card">
           <span><TrendingUp size={17} /></span>
@@ -365,27 +436,27 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
           <button aria-label="Atualizar cotação" onClick={() => void loadRate()} disabled={rateLoading}><RefreshCw className={rateLoading ? 'spinner' : ''} size={15} /></button>
         </div>
         <label className="finance-month"><span>Mês</span><input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label>
-        <div className="finance-hero-actions"><button className="secondary-button" disabled={syncing} onClick={() => void synchronizeEarnings()}>{syncing ? <LoaderCircle className="spinner" size={14} /> : <RefreshCw size={14} />}Sincronizar</button><button className="primary-button" onClick={() => openManualEditor()}><Plus size={14} />Novo lançamento</button></div>
+        <div className="finance-hero-actions"><button className="secondary-button" disabled={exporting} onClick={() => void exportMonthlyReport()}>{exporting ? <LoaderCircle className="spinner" size={14} /> : <FileDown size={14} />}Exportar PDF</button><button className="secondary-button" disabled={syncing} onClick={() => void synchronizeEarnings()}>{syncing ? <LoaderCircle className="spinner" size={14} /> : <RefreshCw size={14} />}Sincronizar</button><button className="primary-button" onClick={() => openManualEditor()}><Plus size={14} />Novo lançamento</button></div>
       </section>
 
       {error ? <div className="panel-error finance-error">{error}</div> : null}
       {success ? <div className="panel-success finance-success"><CheckCircle2 size={15} />{success}</div> : null}
 
       <section className="finance-metrics">
-        <article><span className="purple"><BadgeDollarSign size={18} /></span><div><small>Faturamento bruto</small><strong>{grossBrl === null ? '—' : formatBrl(grossBrl)}</strong><em>{formatUsd(grossUsd)}</em></div></article>
-        <article><span className="orange"><ReceiptText size={18} /></span><div><small>Taxas estimadas</small><strong>{feeBrl === null ? '—' : `-${formatBrl(feeBrl)}`}</strong><em>-{formatUsd(feeUsd)}</em></div></article>
-        <article><span className="blue"><CircleDollarSign size={18} /></span><div><small>Líquido estimado</small><strong>{expectedNetBrl === null ? '—' : formatBrl(expectedNetBrl)}</strong><em>{formatUsd(netUsd)}</em></div></article>
+        <article><span className="purple"><BadgeDollarSign size={18} /></span><div><small>Faturamento bruto</small><strong>{grossBrl === null ? '—' : formatBrl(grossBrl)}</strong><em>{monthlyEarnings.length} lançamentos</em></div></article>
+        <article><span className="orange"><ReceiptText size={18} /></span><div><small>Taxas estimadas</small><strong>{feeBrl === null ? '—' : `-${formatBrl(feeBrl)}`}</strong><em>USD e BRL consolidados</em></div></article>
+        <article><span className="blue"><CircleDollarSign size={18} /></span><div><small>Líquido estimado</small><strong>{expectedNetBrl === null ? '—' : formatBrl(expectedNetBrl)}</strong><em>{nativeNetSummary || 'Sem lançamentos'}</em></div></article>
         <article><span className="green"><Banknote size={18} /></span><div><small>Recebido</small><strong>{formatBrl(receivedBrl)}</strong><em>{receivedEarnings.length} pagamentos</em></div></article>
       </section>
 
       <section className="finance-card client-earnings-card finance-client-summary">
           <header><span><WalletCards size={18} /></span><div><h3>Resumo por cliente</h3><p>Valores gerados no mês selecionado. Configure o pagamento ao criar ou editar um cliente.</p></div></header>
           <div className="client-earning-list">
-            {clientSummaries.map(({ client, setting, grossUsd: clientGrossUsd, netUsd: clientNetUsd, itemCount, pendingItems }) => (
+            {clientSummaries.map(({ client, setting, grossBrl: clientGrossBrl, netBrl: clientNetBrl, itemCount, pendingItems }) => (
               <article key={client.id}>
                 <span className="finance-client-avatar">{client.youtube_thumbnail_url ? <img src={client.youtube_thumbnail_url} alt={`Canal de ${client.name}`} /> : client.name.slice(0,1).toUpperCase()}</span>
                 <div><strong>{client.name}</strong><small>{setting ? billingDescription(setting) : 'Sem configuração atual'}{setting?.pricing_model === 'bundle' && pendingItems ? ` · ${pendingItems}/${setting.bundle_size} no próximo pacote` : ''}</small></div>
-                <em>{rate ? formatBrl(clientNetUsd * rate.rate) : formatUsd(clientNetUsd)}<small>líquido · bruto {formatUsd(clientGrossUsd)} · {itemCount} vídeos</small></em>
+                <em>{clientNetBrl === null ? '—' : formatBrl(clientNetBrl)}<small>líquido · bruto {clientGrossBrl === null ? '—' : formatBrl(clientGrossBrl)} · {itemCount} vídeos</small></em>
               </article>
             ))}
             {!clientSummaries.length ? <div className="finance-list-empty">Configure o primeiro cliente para começar a contabilizar as entregas.</div> : null}
@@ -406,13 +477,13 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
           <div className="earnings-table-head"><span>Cliente / lançamento</span><span>Data</span><span>Valor</span><span>Status / ações</span></div>
           {monthlyEarnings.map((earning) => {
             const client = clients.find((item) => item.id === earning.client_id);
-            const displayBrl = earning.status === 'received' ? earning.amount_brl : (rate ? earning.net_amount_usd * rate.rate : null);
-            const earningFeeUsd = earning.amount_usd - earning.net_amount_usd;
+            const displayBrl = earningNetBrl(earning, rate);
+            const earningFee = earning.amount_usd - earning.net_amount_usd;
             return (
               <article key={earning.id}>
                 <div><strong>{client?.name || (earning.source_type === 'manual' ? 'Lançamento avulso' : 'Cliente removido')}<i className={`earning-source ${earning.source_type}`}>{earningSourceLabel(earning.source_type)}</i></strong><small>{earning.description} · {paymentMethodLabel(earning.payment_method)}{earning.source_type !== 'manual' ? ` · ${earning.item_count} ${earning.item_count === 1 ? 'vídeo' : 'vídeos'}` : ''}</small></div>
                 <span>{formatCompactDate(earning.earned_at)}</span>
-                <div className="earning-value"><strong>{displayBrl === null ? '—' : formatBrl(displayBrl)}</strong><small>líquido {formatUsd(earning.net_amount_usd)} · bruto {formatUsd(earning.amount_usd)} · taxas {formatUsd(earningFeeUsd)}{earning.exchange_rate_brl ? ` · câmbio efetivo ${formatRate(earning.exchange_rate_brl)}` : ''}</small></div>
+                <div className="earning-value"><strong>{displayBrl === null ? '—' : formatBrl(displayBrl)}</strong><small>{earning.currency} · líquido {formatMoney(earning.net_amount_usd, earning.currency)} · bruto {formatMoney(earning.amount_usd, earning.currency)} · taxas {formatMoney(earningFee, earning.currency)}{earning.currency === 'USD' && earning.exchange_rate_brl ? ` · câmbio efetivo ${formatRate(earning.exchange_rate_brl)}` : ''}</small></div>
                 <div className="earning-row-actions">{earning.status === 'received'
                   ? <button className="earning-status received" disabled={saving} onClick={() => void reopenEarning(earning)}><CheckCircle2 size={13} />Recebido</button>
                   : <button className="earning-status pending" disabled={saving} onClick={() => openReceiveDialog(earning)}><Clock3 size={13} />Marcar recebido</button>}{earning.source_type === 'manual' ? <><button className="earning-icon-action" onClick={() => openManualEditor(earning)} aria-label="Editar lançamento"><Pencil size={13} /></button><button className="earning-icon-action danger" onClick={() => void deleteManualEarning(earning)} aria-label="Excluir lançamento"><Trash2 size={13} /></button></> : null}</div>
@@ -423,13 +494,34 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
         </div>
       </section>
 
-      {manualEditor ? <div className="manual-earning-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setManualEditor(null); }}><section className="manual-earning-dialog" role="dialog" aria-modal="true" aria-labelledby="manual-earning-title"><header><span><FilePlus2 size={18} /></span><div><h3 id="manual-earning-title">{manualEditor === 'new' ? 'Novo lançamento' : 'Editar lançamento'}</h3><p>Registre bônus, extras ou trabalhos que não vieram de uma tarefa.</p></div><button onClick={() => setManualEditor(null)} aria-label="Fechar"><X size={17} /></button></header><div className="manual-earning-grid"><label><span>Cliente</span><select value={manualDraft.clientId} onChange={(event) => applyManualClient(event.target.value)}><option value="">Sem cliente específico</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label><span>Data do lançamento</span><input type="date" value={manualDraft.earnedDate} onChange={(event) => setManualDraft({ ...manualDraft, earnedDate: event.target.value })} /></label><label className="wide"><span>Descrição</span><input maxLength={300} value={manualDraft.description} onChange={(event) => setManualDraft({ ...manualDraft, description: event.target.value })} placeholder="Ex.: Bônus do projeto especial" /></label><label><span>Valor bruto</span><div className="manual-money-input"><b>US$</b><input inputMode="decimal" value={manualDraft.amountUsd} onChange={(event) => setManualDraft({ ...manualDraft, amountUsd: event.target.value })} placeholder="0.00" /></div></label><label><span>Meio de pagamento</span><select value={manualDraft.paymentMethod} onChange={(event) => applyManualPaymentMethod(event.target.value as PaymentMethod)}><option value="none">Sem taxas</option><option value="paypal_international">PayPal internacional</option><option value="wise_ach">Wise ACH</option><option value="wise_wire">Wise Wire</option><option value="custom">Taxa personalizada</option></select></label><label><span>Taxa percentual</span><div className="manual-money-input"><input inputMode="decimal" value={manualDraft.feePercent} onChange={(event) => setManualDraft({ ...manualDraft, feePercent: event.target.value })} /><b>%</b></div></label><label><span>Taxa fixa</span><div className="manual-money-input"><b>US$</b><input inputMode="decimal" value={manualDraft.feeFixedUsd} onChange={(event) => setManualDraft({ ...manualDraft, feeFixedUsd: event.target.value })} /></div></label><label><span>Spread de conversão</span><div className="manual-money-input"><input inputMode="decimal" value={manualDraft.conversionSpreadPercent} onChange={(event) => setManualDraft({ ...manualDraft, conversionSpreadPercent: event.target.value })} /><b>%</b></div></label><label><span>Status</span><select value={manualDraft.status} onChange={(event) => setManualDraft({ ...manualDraft, status: event.target.value as 'pending' | 'received' })}><option value="pending">Pendente</option><option value="received">Recebido</option></select></label>{manualDraft.status === 'received' ? <label className="wide"><span>Valor real recebido</span><div className="manual-money-input received"><b>R$</b><input inputMode="decimal" value={manualDraft.actualAmountBrl} onChange={(event) => setManualDraft({ ...manualDraft, actualAmountBrl: event.target.value })} placeholder="0,00" /></div></label> : null}</div>{error ? <div className="panel-error manual-earning-error">{error}</div> : null}<footer><button className="secondary-button" disabled={saving} onClick={() => setManualEditor(null)}>Cancelar</button><button className="primary-button" disabled={saving} onClick={() => void saveManualEarning()}>{saving ? <LoaderCircle className="spinner" size={15} /> : <Save size={15} />}{manualEditor === 'new' ? 'Criar lançamento' : 'Salvar alterações'}</button></footer></section></div> : null}
+      {manualEditor ? (
+        <div className="manual-earning-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setManualEditor(null); }}>
+          <section className="manual-earning-dialog" role="dialog" aria-modal="true" aria-labelledby="manual-earning-title">
+            <header><span><FilePlus2 size={18} /></span><div><h3 id="manual-earning-title">{manualEditor === 'new' ? 'Novo lançamento' : 'Editar lançamento'}</h3><p>Registre bônus, extras ou trabalhos que não vieram de uma tarefa.</p></div><button onClick={() => setManualEditor(null)} aria-label="Fechar"><X size={17} /></button></header>
+            <div className="manual-earning-grid">
+              <label><span>Cliente</span><select value={manualDraft.clientId} onChange={(event) => applyManualClient(event.target.value)}><option value="">Sem cliente específico</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label>
+              <label><span>Data do lançamento</span><input type="date" value={manualDraft.earnedDate} onChange={(event) => setManualDraft({ ...manualDraft, earnedDate: event.target.value })} /></label>
+              <label className="wide"><span>Descrição</span><input maxLength={300} value={manualDraft.description} onChange={(event) => setManualDraft({ ...manualDraft, description: event.target.value })} placeholder="Ex.: Bônus do projeto especial" /></label>
+              <label><span>Moeda</span><select value={manualDraft.currency} onChange={(event) => applyManualCurrency(event.target.value as BillingCurrency)}><option value="USD">Dólar americano (USD)</option><option value="BRL">Real brasileiro (BRL)</option></select></label>
+              <label><span>Valor bruto</span><div className="manual-money-input"><b>{manualDraft.currency === 'BRL' ? 'R$' : 'US$'}</b><input inputMode="decimal" value={manualDraft.amountUsd} onChange={(event) => setManualDraft({ ...manualDraft, amountUsd: event.target.value })} placeholder={manualDraft.currency === 'BRL' ? '0,00' : '0.00'} /></div></label>
+              <label><span>Meio de pagamento</span><select value={manualDraft.paymentMethod} onChange={(event) => applyManualPaymentMethod(event.target.value as PaymentMethod)}><option value="none">Sem taxas</option>{manualDraft.currency === 'USD' ? <><option value="paypal_international">PayPal internacional</option><option value="wise_ach">Wise ACH</option><option value="wise_wire">Wise Wire</option></> : null}<option value="custom">Taxa personalizada</option></select></label>
+              <label><span>Taxa percentual</span><div className="manual-money-input"><input inputMode="decimal" value={manualDraft.feePercent} onChange={(event) => setManualDraft({ ...manualDraft, feePercent: event.target.value })} /><b>%</b></div></label>
+              <label><span>Taxa fixa</span><div className="manual-money-input"><b>{manualDraft.currency === 'BRL' ? 'R$' : 'US$'}</b><input inputMode="decimal" value={manualDraft.feeFixedUsd} onChange={(event) => setManualDraft({ ...manualDraft, feeFixedUsd: event.target.value })} /></div></label>
+              {manualDraft.currency === 'USD' ? <label><span>Spread de conversão</span><div className="manual-money-input"><input inputMode="decimal" value={manualDraft.conversionSpreadPercent} onChange={(event) => setManualDraft({ ...manualDraft, conversionSpreadPercent: event.target.value })} /><b>%</b></div></label> : null}
+              <label><span>Status</span><select value={manualDraft.status} onChange={(event) => setManualDraft({ ...manualDraft, status: event.target.value as 'pending' | 'received', actualAmountBrl: event.target.value === 'received' && manualDraft.currency === 'BRL' ? manualDraft.amountUsd : manualDraft.actualAmountBrl })}><option value="pending">Pendente</option><option value="received">Recebido</option></select></label>
+              {manualDraft.status === 'received' ? <label className="wide"><span>Valor real recebido</span><div className="manual-money-input received"><b>R$</b><input inputMode="decimal" value={manualDraft.actualAmountBrl} onChange={(event) => setManualDraft({ ...manualDraft, actualAmountBrl: event.target.value })} placeholder="0,00" /></div></label> : null}
+            </div>
+            {error ? <div className="panel-error manual-earning-error">{error}</div> : null}
+            <footer><button className="secondary-button" disabled={saving} onClick={() => setManualEditor(null)}>Cancelar</button><button className="primary-button" disabled={saving} onClick={() => void saveManualEarning()}>{saving ? <LoaderCircle className="spinner" size={15} /> : <Save size={15} />}{manualEditor === 'new' ? 'Criar lançamento' : 'Salvar alterações'}</button></footer>
+          </section>
+        </div>
+      ) : null}
 
       {receivingEarning ? (
         <div className="receive-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setReceivingEarning(null); }}>
           <section className="receive-dialog" role="dialog" aria-modal="true" aria-labelledby="receive-dialog-title">
             <header><span><Banknote size={18} /></span><div><h3 id="receive-dialog-title">Confirmar recebimento</h3><p>Registre o valor real após todas as taxas e conversões.</p></div><button disabled={saving} onClick={() => setReceivingEarning(null)} aria-label="Fechar"><X size={17} /></button></header>
-            <div className="receive-dialog-summary"><div><span>Bruto</span><strong>{formatUsd(receivingEarning.amount_usd)}</strong></div><div><span>Líquido estimado</span><strong>{formatUsd(receivingEarning.net_amount_usd)}</strong></div><div><span>Meio</span><strong>{paymentMethodLabel(receivingEarning.payment_method)}</strong></div></div>
+            <div className="receive-dialog-summary"><div><span>Bruto</span><strong>{formatMoney(receivingEarning.amount_usd, receivingEarning.currency)}</strong></div><div><span>Líquido estimado</span><strong>{formatMoney(receivingEarning.net_amount_usd, receivingEarning.currency)}</strong></div><div><span>Meio</span><strong>{paymentMethodLabel(receivingEarning.payment_method)}</strong></div></div>
             <label><span>Quanto realmente caiu na conta?</span><div><b>R$</b><input autoFocus inputMode="decimal" value={actualReceivedBrl} onChange={(event) => setActualReceivedBrl(event.target.value)} placeholder="0,00" /></div></label>
             <small>Esse valor substituirá a estimativa e ficará registrado no histórico.</small>
             {error ? <div className="panel-error receive-dialog-error">{error}</div> : null}
@@ -445,6 +537,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
 function normalizeBillingSetting(row: Record<string, unknown>) {
   return {
     ...row,
+    currency: (row.currency === 'BRL' ? 'BRL' : 'USD') as BillingCurrency,
     amount_usd: Number(row.amount_usd),
     bundle_size: Number(row.bundle_size),
     payment_method: (row.payment_method ?? 'none') as PaymentMethod,
@@ -457,6 +550,7 @@ function normalizeBillingSetting(row: Record<string, unknown>) {
 function normalizeEarning(row: Record<string, unknown>) {
   return {
     ...row,
+    currency: (row.currency === 'BRL' ? 'BRL' : 'USD') as BillingCurrency,
     amount_usd: Number(row.amount_usd),
     net_amount_usd: Number(row.net_amount_usd ?? row.amount_usd),
     item_count: Number(row.item_count),
@@ -472,6 +566,7 @@ function normalizeEarning(row: Record<string, unknown>) {
 function normalizeEarningEvent(row: Record<string, unknown>) {
   return {
     ...row,
+    currency: (row.currency === 'BRL' ? 'BRL' : 'USD') as BillingCurrency,
     amount_usd: Number(row.amount_usd),
     bundle_size: Number(row.bundle_size),
     payment_method: (row.payment_method ?? 'none') as PaymentMethod,
@@ -488,6 +583,7 @@ function emptyManualDraft(selectedMonth = currentMonth()): ManualEarningDraft {
   return {
     clientId: '',
     description: '',
+    currency: 'USD',
     amountUsd: '',
     earnedDate: date,
     paymentMethod: 'none',
@@ -508,7 +604,7 @@ function earningSourceLabel(source: Earning['source_type']) {
 function financeErrorMessage(message: string) {
   const normalized = message.toLowerCase();
   if (normalized.includes('create_manual_earning') || normalized.includes('update_manual_earning') || normalized.includes('sync_workspace_earnings') || normalized.includes('schema cache')) {
-    return 'Execute a migration 016_financial_entries.sql no Supabase para ativar esta função.';
+    return 'Execute as migrations financeiras pendentes, incluindo 020_financial_currencies.sql, no Supabase.';
   }
   if (normalized.includes('description')) return 'Revise a descrição do lançamento.';
   if (normalized.includes('gross amount')) return 'Informe um valor bruto maior que zero.';
@@ -518,7 +614,7 @@ function financeErrorMessage(message: string) {
 
 function isMissingFinanceSchema(message: string) {
   const normalized = message.toLowerCase();
-  return normalized.includes('client_billing_settings') || normalized.includes('earning_events') || normalized.includes('net_amount_usd') || normalized.includes('payment_method') || normalized.includes('schema cache');
+  return normalized.includes('client_billing_settings') || normalized.includes('earning_events') || normalized.includes('net_amount_usd') || normalized.includes('currency') || normalized.includes('payment_method') || normalized.includes('schema cache');
 }
 
 function currentMonth() {
@@ -544,6 +640,44 @@ function formatBrl(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 }
 
+function formatMoney(value: number, currency: BillingCurrency) {
+  return currency === 'BRL' ? formatBrl(value) : formatUsd(value);
+}
+
+function earningRateToBrl(earning: Earning, rate: EditFlowUsdBrlRate | null) {
+  if (earning.currency === 'BRL') return 1;
+  if (earning.status === 'received' && earning.exchange_rate_brl) return earning.exchange_rate_brl;
+  return rate?.rate ?? null;
+}
+
+function earningNetBrl(earning: Earning, rate: EditFlowUsdBrlRate | null) {
+  if (earning.status === 'received' && earning.amount_brl !== null) return earning.amount_brl;
+  const conversionRate = earningRateToBrl(earning, rate);
+  return conversionRate === null ? null : earning.net_amount_usd * conversionRate;
+}
+
+function totalEarningsBrl(earnings: Earning[], amount: (earning: Earning) => number, rate: EditFlowUsdBrlRate | null) {
+  let total = 0;
+  for (const earning of earnings) {
+    const nativeAmount = amount(earning);
+    if (!nativeAmount) continue;
+    const conversionRate = earningRateToBrl(earning, rate);
+    if (conversionRate === null) return null;
+    total += nativeAmount * conversionRate;
+  }
+  return total;
+}
+
+function totalNetEarningsBrl(earnings: Earning[], rate: EditFlowUsdBrlRate | null) {
+  let total = 0;
+  for (const earning of earnings) {
+    const converted = earningNetBrl(earning, rate);
+    if (converted === null) return null;
+    total += converted;
+  }
+  return total;
+}
+
 function formatRate(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(value);
 }
@@ -554,8 +688,8 @@ function formatCompactDate(date: string) {
 
 function billingDescription(setting: ClientBillingSetting) {
   return setting.pricing_model === 'per_video'
-    ? `${formatUsd(setting.amount_usd)} por vídeo · ${paymentMethodLabel(setting.payment_method)}`
-    : `${formatUsd(setting.amount_usd)} a cada ${setting.bundle_size} vídeos · ${paymentMethodLabel(setting.payment_method)}`;
+    ? `${formatMoney(setting.amount_usd, setting.currency)} por vídeo · ${paymentMethodLabel(setting.payment_method)}`
+    : `${formatMoney(setting.amount_usd, setting.currency)} a cada ${setting.bundle_size} vídeos · ${paymentMethodLabel(setting.payment_method)}`;
 }
 
 function sum(values: number[]) {

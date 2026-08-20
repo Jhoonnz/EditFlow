@@ -5,7 +5,7 @@ import { supabase } from '../../lib/supabase';
 import { useAppDialog } from '../../components/AppDialog';
 import { useDialogFocus } from '../../lib/useDialogFocus';
 import { estimateNetUsd, paymentFeeRule, paymentFeeRules, paymentMethodLabel } from '../finance/paymentFees';
-import type { BillingPricingModel, Client, ClientBillingSetting, PaymentMethod, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
+import type { BillingCurrency, BillingPricingModel, Client, ClientBillingSetting, EditFlowAccountSearchResult, PaymentMethod, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
 
 export function ClientsView({
   workspace,
@@ -27,6 +27,7 @@ export function ClientsView({
   const [billingAvailable, setBillingAvailable] = useState(true);
   const [billingLoading, setBillingLoading] = useState(workspace.role === 'owner');
   const [billingMode, setBillingMode] = useState<'none' | BillingPricingModel>('none');
+  const [billingCurrency, setBillingCurrency] = useState<BillingCurrency>('USD');
   const [amountUsd, setAmountUsd] = useState('');
   const [bundleSize, setBundleSize] = useState('5');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('none');
@@ -69,6 +70,7 @@ export function ClientsView({
     setEmail('');
     setYoutubeChannelUrl('');
     setBillingMode('none');
+    setBillingCurrency('USD');
     setAmountUsd('');
     setBundleSize('5');
     applyPaymentMethod('none');
@@ -87,6 +89,11 @@ export function ClientsView({
     setFeePercent(String(rule.feePercent));
     setFeeFixedUsd(String(rule.fixedFeeUsd));
     setConversionSpreadPercent(String(rule.conversionSpreadPercent));
+  };
+
+  const applyBillingCurrency = (currency: BillingCurrency) => {
+    setBillingCurrency(currency);
+    if (currency === 'BRL') applyPaymentMethod('none');
   };
 
   const syncYoutubeChannel = async (clientId: string) => {
@@ -118,7 +125,7 @@ export function ClientsView({
     const parsedFeePercent = Number(feePercent.replace(',', '.'));
     const parsedFixedFee = Number(feeFixedUsd.replace(',', '.'));
     const parsedConversionSpread = Number(conversionSpreadPercent.replace(',', '.'));
-    if (isOwner && billingMode !== 'none' && (!Number.isFinite(parsedAmount) || parsedAmount <= 0)) return setError('Digite um valor em dólar maior que zero.');
+    if (isOwner && billingMode !== 'none' && (!Number.isFinite(parsedAmount) || parsedAmount <= 0)) return setError(`Digite um valor em ${billingCurrency === 'BRL' ? 'real' : 'dólar'} maior que zero.`);
     if (isOwner && billingMode === 'bundle' && (!Number.isInteger(parsedBundleSize) || parsedBundleSize < 2)) return setError('O pacote precisa ter pelo menos 2 vídeos.');
     if (isOwner && billingMode !== 'none' && (!validPercent(parsedFeePercent) || !validPercent(parsedConversionSpread) || !Number.isFinite(parsedFixedFee) || parsedFixedFee < 0)) return setError('Revise as taxas de recebimento informadas.');
 
@@ -170,20 +177,20 @@ export function ClientsView({
         : await supabase.from('client_billing_settings').upsert({
           client_id: clientId,
           workspace_id: workspace.id,
-          currency: 'USD',
+          currency: billingCurrency,
           pricing_model: billingMode,
           amount_usd: parsedAmount,
           bundle_size: parsedBundleSize,
           payment_method: paymentMethod,
           fee_percent: parsedFeePercent,
           fee_fixed_usd: parsedFixedFee,
-          conversion_spread_percent: parsedConversionSpread,
+          conversion_spread_percent: billingCurrency === 'BRL' ? 0 : parsedConversionSpread,
         }, { onConflict: 'client_id' });
       if (billingResult.error) {
         if (createdClientId) await supabase.from('clients').delete().eq('id', createdClientId);
         setSaving(false);
         return setError(isMissingFinanceSchema(billingResult.error.message)
-          ? 'Atualize o módulo financeiro executando as migrations 012 e 013 no Supabase.'
+            ? 'Atualize o módulo financeiro executando a migration 020_financial_currencies.sql no Supabase.'
           : billingResult.error.message);
       }
       if (billingMode !== 'none') {
@@ -223,6 +230,7 @@ export function ClientsView({
     setYoutubeChannelUrl(client.youtube_channel_url ?? '');
     const setting = billingSettings.find((item) => item.client_id === client.id);
     setBillingMode(setting?.pricing_model ?? 'none');
+    setBillingCurrency(setting?.currency ?? 'USD');
     setAmountUsd(setting ? String(setting.amount_usd) : '');
     setBundleSize(setting ? String(setting.bundle_size) : '5');
     if (setting) {
@@ -279,22 +287,23 @@ export function ClientsView({
               {billingMode !== 'none' ? (
                 <>
                   <div className="client-payment-values">
-                    <label><span>Valor bruto em USD</span><div><b>US$</b><input inputMode="decimal" value={amountUsd} onChange={(event) => setAmountUsd(event.target.value)} placeholder="200.00" /></div></label>
+                      <label><span>Moeda do pagamento</span><select className="client-currency-select" value={billingCurrency} onChange={(event) => applyBillingCurrency(event.target.value as BillingCurrency)}><option value="USD">Dólar americano (USD)</option><option value="BRL">Real brasileiro (BRL)</option></select></label>
+                      <label><span>Valor bruto</span><div><b>{billingCurrency === 'BRL' ? 'R$' : 'US$'}</b><input inputMode="decimal" value={amountUsd} onChange={(event) => setAmountUsd(event.target.value)} placeholder={billingCurrency === 'BRL' ? '800,00' : '200.00'} /></div></label>
                     {billingMode === 'bundle' ? <label><span>Vídeos no pacote</span><div><input type="number" min="2" max="1000" value={bundleSize} onChange={(event) => setBundleSize(event.target.value)} /><b>vídeos</b></div></label> : null}
                   </div>
-                  <label className="payment-provider-select"><span>Como você recebe</span><select value={paymentMethod} onChange={(event) => applyPaymentMethod(event.target.value as PaymentMethod)}>{paymentFeeRules.map((rule) => <option value={rule.method} key={rule.method}>{rule.label}</option>)}</select></label>
+                  <label className="payment-provider-select"><span>Como você recebe</span><select value={paymentMethod} onChange={(event) => applyPaymentMethod(event.target.value as PaymentMethod)}>{paymentFeeRules.filter((rule) => billingCurrency === 'USD' || rule.method === 'none' || rule.method === 'custom').map((rule) => <option value={rule.method} key={rule.method}>{rule.label}</option>)}</select></label>
                   {paymentMethod === 'custom' ? (
                     <div className="client-fee-values">
                       <label><span>Taxa percentual</span><div><input inputMode="decimal" value={feePercent} onChange={(event) => setFeePercent(event.target.value)} /><b>%</b></div></label>
-                      <label><span>Taxa fixa</span><div><b>US$</b><input inputMode="decimal" value={feeFixedUsd} onChange={(event) => setFeeFixedUsd(event.target.value)} /></div></label>
-                      <label><span>Spread de conversão</span><div><input inputMode="decimal" value={conversionSpreadPercent} onChange={(event) => setConversionSpreadPercent(event.target.value)} /><b>%</b></div></label>
+                      <label><span>Taxa fixa</span><div><b>{billingCurrency === 'BRL' ? 'R$' : 'US$'}</b><input inputMode="decimal" value={feeFixedUsd} onChange={(event) => setFeeFixedUsd(event.target.value)} /></div></label>
+                      {billingCurrency === 'USD' ? <label><span>Spread de conversão</span><div><input inputMode="decimal" value={conversionSpreadPercent} onChange={(event) => setConversionSpreadPercent(event.target.value)} /><b>%</b></div></label> : null}
                     </div>
                   ) : null}
-                  <PaymentEstimate grossUsd={Number(amountUsd.replace(',', '.'))} paymentMethod={paymentMethod} feePercent={Number(feePercent.replace(',', '.'))} fixedFeeUsd={Number(feeFixedUsd.replace(',', '.'))} conversionSpreadPercent={Number(conversionSpreadPercent.replace(',', '.'))} />
+                  <PaymentEstimate currency={billingCurrency} grossAmount={Number(amountUsd.replace(',', '.'))} paymentMethod={paymentMethod} feePercent={Number(feePercent.replace(',', '.'))} fixedFee={Number(feeFixedUsd.replace(',', '.'))} conversionSpreadPercent={billingCurrency === 'BRL' ? 0 : Number(conversionSpreadPercent.replace(',', '.'))} />
                 </>
               ) : null}
             </fieldset>
-          ) : isOwner ? <div className="client-payment-unavailable">Execute as migrations 012 e 013 no Supabase para configurar pagamentos automáticos.</div> : null}
+          ) : isOwner ? <div className="client-payment-unavailable">Execute as migrations financeiras pendentes, incluindo a 020, para configurar pagamentos automáticos.</div> : null}
           {error ? <div className="panel-error">{error}</div> : null}
           <div className="form-actions">
             {editingId ? <button type="button" className="secondary-button" onClick={resetForm}>Cancelar</button> : null}
@@ -370,6 +379,10 @@ export function TeamView({
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<Exclude<WorkspaceRole, 'owner'>>('editor');
+  const [accountResults, setAccountResults] = useState<EditFlowAccountSearchResult[]>([]);
+  const [selectedAccount, setSelectedAccount] = useState<EditFlowAccountSearchResult | null>(null);
+  const [searchingAccounts, setSearchingAccounts] = useState(false);
+  const [accountSearchError, setAccountSearchError] = useState<string | null>(null);
   const [pendingInvitations, setPendingInvitations] = useState<WorkspaceInvitation[]>([]);
   const [memberMenuId, setMemberMenuId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -411,6 +424,44 @@ export function TeamView({
   useEffect(() => { void loadInvitations(); }, [loadInvitations]);
 
   useEffect(() => {
+    const query = inviteEmail.trim();
+    if (!supabase || !canManage || !inviteOpen || selectedAccount || query.length < 2) {
+      setAccountResults([]);
+      setSearchingAccounts(false);
+      setAccountSearchError(null);
+      return;
+    }
+
+    const accountSearchClient = supabase;
+    let active = true;
+    setSearchingAccounts(true);
+    setAccountSearchError(null);
+    const timeout = window.setTimeout(() => {
+      void accountSearchClient.rpc('search_editflow_accounts', {
+        target_workspace: workspace.id,
+        search_query: query,
+        result_limit: 8,
+      }).then(({ data, error: searchError }) => {
+        if (!active) return;
+        setSearchingAccounts(false);
+        if (searchError) {
+          setAccountResults([]);
+          setAccountSearchError(/search_editflow_accounts|schema cache|could not find/i.test(searchError.message)
+            ? 'Execute a migração 021 para ativar a busca de contas.'
+            : 'Não foi possível buscar contas agora.');
+          return;
+        }
+        setAccountResults((data ?? []) as EditFlowAccountSearchResult[]);
+      });
+    }, 280);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+    };
+  }, [canManage, inviteEmail, inviteOpen, selectedAccount, workspace.id]);
+
+  useEffect(() => {
     if (!supabase || !canManage) return;
     const realtimeClient = supabase;
     const channel = realtimeClient
@@ -441,6 +492,8 @@ export function TeamView({
     setSaving(false);
     if (inviteError) return setError(translateTeamError(inviteError.message));
     setInviteEmail('');
+    setSelectedAccount(null);
+    setAccountResults([]);
     setInviteOpen(false);
     await loadInvitations();
   };
@@ -507,11 +560,48 @@ export function TeamView({
           <button className={filter === 'available' ? 'active' : ''} onClick={() => setFilter('available')}>Disponíveis</button>
           <button className={filter === 'admins' ? 'active' : ''} onClick={() => setFilter('admins')}>Gestores</button>
         </div>
-        {canManage ? <button className="team-invite-button" onClick={() => setInviteOpen((open) => !open)}>{inviteOpen ? <X size={16} /> : <UserPlus size={16} />}{inviteOpen ? 'Fechar' : 'Convidar membro'}</button> : null}
+        {canManage ? <button className="team-invite-button" onClick={() => setInviteOpen((open) => { if (open) { setInviteEmail(''); setSelectedAccount(null); setAccountResults([]); } return !open; })}>{inviteOpen ? <X size={16} /> : <UserPlus size={16} />}{inviteOpen ? 'Fechar' : 'Convidar membro'}</button> : null}
       </div>
 
       {error ? <div className="panel-error">{error}</div> : null}
-      {inviteOpen && canManage ? <form className="team-invite-panel" onSubmit={inviteMember}><div><Mail size={18} /><span><strong>Novo convite</strong><small>A pessoa poderá aceitar ou recusar ao entrar no EditFlow.</small></span></div><input type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="email@exemplo.com" autoFocus /><select value={inviteRole} onChange={(event) => setInviteRole(event.target.value as Exclude<WorkspaceRole, 'owner'>)}><option value="editor">Editor</option><option value="admin">Administrador</option></select><button className="primary-button" type="submit" disabled={saving || !inviteEmail.trim()}>{saving ? <LoaderCircle className="spinner" size={15} /> : <Plus size={15} />}Enviar convite</button></form> : null}
+      {inviteOpen && canManage ? (
+        <form className="team-invite-panel" onSubmit={inviteMember}>
+          <div className="team-invite-intro"><Mail size={18} /><span><strong>Novo convite</strong><small>Busque uma conta EditFlow ou digite um e-mail.</small></span></div>
+          <section className="team-account-search">
+            <span className="sr-only">Nome ou e-mail</span>
+            {selectedAccount?.avatar_url ? <img src={selectedAccount.avatar_url} alt="" /> : <Search size={15} />}
+            <input
+              type="text"
+              value={inviteEmail}
+              onChange={(event) => { setInviteEmail(event.target.value); setSelectedAccount(null); }}
+              placeholder="Nome ou email@exemplo.com"
+              aria-label="Nome ou e-mail da pessoa"
+              autoComplete="off"
+              autoFocus
+            />
+            {searchingAccounts ? <LoaderCircle className="spinner team-account-search-spinner" size={14} /> : null}
+            {!selectedAccount && inviteEmail.trim().length >= 2 && !searchingAccounts ? (
+              <div className="team-account-results" aria-label="Contas EditFlow encontradas">
+                {accountResults.map((account) => (
+                  <button
+                    key={account.user_id}
+                    type="button"
+                    onClick={() => { setSelectedAccount(account); setInviteEmail(account.email); setAccountResults([]); setAccountSearchError(null); }}
+                  >
+                    <span className="team-account-avatar">{account.avatar_url ? <img src={account.avatar_url} alt="" /> : account.display_name.slice(0, 1).toUpperCase()}</span>
+                    <span><strong>{account.display_name}</strong><small>{account.email}</small></span>
+                    <em>Convidar</em>
+                  </button>
+                ))}
+                {!accountResults.length && !accountSearchError ? <p>Nenhuma conta encontrada. Você ainda pode convidar pelo e-mail completo.</p> : null}
+                {accountSearchError ? <p className="error">{accountSearchError}</p> : null}
+              </div>
+            ) : null}
+          </section>
+          <select value={inviteRole} onChange={(event) => setInviteRole(event.target.value as Exclude<WorkspaceRole, 'owner'>)} aria-label="Cargo do convite"><option value="editor">Editor</option><option value="admin">Administrador</option></select>
+          <button className="primary-button" type="submit" disabled={saving || !isValidInviteEmail(inviteEmail)}>{saving ? <LoaderCircle className="spinner" size={15} /> : <Plus size={15} />}Enviar convite</button>
+        </form>
+      ) : null}
 
       {pendingInvitations.length ? <section className="team-pending"><header><strong>Convites pendentes</strong><small>{pendingInvitations.length}</small></header><div>{pendingInvitations.map((invitation) => <article key={invitation.id}><span>{invitation.email.slice(0,1).toUpperCase()}</span><div><strong>{invitation.email}</strong><small>{teamRoleLabel(invitation.role)} · expira em {new Date(invitation.expires_at).toLocaleDateString('pt-BR')}</small></div><button onClick={() => void cancelInvitation(invitation)} aria-label="Cancelar convite"><X size={14} /></button></article>)}</div></section> : null}
 
@@ -1105,6 +1195,10 @@ function translateTeamError(message: string) {
   return message;
 }
 
+function isValidInviteEmail(value: string) {
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value.trim());
+}
+
 async function edgeFunctionErrorMessage(error: unknown) {
   const functionError = error as { message?: string; context?: Response };
   try {
@@ -1135,6 +1229,7 @@ function postingFrequency(uploadsPerMonth: number | null) {
 function normalizeBillingSetting(row: Record<string, unknown>) {
   return {
     ...row,
+    currency: (row.currency === 'BRL' ? 'BRL' : 'USD') as BillingCurrency,
     amount_usd: Number(row.amount_usd),
     bundle_size: Number(row.bundle_size),
     payment_method: (row.payment_method ?? 'none') as PaymentMethod,
@@ -1145,33 +1240,34 @@ function normalizeBillingSetting(row: Record<string, unknown>) {
 }
 
 function billingDescription(setting: ClientBillingSetting) {
-  const amount = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(setting.amount_usd);
+  const amount = formatBillingCurrency(setting.amount_usd, setting.currency);
   return setting.pricing_model === 'per_video'
     ? `${amount} por vídeo · ${paymentMethodLabel(setting.payment_method)}`
     : `${amount} a cada ${setting.bundle_size} vídeos · ${paymentMethodLabel(setting.payment_method)}`;
 }
 
-function PaymentEstimate({ grossUsd, paymentMethod, feePercent, fixedFeeUsd, conversionSpreadPercent }: {
-  grossUsd: number;
+function PaymentEstimate({ currency, grossAmount, paymentMethod, feePercent, fixedFee, conversionSpreadPercent }: {
+  currency: BillingCurrency;
+  grossAmount: number;
   paymentMethod: PaymentMethod;
   feePercent: number;
-  fixedFeeUsd: number;
+  fixedFee: number;
   conversionSpreadPercent: number;
 }) {
-  const netUsd = estimateNetUsd(grossUsd, feePercent, fixedFeeUsd, conversionSpreadPercent);
-  const feeUsd = Number.isFinite(grossUsd) ? Math.max(0, grossUsd - netUsd) : 0;
+  const netAmount = estimateNetUsd(grossAmount, feePercent, fixedFee, conversionSpreadPercent);
+  const feeAmount = Number.isFinite(grossAmount) ? Math.max(0, grossAmount - netAmount) : 0;
   return (
     <div className="payment-estimate">
-      <div><span>Bruto</span><strong>{formatUsdSafe(grossUsd)}</strong></div>
-      <div><span>Taxas estimadas</span><strong>-{formatUsdSafe(feeUsd)}</strong></div>
-      <div className="net"><span>Líquido estimado</span><strong>{formatUsdSafe(netUsd)}</strong></div>
+      <div><span>Bruto</span><strong>{formatBillingCurrency(grossAmount, currency)}</strong></div>
+      <div><span>Taxas estimadas</span><strong>-{formatBillingCurrency(feeAmount, currency)}</strong></div>
+      <div className="net"><span>Líquido estimado</span><strong>{formatBillingCurrency(netAmount, currency)}</strong></div>
       <small>{paymentFeeRule(paymentMethod).note}</small>
     </div>
   );
 }
 
-function formatUsdSafe(value: number) {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number.isFinite(value) ? value : 0);
+function formatBillingCurrency(value: number, currency: BillingCurrency) {
+  return new Intl.NumberFormat(currency === 'BRL' ? 'pt-BR' : 'en-US', { style: 'currency', currency }).format(Number.isFinite(value) ? value : 0);
 }
 
 function validPercent(value: number) {
@@ -1180,5 +1276,5 @@ function validPercent(value: number) {
 
 function isMissingFinanceSchema(message: string) {
   const normalized = message.toLowerCase();
-  return normalized.includes('client_billing_settings') || normalized.includes('payment_method') || normalized.includes('schema cache');
+  return normalized.includes('client_billing_settings') || normalized.includes('currency') || normalized.includes('payment_method') || normalized.includes('schema cache');
 }
