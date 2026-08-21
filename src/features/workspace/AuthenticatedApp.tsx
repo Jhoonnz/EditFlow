@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { ArrowLeft, ArrowRight, Building2, LoaderCircle, LogOut, RefreshCw, Sparkles, UserPlus } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Building2, LoaderCircle, LogOut, RefreshCw, UserPlus } from 'lucide-react';
+import editflowMark from '../../assets/editflow-mark.png';
 import { supabase } from '../../lib/supabase';
 import { useDialogFocus } from '../../lib/useDialogFocus';
 import { Dashboard } from '../board/Dashboard';
@@ -240,7 +241,7 @@ export function AuthenticatedApp({ user }: Props) {
   if (workspaceLoadState === 'loading') {
     return (
       <main className="app-loading">
-        <div className="app-logo"><Sparkles size={19} /></div>
+        <div className="app-logo"><img src={editflowMark} alt="EditFlow" /></div>
         <LoaderCircle className="spinner" size={25} />
       </main>
     );

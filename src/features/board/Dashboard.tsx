@@ -1,12 +1,16 @@
 import { type CSSProperties, DragEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { RealtimeChannel, User } from '@supabase/supabase-js';
+import editflowMark from '../../assets/editflow-mark.png';
 import {
   AlertTriangle,
   Bell,
   BriefcaseBusiness,
+  CalendarDays,
   CalendarClock,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CheckCircle2,
   Columns3,
   Download,
@@ -15,6 +19,7 @@ import {
   History,
   LayoutDashboard,
   Link2,
+  List as ListIcon,
   LoaderCircle,
   LogOut,
   Mail,
@@ -77,6 +82,7 @@ type Props = {
 
 type SyncStatus = 'connecting' | 'connected' | 'offline' | 'error';
 type DashboardView = 'home' | 'board' | 'clients' | 'team' | 'finance' | 'settings';
+type ProductionView = 'kanban' | 'list' | 'calendar';
 type ClientTaskTemplateDraft = Pick<ClientTaskTemplate,
   'title_template' | 'description_template' | 'priority' | 'assignee_id' | 'due_offset_days' | 'due_business_days' | 'link_label'
 >;
@@ -134,6 +140,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [columnDropTarget, setColumnDropTarget] = useState<{ columnId: string; edge: 'before' | 'after' } | null>(null);
   const [editor, setEditor] = useState<{ mode: 'new' | 'edit'; task: Task | null; columnId?: string } | null>(null);
   const [view, setView] = useState<DashboardView>(initialView);
+  const [productionView, setProductionView] = useState<ProductionView>('kanban');
   const [columnMenuId, setColumnMenuId] = useState<string | null>(null);
   const [editingColumn, setEditingColumn] = useState<BoardColumn | null>(null);
   const [creatingColumn, setCreatingColumn] = useState(false);
@@ -174,6 +181,25 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   useEffect(() => { tasksRef.current = tasks; }, [tasks]);
   useEffect(() => { membersRef.current = members; }, [members]);
   useEffect(() => { notificationsRef.current = inboxNotifications; }, [inboxNotifications]);
+  useEffect(() => {
+    if (!board) return;
+    try {
+      const savedView = window.localStorage.getItem(productionViewStorageKey(user.id, board.id));
+      setProductionView(isProductionView(savedView) ? savedView : 'kanban');
+    } catch {
+      setProductionView('kanban');
+    }
+  }, [board?.id, user.id]);
+
+  const changeProductionView = (nextView: ProductionView) => {
+    setProductionView(nextView);
+    if (!board) return;
+    try {
+      window.localStorage.setItem(productionViewStorageKey(user.id, board.id), nextView);
+    } catch {
+      // The selected view still works for this session when storage is unavailable.
+    }
+  };
   const openSettings = (tab: SettingsTab) => {
     setSettingsNavigation((current) => ({ tab, token: current.token + 1 }));
     setView('settings');
@@ -937,7 +963,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   return (
     <main className="dashboard-shell">
       <aside className="app-sidebar">
-        <div className="sidebar-brand"><span className="sidebar-logo"><Sparkles size={18} /></span><span>EditFlow</span></div>
+        <div className="sidebar-brand"><span className="sidebar-logo"><img src={editflowMark} alt="" /></span><span>EditFlow</span></div>
 
         <div className="workspace-switcher" ref={workspaceMenuRef}>
           <button type="button" className="workspace-switcher-trigger" aria-expanded={showWorkspaceMenu} onClick={() => setShowWorkspaceMenu((show) => !show)}>
@@ -1004,8 +1030,13 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 
         {view === 'board' ? <div className="board-toolbar">
           <label className="board-search"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar trabalhos ou clientes..." /></label>
+          <div className="production-view-switcher" role="group" aria-label="Visualização da produção">
+            <button type="button" className={productionView === 'kanban' ? 'active' : ''} aria-pressed={productionView === 'kanban'} onClick={() => changeProductionView('kanban')}><Columns3 size={14} /><span>Quadro</span></button>
+            <button type="button" className={productionView === 'list' ? 'active' : ''} aria-pressed={productionView === 'list'} onClick={() => changeProductionView('list')}><ListIcon size={14} /><span>Lista</span></button>
+            <button type="button" className={productionView === 'calendar' ? 'active' : ''} aria-pressed={productionView === 'calendar'} onClick={() => changeProductionView('calendar')}><CalendarDays size={14} /><span>Calendário</span></button>
+          </div>
           <div className="board-toolbar-actions">
-            <span className="task-total">{tasks.length} {tasks.length === 1 ? 'trabalho' : 'trabalhos'}</span>
+            <span className="task-total">{filteredTasks.length} {filteredTasks.length === 1 ? 'trabalho' : 'trabalhos'}</span>
             {canManagePlanning ? <button className="new-column-button" onClick={() => setCreatingColumn(true)}><Columns3 size={16} />Nova coluna</button> : <span className="editor-scope-label">Somente tarefas atribuídas a você</span>}
           </div>
         </div> : null}
@@ -1030,7 +1061,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           onCreateTask={() => setEditor({ mode: 'new', task: null, columnId: columns[0]?.id })}
         /> : null}
 
-        {view === 'board' ? <div className="kanban-board">
+        {view === 'board' && productionView === 'kanban' ? <div className="kanban-board production-view-enter" key="kanban">
           {columns.map((column) => {
             const columnTasks = tasksByColumn.get(column.id) ?? [];
             const isCompletionColumn = column.id === completionColumn?.id;
@@ -1144,6 +1175,27 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
             );
           })}
         </div> : null}
+        {view === 'board' && productionView === 'list' ? (
+          <ProductionList
+            key="list"
+            columns={columns}
+            tasksByColumn={tasksByColumn}
+            clients={clients}
+            members={liveMembers}
+            onOpenTask={(task) => setEditor({ mode: 'edit', task })}
+            onOpenProfile={setProfileMemberId}
+            onMoveTask={(task, columnId) => moveTask(task.id, columnId, null)}
+          />
+        ) : null}
+        {view === 'board' && productionView === 'calendar' ? (
+          <ProductionCalendar
+            key="calendar"
+            tasks={filteredTasks}
+            columns={columns}
+            clients={clients}
+            onOpenTask={(task) => setEditor({ mode: 'edit', task })}
+          />
+        ) : null}
         {view === 'clients' && canManagePlanning ? <ClientsView workspace={workspace} clients={clients} tasks={tasks} onChanged={() => loadBoard(true)} /> : null}
         {view === 'team' ? <TeamView userId={user.id} workspace={workspace} members={liveMembers} tasks={tasks} onChanged={() => loadBoard(true)} onMemberProfile={setProfileMemberId} onMemberTasks={(member) => { setSearch(member.display_name); setView('board'); }} /> : null}
         {view === 'finance' && workspace.role === 'owner' ? <FinanceView workspace={workspace} clients={clients} tasks={tasks} /> : null}
@@ -1378,6 +1430,137 @@ function ColumnEditor({
         </form>
         {column ? <div className="column-danger-zone"><div><strong>Excluir coluna</strong><small>{taskCount ? `${taskCount} tarefas precisam ser movidas antes.` : 'Esta ação não pode ser desfeita.'}</small></div><button onClick={() => void remove()} disabled={saving || taskCount > 0}>{confirmingDelete ? 'Confirmar exclusão' : 'Excluir'}</button></div> : null}
       </section>
+    </div>
+  );
+}
+
+function ProductionList({
+  columns,
+  tasksByColumn,
+  clients,
+  members,
+  onOpenTask,
+  onOpenProfile,
+  onMoveTask,
+}: {
+  columns: BoardColumn[];
+  tasksByColumn: Map<string, Task[]>;
+  clients: Client[];
+  members: WorkspaceMember[];
+  onOpenTask: (task: Task) => void;
+  onOpenProfile: (memberId: string) => void;
+  onMoveTask: (task: Task, columnId: string) => Promise<void>;
+}) {
+  const groups = columns
+    .map((column) => ({ column, tasks: tasksByColumn.get(column.id) ?? [] }))
+    .filter((group) => group.tasks.length);
+
+  if (!groups.length) {
+    return <div className="production-view-empty production-view-enter"><Search size={23} /><strong>Nenhuma tarefa encontrada</strong><small>Altere sua busca para visualizar outros trabalhos.</small></div>;
+  }
+
+  return (
+    <div className="production-list-view production-view-enter">
+      <div className="production-list-heading" aria-hidden="true"><span>Tarefa, cliente e prazo</span><span>Responsável</span><span>Etapa</span></div>
+      {groups.map(({ column, tasks: columnTasks }) => (
+        <section className="production-list-group" key={column.id}>
+          <header><i style={{ background: column.color ?? '#8b8fa3' }} /><h2>{column.name}</h2><span>{columnTasks.length}</span></header>
+          <div>
+            {columnTasks.map((task) => {
+              const client = clients.find((item) => item.id === task.client_id);
+              const assignee = members.find((item) => item.user_id === task.assignee_id);
+              const countdown = taskCountdown(task.due_at, Boolean(task.completed_at));
+              return (
+                <article
+                  className={`production-list-row ${task.completed_at ? 'completed' : ''}`}
+                  style={{ '--production-accent': column.color ?? '#8b8fa3' } as CSSProperties}
+                  key={task.id}
+                >
+                  <button type="button" className="production-list-main" onClick={() => onOpenTask(task)}>
+                    <span className="production-list-client-avatar">{client?.youtube_thumbnail_url ? <img src={client.youtube_thumbnail_url} alt="" /> : (client?.name ?? task.title).slice(0,1).toUpperCase()}</span>
+                    <span className="production-list-copy"><strong>{task.title}</strong><small>{client?.name ?? 'Sem cliente'}</small></span>
+                    <span className={`production-list-priority ${task.priority}`}>{priorityLabel(task.priority)}</span>
+                    <span className={`production-list-due ${countdown.state}`}>{task.due_at ? formatCardDate(task.due_at) : countdown.label}</span>
+                  </button>
+                  {assignee ? <button type="button" className="production-list-assignee" onClick={() => onOpenProfile(assignee.user_id)} title={`Abrir perfil de ${assignee.display_name}`}>{assignee.avatar_url ? <img src={assignee.avatar_url} alt="" /> : <i>{memberInitials(assignee.display_name)}</i>}<span>{assignee.display_name}</span></button> : <span className="production-list-assignee empty"><i>?</i><span>Sem responsável</span></span>}
+                  <label className="production-list-stage"><span className="sr-only">Etapa de {task.title}</span><select value={task.column_id} onChange={(event) => void onMoveTask(task, event.target.value)}>{columns.map((option) => <option value={option.id} key={option.id}>{option.name}</option>)}</select></label>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function ProductionCalendar({
+  tasks,
+  columns,
+  clients,
+  onOpenTask,
+}: {
+  tasks: Task[];
+  columns: BoardColumn[];
+  clients: Client[];
+  onOpenTask: (task: Task) => void;
+}) {
+  const [visibleMonth, setVisibleMonth] = useState(() => {
+    const today = new Date();
+    return new Date(today.getFullYear(), today.getMonth(), 1);
+  });
+  const todayKey = localDayKey(new Date());
+  const firstDay = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1);
+  const gridStart = new Date(firstDay);
+  gridStart.setDate(gridStart.getDate() - ((firstDay.getDay() + 6) % 7));
+  const calendarDays = Array.from({ length: 42 }, (_, index) => {
+    const day = new Date(gridStart);
+    day.setDate(gridStart.getDate() + index);
+    return day;
+  });
+  const tasksByDay = new Map<string, Task[]>();
+  tasks.filter((task) => task.due_at).forEach((task) => {
+    const key = localDayKey(new Date(task.due_at!));
+    tasksByDay.set(key, [...(tasksByDay.get(key) ?? []), task]);
+  });
+  tasksByDay.forEach((items) => items.sort((left, right) => Number(left.position) - Number(right.position)));
+  const unscheduled = tasks.filter((task) => !task.due_at && !task.completed_at);
+  const monthLabel = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(visibleMonth);
+  const changeMonth = (offset: number) => setVisibleMonth((current) => new Date(current.getFullYear(), current.getMonth() + offset, 1));
+  const goToToday = () => {
+    const today = new Date();
+    setVisibleMonth(new Date(today.getFullYear(), today.getMonth(), 1));
+  };
+
+  return (
+    <div className="production-calendar-view production-view-enter">
+      <header className="production-calendar-header">
+        <div><span><CalendarDays size={17} /></span><div><strong>{monthLabel}</strong><small>{tasks.filter((task) => task.due_at && localDayKey(new Date(task.due_at)).slice(0,7) === localDayKey(visibleMonth).slice(0,7)).length} entregas neste mês</small></div></div>
+        <nav aria-label="Navegar entre os meses"><button type="button" onClick={() => changeMonth(-1)} aria-label="Mês anterior"><ChevronLeft size={16} /></button><button type="button" className="calendar-today-button" onClick={goToToday}>Hoje</button><button type="button" onClick={() => changeMonth(1)} aria-label="Próximo mês"><ChevronRight size={16} /></button></nav>
+      </header>
+      <div className="production-calendar-scroll">
+        <div className="production-calendar-weekdays" aria-hidden="true">{['SEG','TER','QUA','QUI','SEX','SÁB','DOM'].map((day) => <span key={day}>{day}</span>)}</div>
+        <div className="production-calendar-grid">
+          {calendarDays.map((day) => {
+            const dayKey = localDayKey(day);
+            const dayTasks = tasksByDay.get(dayKey) ?? [];
+            const outside = day.getMonth() !== visibleMonth.getMonth();
+            return (
+              <article className={`production-calendar-day ${outside ? 'outside' : ''} ${dayKey === todayKey ? 'today' : ''}`} key={dayKey}>
+                <header><span>{day.getDate()}</span>{dayTasks.length ? <small>{dayTasks.length}</small> : null}</header>
+                <div>
+                  {dayTasks.map((task) => {
+                    const column = columns.find((item) => item.id === task.column_id);
+                    const client = clients.find((item) => item.id === task.client_id);
+                    return <button type="button" className={task.completed_at ? 'completed' : ''} style={{ '--production-accent': column?.color ?? '#8b8fa3' } as CSSProperties} onClick={() => onOpenTask(task)} title={`${task.title} · ${column?.name ?? 'Etapa'}`} key={task.id}><i /><span><strong>{task.title}</strong><small>{client?.name ?? column?.name ?? 'Sem cliente'}</small></span>{task.completed_at ? <CheckCircle2 size={11} /> : null}</button>;
+                  })}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+        {unscheduled.length ? <section className="production-calendar-unscheduled"><header><CalendarClock size={15} /><div><strong>Sem prazo definido</strong><small>{unscheduled.length} {unscheduled.length === 1 ? 'tarefa precisa' : 'tarefas precisam'} de uma data</small></div></header><div>{unscheduled.map((task) => <button type="button" onClick={() => onOpenTask(task)} key={task.id}><span>{task.title}</span><small>{clients.find((client) => client.id === task.client_id)?.name ?? 'Sem cliente'}</small></button>)}</div></section> : null}
+      </div>
     </div>
   );
 }
@@ -2486,6 +2669,18 @@ function availabilityDescription(availability: MemberAvailability, activeTasks: 
   if (availability === 'away') return 'Computador inativo ou bloqueado há pelo menos 5 minutos.';
   if (availability === 'busy') return `Online com ${activeTasks} ${activeTasks === 1 ? 'trabalho ativo' : 'trabalhos ativos'}.`;
   return 'Online e sem trabalhos ativos.';
+}
+
+function productionViewStorageKey(userId: string, boardId: string) {
+  return `editflow:production-view:${userId}:${boardId}`;
+}
+
+function isProductionView(value: string | null): value is ProductionView {
+  return value === 'kanban' || value === 'list' || value === 'calendar';
+}
+
+function localDayKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 function normalizeText(value: string) {

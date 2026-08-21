@@ -109,6 +109,10 @@ const updateHelperReadyPath = () => path.join(app.getPath('userData'), 'update-p
 const updateHelperErrorPath = () => path.join(app.getPath('userData'), 'logs', 'update-progress-error.log');
 const desktopPreferencesPath = () => path.join(app.getPath('userData'), 'desktop-preferences.json');
 const currencyRateCachePath = () => path.join(app.getPath('userData'), 'usd-brl-rate.json');
+const bundledAssetPath = (fileName: string) => app.isPackaged
+  ? path.join(process.resourcesPath, fileName)
+  : path.join(app.getAppPath(), 'build', fileName);
+const appIconPath = () => bundledAssetPath('editflow-icon.ico');
 
 const readCachedUsdBrlRate = async (): Promise<UsdBrlRate | null> => {
   try {
@@ -298,8 +302,14 @@ const showMainWindow = () => {
 };
 
 const createTrayImage = () => {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><rect width="32" height="32" rx="9" fill="#211b70"/><path d="M16 6.5l1.7 5.8 5.8 1.7-5.8 1.7L16 21.5l-1.7-5.8L8.5 14l5.8-1.7L16 6.5z" fill="white"/><circle cx="23.5" cy="23.5" r="2.5" fill="#a99fff"/></svg>`;
-  return nativeImage.createFromDataURL(`data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`).resize({ width: 16, height: 16 });
+  const trayImage = nativeImage.createFromPath(bundledAssetPath('editflow-tray.png'));
+  if (!trayImage.isEmpty()) return trayImage;
+
+  const appImage = nativeImage.createFromPath(appIconPath());
+  if (!appImage.isEmpty()) return appImage.resize({ width: 16, height: 16 });
+
+  const fallbackSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#281071"/><path d="M10 7.5v12l9-6-9-6z" fill="#fff"/><path d="M5.5 20c5 4 10 3 14-1.5" fill="none" stroke="#19d8ec" stroke-width="3.5" stroke-linecap="round"/><path d="m19 22 2 2 5-6" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  return nativeImage.createFromDataURL(`data:image/svg+xml;charset=UTF-8,${encodeURIComponent(fallbackSvg)}`).resize({ width: 16, height: 16 });
 };
 
 const createTray = () => {
@@ -389,6 +399,7 @@ const createUpdateSplash = (phase: 'installing' | 'finishing') => {
     alwaysOnTop: true,
     skipTaskbar: true,
     show: false,
+    icon: appIconPath(),
     hasShadow: true,
     webPreferences: {
       contextIsolation: true,
@@ -664,6 +675,7 @@ const createWindow = () => {
     show: false,
     backgroundColor: '#080b13',
     title: 'EditFlow',
+    icon: appIconPath(),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -753,6 +765,7 @@ ipcMain.handle('finance:export-pdf', async (_event, value: unknown) => {
 
   const reportWindow = new BrowserWindow({
     show: false,
+    icon: appIconPath(),
     width: 1200,
     height: 800,
     webPreferences: { sandbox: true },

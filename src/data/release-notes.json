@@ -1,5 +1,40 @@
 [
   {
+    "version": "0.1.50",
+    "date": "2026-08-21",
+    "title": "Produção do seu jeito",
+    "summary": "O mesmo fluxo de trabalho agora pode ser acompanhado como quadro, lista ou calendário, sem duplicar tarefas nem perder as regras da equipe.",
+    "sections": [
+      {
+        "kind": "new",
+        "title": "Novas visualizações",
+        "items": [
+          "Visualização em lista para consultar e movimentar muitas tarefas rapidamente.",
+          "Calendário mensal com entregas organizadas por prazo e navegação entre meses.",
+          "Área dedicada às tarefas que ainda não possuem uma data de entrega."
+        ]
+      },
+      {
+        "kind": "improved",
+        "title": "Experiência de produção",
+        "items": [
+          "Seletor centralizado entre Quadro, Lista e Calendário.",
+          "A visualização escolhida fica salva individualmente para cada usuário e quadro.",
+          "Busca, permissões, automações e detalhes continuam funcionando em todos os modos."
+        ]
+      },
+      {
+        "kind": "improved",
+        "title": "Nova identidade do EditFlow",
+        "items": [
+          "Novo símbolo Play + Fluxo aplicado ao aplicativo e ao instalador.",
+          "Ícone próprio e nítido na bandeja do Windows, inclusive em telas de alta resolução.",
+          "Marca atualizada no carregamento e na navegação principal do EditFlow."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.1.49",
     "date": "2026-08-21",
     "title": "Automações inteligentes para os quadros",
