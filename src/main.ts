@@ -31,6 +31,7 @@ type DesktopPreferences = {
   showWelcome: boolean;
   nativeNotifications: boolean;
   theme: 'light' | 'dark' | 'system';
+  startupPage: 'my-work' | 'board';
 };
 
 const defaultDesktopPreferences: DesktopPreferences = {
@@ -39,6 +40,7 @@ const defaultDesktopPreferences: DesktopPreferences = {
   showWelcome: true,
   nativeNotifications: true,
   theme: 'light',
+  startupPage: 'my-work',
 };
 
 let desktopPreferences = defaultDesktopPreferences;
@@ -1002,11 +1004,15 @@ function sanitizeDesktopPreferences(value: unknown): DesktopPreferences {
   const theme = saved.theme === 'dark' || saved.theme === 'system' || saved.theme === 'light'
     ? saved.theme
     : defaultDesktopPreferences.theme;
+  const startupPage = saved.startupPage === 'board' || saved.startupPage === 'my-work'
+    ? saved.startupPage
+    : defaultDesktopPreferences.startupPage;
   return {
     launchAtLogin: typeof saved.launchAtLogin === 'boolean' ? saved.launchAtLogin : defaultDesktopPreferences.launchAtLogin,
     closeToTray: typeof saved.closeToTray === 'boolean' ? saved.closeToTray : defaultDesktopPreferences.closeToTray,
     showWelcome: typeof saved.showWelcome === 'boolean' ? saved.showWelcome : defaultDesktopPreferences.showWelcome,
     nativeNotifications: typeof saved.nativeNotifications === 'boolean' ? saved.nativeNotifications : defaultDesktopPreferences.nativeNotifications,
     theme,
+    startupPage,
   };
 }

@@ -281,8 +281,8 @@ export function WelcomeScreen({
               </label>
               <div className="welcome-footer-actions">
                 {invitationCount ? <span className="welcome-invites"><Bell size={13} />{invitationCount} {invitationCount === 1 ? 'convite pendente' : 'convites pendentes'}</span> : null}
-                <button className="welcome-enter" disabled={loading || continuing} onClick={() => void continueTo({ kind: 'board' })}>
-                  <span>Entrar na produção</span><ArrowRight size={18} />
+                <button className="welcome-enter" disabled={loading || continuing} onClick={() => void continueTo({ kind: 'home' })}>
+                  <span>Ver meu trabalho</span><ArrowRight size={18} />
                 </button>
               </div>
             </footer>

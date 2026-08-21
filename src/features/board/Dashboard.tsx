@@ -4,6 +4,7 @@ import type { RealtimeChannel, User } from '@supabase/supabase-js';
 import {
   AlertTriangle,
   Bell,
+  BriefcaseBusiness,
   CalendarClock,
   ChevronDown,
   CheckCircle2,
@@ -41,6 +42,7 @@ import { calculateDueDate, calendarDayOffset } from '../../lib/taskTemplate';
 import { ChatPanel, type ChatOpenRequest } from '../chat/ChatPanel';
 import { FinanceView } from '../finance/FinanceView';
 import { ClientsView, SettingsView, TeamView, type SettingsTab } from '../workspace/WorkspaceViews';
+import { MyWorkView } from '../workspace/MyWorkView';
 import { NotificationsMenu } from './NotificationsMenu';
 import type {
   AppNotification,
@@ -68,12 +70,13 @@ type Props = {
   workspaces: WorkspaceSummary[];
   onWorkspaceChange: (id: string) => void;
   onWorkspacesChanged: () => Promise<void>;
+  initialView: 'home' | 'board';
   startupAction: WelcomeStartupAction | null;
   onStartupActionHandled: () => void;
 };
 
 type SyncStatus = 'connecting' | 'connected' | 'offline' | 'error';
-type DashboardView = 'board' | 'clients' | 'team' | 'finance' | 'settings';
+type DashboardView = 'home' | 'board' | 'clients' | 'team' | 'finance' | 'settings';
 type ClientTaskTemplateDraft = Pick<ClientTaskTemplate,
   'title_template' | 'description_template' | 'priority' | 'assignee_id' | 'due_offset_days' | 'due_business_days' | 'link_label'
 >;
@@ -108,7 +111,7 @@ function mergeRealtimeRow<T extends { id: string }>(
   return sort ? merged.slice().sort(sort) : merged;
 }
 
-export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWorkspacesChanged, startupAction, onStartupActionHandled }: Props) {
+export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWorkspacesChanged, initialView, startupAction, onStartupActionHandled }: Props) {
   const canManagePlanning = workspace.role === 'owner' || workspace.role === 'admin';
   const [board, setBoard] = useState<Board | null>(null);
   const [columns, setColumns] = useState<BoardColumn[]>([]);
@@ -130,7 +133,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null);
   const [columnDropTarget, setColumnDropTarget] = useState<{ columnId: string; edge: 'before' | 'after' } | null>(null);
   const [editor, setEditor] = useState<{ mode: 'new' | 'edit'; task: Task | null; columnId?: string } | null>(null);
-  const [view, setView] = useState<DashboardView>('board');
+  const [view, setView] = useState<DashboardView>(initialView);
   const [columnMenuId, setColumnMenuId] = useState<string | null>(null);
   const [editingColumn, setEditingColumn] = useState<BoardColumn | null>(null);
   const [creatingColumn, setCreatingColumn] = useState(false);
@@ -883,6 +886,16 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 
   useEffect(() => {
     if (!startupAction || loading) return;
+    if (startupAction.kind === 'home') {
+      setView('home');
+      onStartupActionHandled();
+      return;
+    }
+    if (startupAction.kind === 'board') {
+      setView('board');
+      onStartupActionHandled();
+      return;
+    }
     if (startupAction.kind === 'notifications') {
       setShowNotifications(true);
       onStartupActionHandled();
@@ -920,6 +933,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         </div>
 
         <nav className="sidebar-nav" aria-label="Navegação principal">
+          <button className={`nav-item ${view === 'home' ? 'active' : ''}`} onClick={() => void navigateTo('home')}><BriefcaseBusiness size={18} /><span>Meu trabalho</span></button>
           <button className={`nav-item ${view === 'board' ? 'active' : ''}`} onClick={() => void navigateTo('board')}><LayoutDashboard size={18} /><span>Produção</span></button>
           {canManagePlanning ? <button className={`nav-item ${view === 'clients' ? 'active' : ''}`} onClick={() => void navigateTo('clients')}><Users size={18} /><span>Clientes</span><small>{clients.length}</small></button> : null}
           <button className={`nav-item ${view === 'team' ? 'active' : ''}`} onClick={() => void navigateTo('team')}><Users size={18} /><span>Equipe</span><small>{liveMembers.length}</small></button>
@@ -945,7 +959,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         <header className="dashboard-header">
           <div>
             <p>ESPAÇO DE TRABALHO</p>
-            <h1>{view === 'board' ? board?.name ?? 'Produção' : view === 'clients' ? 'Clientes' : view === 'team' ? 'Equipe' : view === 'finance' ? 'Ganhos' : 'Configurações'}</h1>
+            <h1>{view === 'home' ? 'Meu trabalho' : view === 'board' ? board?.name ?? 'Produção' : view === 'clients' ? 'Clientes' : view === 'team' ? 'Equipe' : view === 'finance' ? 'Ganhos' : 'Configurações'}</h1>
           </div>
           <div className="header-actions">
             <div className="notification-wrap" ref={notificationRef}>
@@ -977,6 +991,24 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         </div> : null}
 
         {error ? <div className="board-error"><span>{error}</span><button onClick={() => void loadBoard()}>Tentar novamente</button></div> : null}
+
+        {view === 'home' ? <MyWorkView
+          workspace={workspace}
+          currentUserId={user.id}
+          displayName={currentUserMember?.display_name || String(user.user_metadata.full_name ?? '') || user.email || 'Você'}
+          tasks={tasks}
+          columns={columns}
+          clients={clients}
+          members={liveMembers}
+          notifications={inboxNotifications}
+          onOpenTask={(task) => { setView('board'); setEditor({ mode: 'edit', task }); }}
+          onOpenNotification={(notification) => void openInboxNotification(notification)}
+          onOpenBoard={() => setView('board')}
+          onOpenTeam={() => setView('team')}
+          onOpenFinance={() => setView('finance')}
+          onOpenNotifications={() => setShowNotifications(true)}
+          onCreateTask={() => setEditor({ mode: 'new', task: null, columnId: columns[0]?.id })}
+        /> : null}
 
         {view === 'board' ? <div className="kanban-board">
           {columns.map((column) => {

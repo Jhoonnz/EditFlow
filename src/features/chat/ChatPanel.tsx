@@ -492,13 +492,16 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
               {messages.map((message, index) => {
                 const author = members.find((member) => member.user_id === message.sender_id) ?? null;
                 const own = message.sender_id === currentUserId;
+                const mentionsCurrentUser = !own && (message.mentions ?? []).some(
+                  (mention) => mention.user_id === currentUserId,
+                );
                 const previous = messages[index - 1];
                 const showDay = !previous || dateKey(previous.created_at) !== dateKey(message.created_at);
                 const showAuthor = selectedConversation?.kind === 'general' && !own && (!previous || previous.sender_id !== message.sender_id || showDay);
                 return (
                   <div key={message.id}>
                     {showDay ? <div className="chat-day-divider"><span>{dayLabel(message.created_at)}</span></div> : null}
-                    <article className={`chat-message ${own ? 'own' : ''}`}>
+                    <article className={`chat-message ${own ? 'own' : ''} ${mentionsCurrentUser ? 'mentions-current-user' : ''}`}>
                       {!own ? <MemberAvatar member={author} compact /> : null}
                       <div>
                         {showAuthor ? <strong className="chat-message-author">{author?.display_name ?? 'Membro'}</strong> : null}

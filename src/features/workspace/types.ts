@@ -37,6 +37,7 @@ export type EditFlowAccountSearchResult = {
 };
 
 export type WelcomeStartupAction =
+  | { kind: 'home' }
   | { kind: 'board' }
   | { kind: 'notifications'; workspaceId?: string }
   | { kind: 'task'; taskId: string; workspaceId: string };

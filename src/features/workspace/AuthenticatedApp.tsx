@@ -280,7 +280,7 @@ export function AuthenticatedApp({ user }: Props) {
         previousOpenedAt={welcomeAccess.previousOpenedAt}
         onDisableWelcome={disableWelcome}
         onContinue={(action) => {
-          if (action.kind !== 'board' && action.workspaceId) setActiveWorkspaceId(action.workspaceId);
+          if ('workspaceId' in action && action.workspaceId) setActiveWorkspaceId(action.workspaceId);
           setStartupAction(action);
           setWelcomeDismissed(true);
         }}
@@ -295,6 +295,7 @@ export function AuthenticatedApp({ user }: Props) {
       workspaces={workspaces}
       onWorkspaceChange={setActiveWorkspaceId}
       onWorkspacesChanged={loadWorkspaces}
+      initialView={desktopPreferences.startupPage === 'board' ? 'board' : 'home'}
       startupAction={startupAction}
       onStartupActionHandled={() => setStartupAction(null)}
     />

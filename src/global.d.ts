@@ -40,6 +40,7 @@ type EditFlowDesktopPreferences = {
   showWelcome: boolean;
   nativeNotifications: boolean;
   theme: 'light' | 'dark' | 'system';
+  startupPage: 'my-work' | 'board';
 };
 
 type EditFlowUsdBrlRate = {

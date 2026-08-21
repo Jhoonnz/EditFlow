@@ -936,7 +936,7 @@ export function SettingsView({
 
   const updateDesktopPreference = async (
     key: keyof EditFlowDesktopPreferences,
-    value: boolean | EditFlowDesktopPreferences['theme'],
+    value: EditFlowDesktopPreferences[keyof EditFlowDesktopPreferences],
   ) => {
     if (!desktopPreferences || desktopSaving) return;
     const nextPreferences = { ...desktopPreferences, [key]: value };
@@ -1040,6 +1040,13 @@ export function SettingsView({
               <DesktopPreference icon={Power} title="Iniciar com o Windows" description="Abre o EditFlow automaticamente quando você entrar no computador." checked={desktopPreferences.launchAtLogin} saving={desktopSaving !== null} onChange={(checked) => void updateDesktopPreference('launchAtLogin', checked)} />
               <DesktopPreference icon={X} title="Manter ativo ao clicar no X" description="Esconde a janela nos ícones ocultos para continuar funcionando." checked={desktopPreferences.closeToTray} saving={desktopSaving !== null} onChange={(checked) => void updateDesktopPreference('closeToTray', checked)} />
               <DesktopPreference icon={Eye} title="Mostrar resumo ao abrir" description="Exibe a tela de boas-vindas com tarefas, mensagens e prazos." checked={desktopPreferences.showWelcome} saving={desktopSaving !== null} onChange={(checked) => void updateDesktopPreference('showWelcome', checked)} />
+            </div> : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
+          </section>
+          <section className="content-card settings-page-card startup-page-settings-card">
+            <div className="content-card-heading"><span className="content-icon"><BriefcaseBusiness size={18} /></span><div><h2>Página inicial</h2><p>Escolha o primeiro espaço exibido depois das boas-vindas.</p></div></div>
+            {desktopPreferences ? <div className="theme-options startup-page-options" role="radiogroup" aria-label="Página inicial do aplicativo">
+              <ThemeOption icon={BriefcaseBusiness} title="Meu trabalho" description="Prioridades, prazos e novidades do seu dia." active={desktopPreferences.startupPage === 'my-work'} saving={desktopSaving !== null} onClick={() => void updateDesktopPreference('startupPage', 'my-work')} />
+              <ThemeOption icon={AppWindow} title="Produção" description="Abre diretamente o quadro Kanban da equipe." active={desktopPreferences.startupPage === 'board'} saving={desktopSaving !== null} onClick={() => void updateDesktopPreference('startupPage', 'board')} />
             </div> : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
           </section>
           <section className="content-card settings-page-card appearance-settings-card">
