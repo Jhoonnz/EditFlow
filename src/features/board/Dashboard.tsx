@@ -7,7 +7,6 @@ import {
   CalendarClock,
   ChevronDown,
   CheckCircle2,
-  CirclePlus,
   Columns3,
   Download,
   ExternalLink,
@@ -137,6 +136,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [workspaceDialogError, setWorkspaceDialogError] = useState<string | null>(null);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [showCompletedTasks, setShowCompletedTasks] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [liveNotification, setLiveNotification] = useState<AppNotification | null>(null);
   const [profileMemberId, setProfileMemberId] = useState<string | null>(null);
@@ -657,6 +657,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     return { ...member, availability };
   }), [members, presenceActivity, presenceReady, tasks]);
   const currentUserMember = liveMembers.find((member) => member.user_id === user.id);
+  const completionColumn = columns.find((column) => column.is_completion) ?? columns.at(-1) ?? null;
 
   const filteredTasks = useMemo(() => {
     const term = search.trim().toLocaleLowerCase('pt-BR');
@@ -975,6 +976,10 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         {view === 'board' ? <div className="kanban-board">
           {columns.map((column) => {
             const columnTasks = tasksByColumn.get(column.id) ?? [];
+            const isCompletionColumn = column.id === completionColumn?.id;
+            const visibleColumnTasks = isCompletionColumn
+              ? columnTasks.slice().sort((first, second) => completedTaskTime(second) - completedTaskTime(first)).slice(0, 10)
+              : columnTasks;
             return (
               <section
                 className={`kanban-column ${dropColumnId === column.id ? 'drop-active' : ''} ${columnDropTarget?.columnId === column.id ? `column-drop-${columnDropTarget.edge}` : ''}`}
@@ -1033,11 +1038,12 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                 </header>
 
                 <div className="column-cards">
-                  {columnTasks.map((task) => (
+                  {visibleColumnTasks.map((task) => (
                     <TaskCard
                       key={task.id}
                       task={task}
                       column={column}
+                      completedVariant={isCompletionColumn}
                       progressPercent={Math.round(((columns.findIndex((item) => item.id === column.id) + 1) / Math.max(columns.length, 1)) * 100)}
                       client={clients.find((client) => client.id === task.client_id)}
                       assignee={liveMembers.find((member) => member.user_id === task.assignee_id)}
@@ -1072,7 +1078,15 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                   {!columnTasks.length ? <div className="empty-column">Arraste uma tarefa para cá</div> : null}
                 </div>
 
-                {canManagePlanning ? <button className="column-add" onClick={() => setEditor({ mode: 'new', task: null, columnId: column.id })}><Plus size={16} />Adicionar tarefa</button> : null}
+                {isCompletionColumn && columnTasks.length ? (
+                  <button className="completed-tasks-open" type="button" onClick={() => setShowCompletedTasks(true)}>
+                    <CheckCircle2 size={15} />
+                    <span>Ver todos os finalizados</span>
+                    <strong>{tasks.filter((task) => task.column_id === column.id).length}</strong>
+                  </button>
+                ) : null}
+
+                {canManagePlanning && column.id === columns[0]?.id ? <button className="column-add" onClick={() => setEditor({ mode: 'new', task: null, columnId: column.id })}><Plus size={16} />Adicionar tarefa</button> : null}
               </section>
             );
           })}
@@ -1107,6 +1121,14 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           onClose={() => setEditor(null)}
           onChanged={async () => { await loadBoard(true); setEditor(null); }}
           onLinksChanged={async () => { await loadBoard(true); }}
+        />
+      ) : null}
+      {showCompletedTasks && completionColumn ? (
+        <CompletedTasksModal
+          tasks={tasks.filter((task) => task.column_id === completionColumn.id)}
+          clients={clients}
+          onClose={() => setShowCompletedTasks(false)}
+          onOpenTask={(task) => { setShowCompletedTasks(false); setEditor({ mode: 'edit', task }); }}
         />
       ) : null}
       {profileMemberId && liveMembers.find((member) => member.user_id === profileMemberId) ? (
@@ -1255,6 +1277,7 @@ function ColumnEditor({
 function TaskCard({
   task,
   column,
+  completedVariant,
   progressPercent,
   client,
   assignee,
@@ -1274,6 +1297,7 @@ function TaskCard({
 }: {
   task: Task;
   column: BoardColumn;
+  completedVariant: boolean;
   progressPercent: number;
   client?: Client;
   assignee?: WorkspaceMember;
@@ -1298,7 +1322,7 @@ function TaskCard({
   const assigneeButtonRef = useRef<HTMLButtonElement>(null);
   const assigneePopoverRef = useRef<HTMLElement>(null);
   const [assigneePopoverStyle, setAssigneePopoverStyle] = useState<CSSProperties | null>(null);
-  const taskFinished = column.is_completion || Boolean(task.completed_at);
+  const taskFinished = completedVariant || Boolean(task.completed_at);
   const countdown = taskCountdown(task.due_at, taskFinished);
   const subtitle = client?.name || task.description || priorityLabel(task.priority);
   const downloadLinks = taskLinks.filter((link) => link.category === 'download');
@@ -1369,6 +1393,25 @@ function TaskCard({
     }
     setShowLinks(true);
   };
+
+  if (completedVariant) {
+    return (
+      <div
+        className={`task-card completed-compact ${dragging ? 'dragging' : ''} ${dropEdge ? `task-drop-${dropEdge}` : ''}`}
+        style={cardStyle}
+        draggable={dragEnabled}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
+      >
+        <button type="button" className="completed-card-open" onClick={handleMainClick} aria-label={`Abrir detalhes de ${task.title}`}>
+          <span><strong>{task.title}</strong><small>{client?.name ?? 'Sem cliente'}</small></span>
+          <CheckCircle2 size={18} />
+        </button>
+      </div>
+    );
+  }
 
   return <>
     <div
@@ -1473,6 +1516,80 @@ function TaskLinksModal({ taskTitle, links, onClose }: { taskTitle: string; link
         </div>
       </section>
     </div>
+  );
+}
+
+function CompletedTasksModal({
+  tasks,
+  clients,
+  onClose,
+  onOpenTask,
+}: {
+  tasks: Task[];
+  clients: Client[];
+  onClose: () => void;
+  onOpenTask: (task: Task) => void;
+}) {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [clientId, setClientId] = useState('');
+  const [month, setMonth] = useState('');
+  const dialogRef = useDialogFocus<HTMLElement>(true, onClose);
+  const clientById = useMemo(() => new Map(clients.map((client) => [client.id, client])), [clients]);
+  const availableClients = useMemo(() => clients
+    .filter((client) => tasks.some((task) => task.client_id === client.id))
+    .sort((first, second) => first.name.localeCompare(second.name, 'pt-BR')), [clients, tasks]);
+  const availableMonths = useMemo(() => Array.from(new Set(tasks.map(completedTaskMonth))).sort().reverse(), [tasks]);
+  const filteredCompletedTasks = useMemo(() => {
+    const normalizedSearch = normalizeText(searchTerm.trim());
+    return tasks
+      .filter((task) => !clientId || task.client_id === clientId)
+      .filter((task) => !month || completedTaskMonth(task) === month)
+      .filter((task) => {
+        if (!normalizedSearch) return true;
+        const client = task.client_id ? clientById.get(task.client_id) : null;
+        return normalizeText(`${task.title} ${client?.name ?? ''}`).includes(normalizedSearch);
+      })
+      .sort((first, second) => completedTaskTime(second) - completedTaskTime(first));
+  }, [clientById, clientId, month, searchTerm, tasks]);
+  const groupedTasks = useMemo(() => {
+    const groups = new Map<string, Task[]>();
+    filteredCompletedTasks.forEach((task) => {
+      const key = completedTaskMonth(task);
+      groups.set(key, [...(groups.get(key) ?? []), task]);
+    });
+    return Array.from(groups.entries());
+  }, [filteredCompletedTasks]);
+
+  return createPortal(
+    <div className="completed-tasks-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section ref={dialogRef} tabIndex={-1} className="completed-tasks-modal" role="dialog" aria-modal="true" aria-labelledby="completed-tasks-title">
+        <header>
+          <span><CheckCircle2 size={21} /></span>
+          <div><p>HISTÓRICO DE PRODUÇÃO</p><h2 id="completed-tasks-title">Trabalhos finalizados</h2><small>{tasks.length} {tasks.length === 1 ? 'trabalho concluído' : 'trabalhos concluídos'}</small></div>
+          <button type="button" onClick={onClose} aria-label="Fechar finalizados"><X size={19} /></button>
+        </header>
+        <div className="completed-tasks-filters">
+          <label className="completed-search"><Search size={15} /><input autoFocus value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Buscar por título ou cliente..." /></label>
+          <label><span>Cliente</span><select value={clientId} onChange={(event) => setClientId(event.target.value)}><option value="">Todos os clientes</option>{availableClients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label>
+          <label><span>Mês</span><select value={month} onChange={(event) => setMonth(event.target.value)}><option value="">Todos os meses</option>{availableMonths.map((option) => <option key={option} value={option}>{formatCompletedMonth(option)}</option>)}</select></label>
+        </div>
+        <div className="completed-tasks-results">
+          {groupedTasks.map(([monthKey, monthTasks]) => (
+            <section className="completed-month-group" key={monthKey}>
+              <header><h3>{formatCompletedMonth(monthKey)}</h3><span>{monthTasks.length}</span></header>
+              <div>
+                {monthTasks.map((task) => {
+                  const client = task.client_id ? clientById.get(task.client_id) : null;
+                  return <button type="button" key={task.id} onClick={() => onOpenTask(task)}><span className="completed-result-check"><CheckCircle2 size={16} /></span><span><strong>{task.title}</strong><small>{client?.name ?? 'Sem cliente'}</small></span><time>{formatCompletedDate(completedTaskDate(task))}</time></button>;
+                })}
+              </div>
+            </section>
+          ))}
+          {!filteredCompletedTasks.length ? <div className="completed-tasks-empty"><Search size={22} /><strong>Nenhum finalizado encontrado</strong><small>Altere os filtros para visualizar outros trabalhos.</small></div> : null}
+        </div>
+      </section>
+    </div>,
+    document.body,
   );
 }
 
@@ -1654,8 +1771,6 @@ function TaskEditor({
   const [draft, setDraft] = useState<TaskDraft>(initialDraft);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [newClientName, setNewClientName] = useState('');
-  const [showClientForm, setShowClientForm] = useState(false);
   const [linkLabel, setLinkLabel] = useState('Arquivos para download');
   const [linkUrl, setLinkUrl] = useState('');
   const [linkCategory, setLinkCategory] = useState<TaskLinkCategory>('download');
@@ -1777,20 +1892,6 @@ function TaskEditor({
     await onChanged();
   };
 
-  const createClient = async () => {
-    if (!supabase || newClientName.trim().length < 1) return;
-    const { data, error: clientError } = await supabase
-      .from('clients')
-      .insert({ workspace_id: workspace.id, name: newClientName.trim() })
-      .select('id')
-      .single();
-    if (clientError) { setError(clientError.message); return; }
-    setDraft((current) => ({ ...current, client_id: data.id as string }));
-    setNewClientName('');
-    setShowClientForm(false);
-    await onLinksChanged();
-  };
-
   const addLink = async () => {
     if (!supabase || !task || !linkLabel.trim() || !linkUrl.trim() || linkSaving) return;
     setLinkSaving(true);
@@ -1890,10 +1991,7 @@ function TaskEditor({
 
           <label>
             <span>Cliente</span>
-            <div className="client-select-row">
-              <select value={draft.client_id} disabled={!canManagePlanning} onChange={(event) => setDraft({ ...draft, client_id: event.target.value })}><option value="">Sem cliente</option>{clients.map((client) => <option value={client.id} key={client.id}>{client.name}</option>)}</select>
-              {canManagePlanning ? <button type="button" onClick={() => setShowClientForm((show) => !show)} aria-label="Adicionar cliente"><CirclePlus size={19} /></button> : null}
-            </div>
+            <select value={draft.client_id} disabled={!canManagePlanning} onChange={(event) => setDraft({ ...draft, client_id: event.target.value })}><option value="">Sem cliente</option>{clients.map((client) => <option value={client.id} key={client.id}>{client.name}</option>)}</select>
           </label>
 
           <div className="editor-grid">
@@ -1909,8 +2007,6 @@ function TaskEditor({
               <div className="revision-input"><strong>V</strong><input type="number" min="1" max="99" value={draft.revision_round} onChange={(event) => setDraft({ ...draft, revision_round: Math.max(1, Math.min(99, Number(event.target.value) || 1)) })} /></div>
             </label>
           </div>
-
-          {showClientForm && canManagePlanning ? <div className="quick-client"><input value={newClientName} onChange={(event) => setNewClientName(event.target.value)} placeholder="Nome do novo cliente" /><button type="button" onClick={() => void createClient()}>Adicionar</button></div> : null}
 
           {mode === 'new' && canManagePlanning ? (
             <div className="initial-link-panel">
@@ -2084,6 +2180,30 @@ function normalizeText(value: string) {
 
 function taskSortValue(task: Task) {
   return task.due_at ? new Date(task.due_at).getTime() : Number.MAX_SAFE_INTEGER;
+}
+
+function completedTaskDate(task: Task) {
+  return task.completed_at ?? task.updated_at;
+}
+
+function completedTaskTime(task: Task) {
+  return new Date(completedTaskDate(task)).getTime();
+}
+
+function completedTaskMonth(task: Task) {
+  const date = new Date(completedTaskDate(task));
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function formatCompletedMonth(month: string) {
+  const [year, monthNumber] = month.split('-').map(Number);
+  if (!year || !monthNumber) return month;
+  const formatted = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(new Date(year, monthNumber - 1, 1));
+  return formatted.charAt(0).toLocaleUpperCase('pt-BR') + formatted.slice(1);
+}
+
+function formatCompletedDate(date: string) {
+  return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(date));
 }
 
 function formatDate(date: string) {
