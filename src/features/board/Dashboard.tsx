@@ -1153,6 +1153,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         members={liveMembers}
         request={chatRequest}
         onRequestHandled={handleChatRequestHandled}
+        onOpenProfile={setProfileMemberId}
       />
       {liveNotification ? (
         <aside className="live-notification" role="status" aria-live="polite">
@@ -1360,12 +1361,13 @@ function TaskCard({
     if (saved) setShowAssignees(false);
   };
 
-  const handleDownloadClick = async () => {
-    if (downloadLinks.length === 1) {
-      await window.editflow.openExternal(downloadLinks[0].url);
+  const handleLinksClick = async () => {
+    setShowAssignees(false);
+    if (taskLinks.length === 1) {
+      await window.editflow.openExternal(taskLinks[0].url);
       return;
     }
-    setShowLinks((show) => !show);
+    setShowLinks(true);
   };
 
   return <>
@@ -1407,14 +1409,14 @@ function TaskCard({
               onClick={() => { setShowLinks(false); onOpenProfile(assignee.user_id); }}
             >{assignee.avatar_url ? <img src={assignee.avatar_url} alt="" /> : memberInitials(assignee.display_name)}</button>
           ) : <span className="task-card-avatar empty" title="Sem responsável">?</span>}
-          {downloadLinks.length ? (
+          {taskLinks.length ? (
             <button
               type="button"
               className="task-card-download"
-              title={downloadLinks.length === 1 ? `Abrir ${downloadLinks[0].label}` : `Ver ${downloadLinks.length} links de download`}
-              aria-label={downloadLinks.length === 1 ? `Abrir ${downloadLinks[0].label}` : `Ver links de download`}
-              onClick={() => void handleDownloadClick()}
-            ><Download size={11} />{downloadLinks.length > 1 ? downloadLinks.length : null}</button>
+              title={taskLinks.length === 1 ? `Abrir ${taskLinks[0].label}` : `Ver os ${taskLinks.length} links da tarefa`}
+              aria-label={taskLinks.length === 1 ? `Abrir ${taskLinks[0].label}` : `Ver links da tarefa`}
+              onClick={() => void handleLinksClick()}
+            >{downloadLinks.length ? <Download size={11} /> : <Link2 size={11} />}{taskLinks.length > 1 ? taskLinks.length : null}</button>
           ) : null}
           {canAssign ? <div className="task-assignee-picker" ref={assigneePickerRef}>
             <button ref={assigneeButtonRef} type="button" className={`task-card-add-person ${showAssignees ? 'active' : ''}`} title={assignee ? 'Trocar responsável' : 'Definir responsável'} aria-label={assignee ? 'Trocar responsável' : 'Definir responsável'} onClick={() => { setShowLinks(false); setShowAssignees((show) => !show); }}><Plus size={11} /></button>
@@ -1422,17 +1424,11 @@ function TaskCard({
         </span>
         <span className={`task-card-countdown ${countdown.state}`}>{taskFinished ? <CheckCircle2 size={11} /> : null}{countdown.label}</span>
       </span>
-      {showLinks && downloadLinks.length > 1 ? (
-        <aside className="task-download-popover" aria-label="Links de download">
-          <strong>ARQUIVOS PARA DOWNLOAD</strong>
-          {downloadLinks.map((link) => (
-            <button type="button" key={link.id} onClick={() => { setShowLinks(false); void window.editflow.openExternal(link.url); }}>
-              <Download size={12} /><span>{link.label}</span><ExternalLink size={11} />
-            </button>
-          ))}
-        </aside>
-      ) : null}
     </div>
+    {showLinks && taskLinks.length > 1 ? createPortal(
+      <TaskLinksModal taskTitle={task.title} links={taskLinks} onClose={() => setShowLinks(false)} />,
+      document.body,
+    ) : null}
     {showAssignees && assigneePopoverStyle ? createPortal(
       <aside ref={assigneePopoverRef} className="task-assignee-popover task-assignee-popover-portal" style={assigneePopoverStyle} aria-label="Escolher responsável">
         <strong>RESPONSÁVEL</strong>
@@ -1442,6 +1438,42 @@ function TaskCard({
       document.body,
     ) : null}
   </>;
+}
+
+function TaskLinksModal({ taskTitle, links, onClose }: { taskTitle: string; links: TaskLink[]; onClose: () => void }) {
+  const dialogRef = useDialogFocus<HTMLElement>(true, onClose);
+  const categoryOrder: TaskLinkCategory[] = ['download', 'review', 'delivery', 'briefing', 'reference'];
+  const groupedLinks = categoryOrder
+    .map((category) => ({ category, links: links.filter((link) => link.category === category) }))
+    .filter((group) => group.links.length);
+
+  return (
+    <div className="task-links-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section ref={dialogRef} tabIndex={-1} className="task-links-modal" role="dialog" aria-modal="true" aria-labelledby="task-links-title">
+        <header>
+          <span><Link2 size={18} /></span>
+          <div><p>LINKS DA TAREFA</p><h2 id="task-links-title">{taskTitle}</h2><small>{links.length} {links.length === 1 ? 'link disponível' : 'links disponíveis'}</small></div>
+          <button type="button" onClick={onClose} aria-label="Fechar links"><X size={18} /></button>
+        </header>
+        <div className="task-links-groups">
+          {groupedLinks.map((group) => (
+            <section key={group.category}>
+              <h3>{linkCategoryLabel(group.category)} <small>{group.links.length}</small></h3>
+              <div>
+                {group.links.map((link) => (
+                  <button type="button" key={link.id} onClick={() => { onClose(); void window.editflow.openExternal(link.url); }}>
+                    <span className={`task-link-modal-icon ${link.category}`}>{link.category === 'download' ? <Download size={14} /> : <Link2 size={14} />}</span>
+                    <span><strong>{link.label}</strong><small>{shortHost(link.url)}</small></span>
+                    <ExternalLink size={13} />
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function MemberProfilePanel({
@@ -1630,6 +1662,7 @@ function TaskEditor({
   const [activities, setActivities] = useState<TaskActivity[]>([]);
   const [activityLimit, setActivityLimit] = useState(40);
   const [hasMoreActivities, setHasMoreActivities] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
   const [comments, setComments] = useState<TaskComment[]>([]);
   const [commentBody, setCommentBody] = useState('');
   const [commentKind, setCommentKind] = useState<TaskCommentKind>('change_request');
@@ -1677,6 +1710,7 @@ function TaskEditor({
   }, [activityLimit, task]);
 
   useEffect(() => { void loadReviewData(); }, [loadReviewData]);
+  useEffect(() => { setShowActivity(false); }, [task?.id]);
 
   useEffect(() => {
     if (!supabase || !task) return;
@@ -1941,22 +1975,31 @@ function TaskEditor({
         ) : null}
 
         {mode === 'edit' && task ? (
-          <section className="activity-section">
-            <div className="section-title"><div><p>HISTÓRICO</p><h3>Atividade do trabalho</h3></div><History size={19} /></div>
-            {activityError ? <div className="editor-error" role="alert">{activityError}</div> : null}
-            <div className="activity-list">
-              {activities.map((activity) => {
-                const actor = members.find((member) => member.user_id === activity.actor_id);
-                return (
-                  <article className="activity-item" key={activity.id}>
-                    <span className="activity-avatar">{memberInitials(actor?.display_name ?? 'Sistema')}</span>
-                    <div><strong>{actor?.display_name || 'Sistema'}</strong><p>{activityDescription(activity, columns, members)}</p><small>{formatActivityDate(activity.created_at)}</small></div>
-                  </article>
-                );
-              })}
-              {!activities.length && !activityError ? <p className="no-links">Nenhuma atividade registrada ainda.</p> : null}
-            </div>
-            {hasMoreActivities ? <button type="button" className="activity-load-more" onClick={() => setActivityLimit((current) => current + 40)}>Carregar atividades anteriores</button> : null}
+          <section className={`activity-section ${showActivity ? 'expanded' : ''}`}>
+            <button type="button" className="activity-toggle" aria-expanded={showActivity} onClick={() => setShowActivity((current) => !current)}>
+              <span className="activity-toggle-icon"><History size={18} /></span>
+              <span><small>HISTÓRICO</small><strong>Atividade do trabalho</strong></span>
+              <em>{activities.length}{hasMoreActivities ? '+' : ''} {activities.length === 1 && !hasMoreActivities ? 'evento' : 'eventos'}</em>
+              <ChevronDown size={17} />
+            </button>
+            {showActivity ? (
+              <div className="activity-collapsible">
+                {activityError ? <div className="editor-error" role="alert">{activityError}</div> : null}
+                <div className="activity-list">
+                  {activities.map((activity) => {
+                    const actor = members.find((member) => member.user_id === activity.actor_id);
+                    return (
+                      <article className="activity-item" key={activity.id}>
+                        <span className="activity-avatar">{memberInitials(actor?.display_name ?? 'Sistema')}</span>
+                        <div><strong>{actor?.display_name || 'Sistema'}</strong><p>{activityDescription(activity, columns, members)}</p><small>{formatActivityDate(activity.created_at)}</small></div>
+                      </article>
+                    );
+                  })}
+                  {!activities.length && !activityError ? <p className="no-links">Nenhuma atividade registrada ainda.</p> : null}
+                </div>
+                {hasMoreActivities ? <button type="button" className="activity-load-more" onClick={() => setActivityLimit((current) => current + 40)}>Carregar atividades anteriores</button> : null}
+              </div>
+            ) : null}
           </section>
         ) : null}
 
@@ -2102,6 +2145,7 @@ function syncStatusTitle(status: SyncStatus, lastSyncedAt: string | null) {
 }
 
 function nativeNotificationTitle(type: AppNotification['type']) {
+  if (type === 'chat_mention') return 'Você foi mencionado';
   if (type === 'chat_message') return 'Nova mensagem';
   if (type === 'assignment') return 'Nova tarefa atribuída';
   if (type === 'comment') return 'Novo comentário';

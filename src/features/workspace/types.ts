@@ -225,7 +225,7 @@ export type AppNotification = {
   user_id: string;
   task_id: string | null;
   actor_id: string | null;
-  type: 'assignment' | 'comment' | 'change_request' | 'task_updated' | 'task_moved' | 'invite_accepted' | 'chat_message';
+  type: 'assignment' | 'comment' | 'change_request' | 'task_updated' | 'task_moved' | 'invite_accepted' | 'chat_message' | 'chat_mention';
   conversation_id: string | null;
   message: string;
   read_at: string | null;
@@ -257,6 +257,12 @@ export type ChatMessage = {
   workspace_id: string;
   sender_id: string;
   body: string;
+  mentions: ChatMention[];
   edited_at: string | null;
   created_at: string;
+};
+
+export type ChatMention = {
+  user_id: string;
+  label: string;
 };

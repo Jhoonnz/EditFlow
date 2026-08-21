@@ -153,19 +153,20 @@ export function NotificationsMenu({
 }
 
 function notificationCategory(notification: AppNotification): Exclude<NotificationCategory, 'all'> {
-  if (notification.type === 'chat_message') return 'messages';
+  if (notification.type === 'chat_message' || notification.type === 'chat_mention') return 'messages';
   if (notification.type === 'invite_accepted') return 'team';
   return 'tasks';
 }
 
 function notificationIcon(type: AppNotification['type']) {
-  if (type === 'chat_message' || type === 'comment') return MessageCircle;
+  if (type === 'chat_message' || type === 'chat_mention' || type === 'comment') return MessageCircle;
   if (type === 'invite_accepted') return UserRoundPlus;
   if (type === 'assignment') return Users;
   return ListChecks;
 }
 
 function notificationTitle(type: AppNotification['type']) {
+  if (type === 'chat_mention') return 'Você foi mencionado';
   if (type === 'chat_message') return 'Nova mensagem';
   if (type === 'assignment') return 'Tarefa atribuída';
   if (type === 'comment') return 'Novo comentário';

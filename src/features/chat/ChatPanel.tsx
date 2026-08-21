@@ -13,9 +13,11 @@ import {
 import { supabase } from '../../lib/supabase';
 import { useLatestRequest } from '../../lib/asyncRequest';
 import { useDialogFocus } from '../../lib/useDialogFocus';
+import { findMentionContext, type MentionContext } from './chatMentions';
 import type {
   ChatConversation,
   ChatConversationMember,
+  ChatMention,
   ChatMessage,
   WorkspaceMember,
   WorkspaceSummary,
@@ -34,6 +36,7 @@ type Props = {
   request: ChatOpenRequest | null;
   onRequestHandled: () => void;
   onUnreadChange?: (count: number) => void;
+  onOpenProfile: (memberId: string) => void;
 };
 
 type ConversationView = ChatConversation & {
@@ -43,7 +46,7 @@ type ConversationView = ChatConversation & {
   unreadCount: number;
 };
 
-export function ChatPanel({ workspace, currentUserId, members, request, onRequestHandled, onUnreadChange }: Props) {
+export function ChatPanel({ workspace, currentUserId, members, request, onRequestHandled, onUnreadChange, onOpenProfile }: Props) {
   const [open, setOpen] = useState(false);
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [conversationMembers, setConversationMembers] = useState<ChatConversationMember[]>([]);
@@ -52,6 +55,9 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [composer, setComposer] = useState('');
+  const [composerMentions, setComposerMentions] = useState<ChatMention[]>([]);
+  const [mentionContext, setMentionContext] = useState<MentionContext | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
   const [memberSearch, setMemberSearch] = useState('');
   const [showMemberPicker, setShowMemberPicker] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -59,6 +65,7 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedIdRef = useRef<string | null>(null);
   const openRef = useRef(false);
@@ -320,11 +327,22 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
     .filter((member) => member.user_id !== currentUserId)
     .filter((member) => `${member.display_name} ${member.email ?? ''}`.toLocaleLowerCase('pt-BR').includes(memberSearch.trim().toLocaleLowerCase('pt-BR')))
     .sort((first, second) => first.display_name.localeCompare(second.display_name, 'pt-BR'));
+  const mentionableMembers = selectedConversation?.kind === 'direct'
+    ? (selectedConversation.otherMember ? [selectedConversation.otherMember] : [])
+    : members.filter((member) => member.user_id !== currentUserId);
+  const mentionSuggestions = mentionContext
+    ? mentionableMembers
+      .filter((member) => `${member.display_name} ${member.email ?? ''}`.toLocaleLowerCase('pt-BR').includes(mentionContext.query.trim().toLocaleLowerCase('pt-BR')))
+      .sort((first, second) => first.display_name.localeCompare(second.display_name, 'pt-BR'))
+      .slice(0, 6)
+    : [];
 
   const selectConversation = (conversationId: string) => {
     setSelectedId(conversationId);
     setShowMemberPicker(false);
     setComposer('');
+    setComposerMentions([]);
+    setMentionContext(null);
   };
 
   const openDirectConversation = async (memberId: string) => {
@@ -350,15 +368,71 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
       workspace_id: workspace.id,
       sender_id: currentUserId,
       body,
+      mentions: composerMentions,
     });
     setSending(false);
     if (result.error) return setError(chatSetupMessage(result.error.message));
     setComposer('');
+    setComposerMentions([]);
+    setMentionContext(null);
     await Promise.all([loadMessages(selectedId, true), loadOverview(true)]);
     await markConversationRead(selectedId);
   };
 
+  const handleComposerChange = (value: string, cursor: number) => {
+    setComposer(value);
+    const nextMentions = composerMentions.filter((mention) => value.includes(`@${mention.label}`));
+    const nextContext = findMentionContext(value, cursor);
+    const continuesExistingMention = nextContext && nextMentions.some((mention) => {
+      const query = nextContext.query.toLocaleLowerCase('pt-BR');
+      const label = mention.label.toLocaleLowerCase('pt-BR');
+      return query === label || query.startsWith(`${label} `);
+    });
+    setComposerMentions(nextMentions);
+    setMentionContext(continuesExistingMention ? null : nextContext);
+    setMentionIndex(0);
+  };
+
+  const selectMention = (member: WorkspaceMember) => {
+    if (!mentionContext) return;
+    const mentionText = `@${member.display_name}`;
+    const nextValue = `${composer.slice(0, mentionContext.start)}${mentionText} ${composer.slice(mentionContext.end)}`;
+    const nextCursor = mentionContext.start + mentionText.length + 1;
+    setComposer(nextValue);
+    setComposerMentions((current) => current.some((mention) => mention.user_id === member.user_id)
+      ? current
+      : [...current, { user_id: member.user_id, label: member.display_name }]);
+    setMentionContext(null);
+    setMentionIndex(0);
+    window.requestAnimationFrame(() => {
+      composerRef.current?.focus();
+      composerRef.current?.setSelectionRange(nextCursor, nextCursor);
+    });
+  };
+
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionContext && mentionSuggestions.length) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        setMentionIndex((current) => (current + 1) % mentionSuggestions.length);
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        setMentionIndex((current) => (current - 1 + mentionSuggestions.length) % mentionSuggestions.length);
+        return;
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        selectMention(mentionSuggestions[Math.min(mentionIndex, mentionSuggestions.length - 1)]);
+        return;
+      }
+    }
+    if (event.key === 'Escape' && mentionContext) {
+      event.preventDefault();
+      setMentionContext(null);
+      return;
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       void submitMessage();
@@ -429,7 +503,7 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
                       <div>
                         {showAuthor ? <strong className="chat-message-author">{author?.display_name ?? 'Membro'}</strong> : null}
                         <div className="chat-message-bubble">
-                          <p>{renderMessageBody(message.body)}</p>
+                          <p>{renderMessageBody(message.body, message.mentions ?? [], onOpenProfile)}</p>
                           <span>{shortTime(message.created_at)}{message.edited_at ? ' · editada' : ''}</span>
                         </div>
                       </div>
@@ -449,11 +523,33 @@ export function ChatPanel({ workspace, currentUserId, members, request, onReques
               </div>
             ) : null}
             <form className="chat-composer" onSubmit={(event) => void submitMessage(event)}>
+              {mentionContext ? (
+                <div className="chat-mention-picker" role="listbox" aria-label="Mencionar membro">
+                  <header><span>@</span><strong>Mencionar alguém</strong><small>{mentionContext.query ? `“${mentionContext.query.trim()}”` : 'Equipe'}</small></header>
+                  <div>
+                    {mentionSuggestions.map((member, index) => (
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={index === mentionIndex}
+                        className={index === mentionIndex ? 'active' : ''}
+                        key={member.user_id}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => selectMention(member)}
+                      >
+                        <MemberAvatar member={member} compact />
+                        <span><strong>{member.display_name}</strong><small>{availabilityLabel(member)}</small></span>
+                      </button>
+                    ))}
+                    {!mentionSuggestions.length ? <p>Nenhum membro encontrado.</p> : null}
+                  </div>
+                </div>
+              ) : null}
               <div>
-                <textarea value={composer} onChange={(event) => setComposer(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder={selectedConversation ? `Mensagem para ${selectedConversation.kind === 'general' ? 'a equipe' : selectedConversation.otherMember?.display_name ?? 'o membro'}...` : 'Selecione uma conversa'} disabled={!selectedConversation || sending} maxLength={4000} rows={1} />
+                <textarea ref={composerRef} value={composer} onChange={(event) => handleComposerChange(event.target.value, event.target.selectionStart)} onKeyDown={handleComposerKeyDown} placeholder={selectedConversation ? `Mensagem para ${selectedConversation.kind === 'general' ? 'a equipe' : selectedConversation.otherMember?.display_name ?? 'o membro'}...` : 'Selecione uma conversa'} disabled={!selectedConversation || sending} maxLength={4000} rows={1} />
                 <button type="submit" disabled={!selectedConversation || !composer.trim() || sending} aria-label="Enviar mensagem">{sending ? <LoaderCircle className="spinner" size={17} /> : <Send size={17} />}</button>
               </div>
-              <small>Enter para enviar · Shift + Enter para quebrar linha</small>
+              <small>Digite @ para mencionar · Enter para enviar · Shift + Enter para quebrar linha</small>
             </form>
           </div>
         </section>
@@ -476,15 +572,32 @@ function MemberAvatar({ member, compact = false }: { member: WorkspaceMember | n
   );
 }
 
-function renderMessageBody(body: string) {
+function renderMessageBody(body: string, mentions: ChatMention[], onOpenProfile: (memberId: string) => void) {
+  if (!mentions.length) return renderMessageLinks(body, 'body');
+  const orderedMentions = mentions.slice().sort((first, second) => second.label.length - first.label.length);
+  const mentionPattern = new RegExp(`(@(?:${orderedMentions.map((mention) => escapeRegExp(mention.label)).join('|')}))`, 'gi');
+  return body.split(mentionPattern).flatMap((part, index) => {
+    const mention = orderedMentions.find((item) => `@${item.label}`.toLocaleLowerCase('pt-BR') === part.toLocaleLowerCase('pt-BR'));
+    if (mention) {
+      return <button type="button" className="chat-inline-mention" key={`mention-${mention.user_id}-${index}`} onClick={() => onOpenProfile(mention.user_id)}>{part}</button>;
+    }
+    return renderMessageLinks(part, `body-${index}`);
+  });
+}
+
+function renderMessageLinks(body: string, keyPrefix: string) {
   const parts = body.split(/((?:https?:\/\/|www\.)[^\s<]+)/gi);
   return parts.map((part, index) => {
-    if (!part.match(/^(?:https?:\/\/|www\.)/i)) return <span key={`${part}-${index}`}>{part}</span>;
+    if (!part.match(/^(?:https?:\/\/|www\.)/i)) return <span key={`${keyPrefix}-${index}`}>{part}</span>;
     const trailingPunctuation = part.match(/[.,!?;:)\]]+$/)?.[0] ?? '';
     const label = trailingPunctuation ? part.slice(0, -trailingPunctuation.length) : part;
     const target = normalizeChatUrl(label);
-    return <span key={`${part}-${index}`}><button type="button" className="chat-inline-link" onClick={() => void window.editflow.openExternal(target)}>{label}</button>{trailingPunctuation}</span>;
+    return <span key={`${keyPrefix}-${index}`}><button type="button" className="chat-inline-link" onClick={() => void window.editflow.openExternal(target)}>{label}</button>{trailingPunctuation}</span>;
   });
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function normalizeChatUrl(value: string) {
@@ -534,6 +647,9 @@ function chatSetupMessage(message: string) {
     || normalized.includes('fetch failed')
   ) {
     return 'Não foi possível carregar as mensagens. Verifique sua conexão e tente novamente.';
+  }
+  if (normalized.includes('mentions') || normalized.includes('chat_mention')) {
+    return 'As menções ainda não foram ativadas. Execute a migração 022_chat_mentions.sql no Supabase.';
   }
   if (normalized.includes('chat_conversations') || normalized.includes('get_or_create_general_chat') || normalized.includes('schema cache')) {
     return 'O banco do chat ainda não foi ativado. Execute a migração 017_team_chat.sql no Supabase.';
