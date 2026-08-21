@@ -1,0 +1,81 @@
+[
+  {
+    "version": "0.1.49",
+    "date": "2026-08-21",
+    "title": "Automações inteligentes para os quadros",
+    "summary": "O fluxo de produção agora consegue validar etapas, registrar o início do trabalho e avisar a equipe no momento certo.",
+    "sections": [
+      {
+        "kind": "new",
+        "title": "Novidades",
+        "items": [
+          "Automações configuráveis individualmente em cada coluna do quadro.",
+          "Registro automático da primeira vez em que o trabalho realmente começou.",
+          "Links obrigatórios antes de avançar para revisão, entrega ou outra etapa.",
+          "Alertas para tarefas que permanecem sem atividade.",
+          "Patch notes dentro do EditFlow, com histórico disponível nas configurações."
+        ]
+      },
+      {
+        "kind": "improved",
+        "title": "Melhorias",
+        "items": [
+          "Notificações de movimentação agora respeitam as regras de cada etapa.",
+          "O início do trabalho aparece nos detalhes e no histórico da tarefa.",
+          "O editor de colunas ganhou uma área visual dedicada às automações."
+        ]
+      },
+      {
+        "kind": "fixed",
+        "title": "Financeiro e segurança",
+        "items": [
+          "Ganhos automáticos pendentes são recalculados quando uma tarefa é reaberta.",
+          "Recebimentos já confirmados permanecem protegidos e nunca são removidos automaticamente.",
+          "Prazo e responsável não são alterados pelas novas automações."
+        ]
+      }
+    ]
+  },
+  {
+    "version": "0.1.48",
+    "date": "2026-08-20",
+    "title": "Seu trabalho em um só lugar",
+    "summary": "Uma nova central pessoal reúne prioridades, prazos, mensagens e indicadores importantes logo ao abrir o EditFlow.",
+    "sections": [
+      {
+        "kind": "new",
+        "title": "Novidades",
+        "items": [
+          "Nova página Meu trabalho com tarefas atrasadas, entregas próximas e mensagens recentes.",
+          "Resumo da equipe para proprietários e administradores.",
+          "Resumo financeiro mensal para o proprietário da equipe."
+        ]
+      },
+      {
+        "kind": "improved",
+        "title": "Personalização",
+        "items": [
+          "Escolha entre Meu trabalho e Produção como página inicial.",
+          "A tela de boas-vindas agora direciona para a nova central pessoal."
+        ]
+      }
+    ]
+  },
+  {
+    "version": "0.1.47",
+    "date": "2026-08-19",
+    "title": "Criação de tarefas mais rápida",
+    "summary": "Modelos por cliente e atalhos de prazo reduzem o preenchimento repetitivo no dia a dia.",
+    "sections": [
+      {
+        "kind": "new",
+        "title": "Novidades",
+        "items": [
+          "Modelo padrão de tarefa configurado diretamente no editor da tarefa.",
+          "Preenchimento automático de descrição, prioridade, responsável e prazo por cliente.",
+          "Atalhos de prazo para hoje, amanhã, três dias e sete dias."
+        ]
+      }
+    ]
+  }
+]

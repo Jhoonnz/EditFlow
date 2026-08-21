@@ -41,6 +41,7 @@ type EditFlowDesktopPreferences = {
   nativeNotifications: boolean;
   theme: 'light' | 'dark' | 'system';
   startupPage: 'my-work' | 'board';
+  lastSeenPatchNotesVersion: string;
 };
 
 type EditFlowUsdBrlRate = {

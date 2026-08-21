@@ -32,6 +32,7 @@ type DesktopPreferences = {
   nativeNotifications: boolean;
   theme: 'light' | 'dark' | 'system';
   startupPage: 'my-work' | 'board';
+  lastSeenPatchNotesVersion: string;
 };
 
 const defaultDesktopPreferences: DesktopPreferences = {
@@ -41,6 +42,7 @@ const defaultDesktopPreferences: DesktopPreferences = {
   nativeNotifications: true,
   theme: 'light',
   startupPage: 'my-work',
+  lastSeenPatchNotesVersion: '',
 };
 
 let desktopPreferences = defaultDesktopPreferences;
@@ -1007,6 +1009,11 @@ function sanitizeDesktopPreferences(value: unknown): DesktopPreferences {
   const startupPage = saved.startupPage === 'board' || saved.startupPage === 'my-work'
     ? saved.startupPage
     : defaultDesktopPreferences.startupPage;
+  const lastSeenPatchNotesVersion = typeof saved.lastSeenPatchNotesVersion === 'string'
+    && saved.lastSeenPatchNotesVersion.length <= 32
+    && /^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(saved.lastSeenPatchNotesVersion)
+    ? saved.lastSeenPatchNotesVersion
+    : defaultDesktopPreferences.lastSeenPatchNotesVersion;
   return {
     launchAtLogin: typeof saved.launchAtLogin === 'boolean' ? saved.launchAtLogin : defaultDesktopPreferences.launchAtLogin,
     closeToTray: typeof saved.closeToTray === 'boolean' ? saved.closeToTray : defaultDesktopPreferences.closeToTray,
@@ -1014,5 +1021,6 @@ function sanitizeDesktopPreferences(value: unknown): DesktopPreferences {
     nativeNotifications: typeof saved.nativeNotifications === 'boolean' ? saved.nativeNotifications : defaultDesktopPreferences.nativeNotifications,
     theme,
     startupPage,
+    lastSeenPatchNotesVersion,
   };
 }

@@ -409,6 +409,26 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   }, [cancelBoardRequests, loadBoard]);
 
   useEffect(() => {
+    if (!supabase) return;
+    const client = supabase;
+    const processAlerts = () => {
+      if (navigator.onLine && document.visibilityState === 'visible') {
+        void client.rpc('process_workspace_automation_alerts', { target_workspace: workspace.id });
+      }
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') processAlerts();
+    };
+    processAlerts();
+    const timer = window.setInterval(processAlerts, 10 * 60_000);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [workspace.id]);
+
+  useEffect(() => {
     setProfileMemberId(null);
   }, [workspace.id]);
 
@@ -1184,6 +1204,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         <ColumnEditor
           column={editingColumn}
           boardId={editingColumn.board_id}
+          canConfigureAutomations={workspace.role === 'owner'}
           initialPosition={editingColumn.position}
           taskCount={tasks.filter((task) => task.column_id === editingColumn.id).length}
           totalColumns={columns.length}
@@ -1195,6 +1216,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         <ColumnEditor
           column={null}
           boardId={board.id}
+          canConfigureAutomations={workspace.role === 'owner'}
           initialPosition={Math.max(0, ...columns.map((column) => Number(column.position))) + 1000}
           taskCount={0}
           totalColumns={columns.length}
@@ -1244,6 +1266,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 function ColumnEditor({
   column,
   boardId,
+  canConfigureAutomations,
   initialPosition,
   taskCount,
   totalColumns,
@@ -1252,6 +1275,7 @@ function ColumnEditor({
 }: {
   column: BoardColumn | null;
   boardId: string;
+  canConfigureAutomations: boolean;
   initialPosition: number;
   taskCount: number;
   totalColumns: number;
@@ -1260,6 +1284,10 @@ function ColumnEditor({
 }) {
   const [name, setName] = useState(column?.name ?? 'Nova etapa');
   const [color, setColor] = useState(column?.color ?? '#8b8fa3');
+  const [registerWorkStart, setRegisterWorkStart] = useState(column?.automation_register_start ?? false);
+  const [requiredLinkCategory, setRequiredLinkCategory] = useState<TaskLinkCategory | ''>(column?.automation_required_link_category ?? '');
+  const [notifyAdmins, setNotifyAdmins] = useState(column?.automation_notify_admins ?? false);
+  const [inactivityDays, setInactivityDays] = useState<number | ''>(column?.automation_inactivity_days ?? '');
   const [saving, setSaving] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1271,7 +1299,15 @@ function ColumnEditor({
     setSaving(true);
     setError(null);
     const result = column
-      ? await supabase.from('columns').update({ name: name.trim(), color }).eq('id', column.id)
+      ? await supabase.rpc('update_column_configuration', {
+          target_column: column.id,
+          column_name: name.trim(),
+          column_color: color,
+          register_work_start: registerWorkStart,
+          required_link_category: requiredLinkCategory || null,
+          notify_admins_on_entry: notifyAdmins,
+          inactivity_days: inactivityDays === '' ? null : inactivityDays,
+        })
       : await supabase.from('columns').insert({ board_id: boardId, name: name.trim(), color, position: initialPosition });
     setSaving(false);
     if (result.error) return setError(result.error.message);
@@ -1298,6 +1334,45 @@ function ColumnEditor({
           <label><span>Nome</span><input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} autoFocus /></label>
           <fieldset><legend>Cor</legend><div className="color-palette">{columnColors.map((option) => <button type="button" key={option} className={color === option ? 'selected' : ''} style={{ background: option }} onClick={() => setColor(option)} aria-label={`Usar cor ${option}`}>{color === option ? '✓' : ''}</button>)}</div></fieldset>
           <div className="column-preview"><i style={{ background: color }} /><span>{name || 'Nome da coluna'}</span></div>
+          {column && canConfigureAutomations ? (
+            <section className="column-automation-panel">
+              <header><span><Sparkles size={16} /></span><div><strong>Automações desta etapa</strong><small>Estas regras valem somente para este quadro.</small></div></header>
+              <label className="column-automation-toggle">
+                <input type="checkbox" checked={registerWorkStart} onChange={(event) => setRegisterWorkStart(event.target.checked)} />
+                <span><b>Registrar início do trabalho</b><small>Grava a primeira entrada nesta etapa, sem alterar prazo ou responsável.</small></span>
+              </label>
+              <label className="column-automation-field">
+                <span><Link2 size={14} />Exigir link antes de entrar</span>
+                <select value={requiredLinkCategory} onChange={(event) => setRequiredLinkCategory(event.target.value as TaskLinkCategory | '')}>
+                  <option value="">Nenhum link obrigatório</option>
+                  <option value="download">Download</option>
+                  <option value="briefing">Briefing</option>
+                  <option value="reference">Referência</option>
+                  <option value="review">Revisão</option>
+                  <option value="delivery">Entrega</option>
+                </select>
+              </label>
+              <label className="column-automation-toggle">
+                <input type="checkbox" checked={notifyAdmins} onChange={(event) => setNotifyAdmins(event.target.checked)} />
+                <span><b>Avisar administradores ao entrar</b><small>Útil para etapas de revisão e aprovação.</small></span>
+              </label>
+              <label className="column-automation-field">
+                <span><CalendarClock size={14} />Alertar se ficar sem atividade</span>
+                <select value={inactivityDays} onChange={(event) => setInactivityDays(event.target.value ? Number(event.target.value) : '')}>
+                  <option value="">Não alertar</option>
+                  <option value="1">Após 1 dia</option>
+                  <option value="2">Após 2 dias</option>
+                  <option value="3">Após 3 dias</option>
+                  <option value="5">Após 5 dias</option>
+                  <option value="7">Após 7 dias</option>
+                  <option value="14">Após 14 dias</option>
+                </select>
+              </label>
+              {column.is_completion ? <div className="column-completion-note"><CheckCircle2 size={15} /><span><b>Conclusão automática ativa</b><small>Ao entrar aqui, a tarefa é finalizada e o ganho do cliente é calculado.</small></span></div> : null}
+            </section>
+          ) : column && hasColumnAutomations(column) ? (
+            <div className="column-automation-readonly"><Sparkles size={15} /><span><strong>Esta etapa possui automações</strong><small>Somente o proprietário pode alterá-las.</small></span></div>
+          ) : null}
           {error ? <div className="panel-error">{error}</div> : null}
           <button className="primary-button column-save" type="submit" disabled={saving}>{saving ? <LoaderCircle className="spinner" size={16} /> : null}{column ? 'Salvar coluna' : 'Criar coluna'}</button>
         </form>
@@ -2174,6 +2249,12 @@ function TaskEditor({
 
         <form className="editor-form" onSubmit={saveTask}>
           {!canManagePlanning ? <div className="editor-permission-note">Como editor, você pode mover esta tarefa, atualizar a versão, adicionar links e responder aos ajustes. O planejamento é controlado pelos administradores.</div> : null}
+          {mode === 'edit' && task?.started_at ? (
+            <div className="task-started-note">
+              <span><CalendarClock size={16} /></span>
+              <div><small>TRABALHO INICIADO</small><strong>{formatActivityDate(task.started_at)}</strong><em>por {members.find((member) => member.user_id === task.started_by)?.display_name ?? 'um membro'}</em></div>
+            </div>
+          ) : null}
           <label><span>Título</span><input value={draft.title} disabled={!canManagePlanning} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="Ex.: Vídeo da campanha de inverno" autoFocus /></label>
           <label><span>Descrição</span><textarea value={draft.description} disabled={!canManagePlanning} onChange={(event) => setDraft({ ...draft, description: event.target.value })} placeholder="Briefing rápido, formato e observações..." rows={4} /></label>
 
@@ -2370,7 +2451,16 @@ function activityDescription(activity: TaskActivity, columns: BoardColumn[], mem
   if (activity.action === 'comment_added') return `comentou na revisão V${activity.details.revision_round ?? '?'}.`;
   if (activity.action === 'adjustment_requested') return `solicitou um ajuste na revisão V${activity.details.revision_round ?? '?'}.`;
   if (activity.action === 'comment_resolved') return `marcou um feedback da V${activity.details.revision_round ?? '?'} como resolvido.`;
+  if (activity.action === 'work_started') return 'iniciou o trabalho nesta tarefa.';
   return `reabriu um feedback da V${activity.details.revision_round ?? '?'}.`;
+}
+
+function hasColumnAutomations(column: BoardColumn) {
+  return column.automation_register_start
+    || Boolean(column.automation_required_link_category)
+    || column.automation_notify_admins
+    || Boolean(column.automation_inactivity_days)
+    || column.is_completion;
 }
 
 function roleLabel(role: WorkspaceMember['role']) {
@@ -2503,6 +2593,7 @@ function syncStatusTitle(status: SyncStatus, lastSyncedAt: string | null) {
 }
 
 function nativeNotificationTitle(type: AppNotification['type']) {
+  if (type === 'automation_alert') return 'Automação do quadro';
   if (type === 'chat_mention') return 'Você foi mencionado';
   if (type === 'chat_message') return 'Nova mensagem';
   if (type === 'assignment') return 'Nova tarefa atribuída';

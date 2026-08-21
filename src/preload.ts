@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('editflow', {
     nativeNotifications: boolean;
     theme: 'light' | 'dark' | 'system';
     startupPage: 'my-work' | 'board';
+    lastSeenPatchNotesVersion: string;
   }) => ipcRenderer.invoke('desktop:update-preferences', preferences),
   onDesktopPreferencesChanged: (callback: (preferences: {
     launchAtLogin: boolean;
@@ -26,6 +27,7 @@ contextBridge.exposeInMainWorld('editflow', {
     nativeNotifications: boolean;
     theme: 'light' | 'dark' | 'system';
     startupPage: 'my-work' | 'board';
+    lastSeenPatchNotesVersion: string;
   }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, preferences: {
       launchAtLogin: boolean;
@@ -34,6 +36,7 @@ contextBridge.exposeInMainWorld('editflow', {
       nativeNotifications: boolean;
       theme: 'light' | 'dark' | 'system';
       startupPage: 'my-work' | 'board';
+      lastSeenPatchNotesVersion: string;
     }) => callback(preferences);
     ipcRenderer.on('desktop:preferences-changed', listener);
     return () => ipcRenderer.removeListener('desktop:preferences-changed', listener);

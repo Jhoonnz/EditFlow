@@ -169,6 +169,7 @@ function notificationTitle(type: AppNotification['type']) {
   if (type === 'chat_mention') return 'Você foi mencionado';
   if (type === 'chat_message') return 'Nova mensagem';
   if (type === 'assignment') return 'Tarefa atribuída';
+  if (type === 'automation_alert') return 'Automação do quadro';
   if (type === 'comment') return 'Novo comentário';
   if (type === 'change_request') return 'Ajuste solicitado';
   if (type === 'task_moved') return 'Tarefa movimentada';

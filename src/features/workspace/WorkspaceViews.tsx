@@ -3,6 +3,8 @@ import type { User } from '@supabase/supabase-js';
 import { AlertTriangle, AppWindow, Bell, BriefcaseBusiness, Building2, CalendarClock, Camera, CheckCircle2, CircleDollarSign, Eye, ExternalLink, KeyRound, Laptop, ListVideo, LoaderCircle, LockKeyhole, Mail, MonitorCog, Moon, MoreHorizontal, PackageCheck, Palette, Pencil, Plus, Power, RefreshCw, Save, Search, ShieldCheck, Sun, Trash2, UserPlus, UserRound, Users, Video, X, Youtube } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAppDialog } from '../../components/AppDialog';
+import { ReleaseNotesDialog } from '../../components/ReleaseNotesDialog';
+import { releaseNotesUpTo } from '../../lib/releaseNotes';
 import { useDialogFocus } from '../../lib/useDialogFocus';
 import { estimateNetUsd, paymentFeeRule, paymentFeeRules, paymentMethodLabel } from '../finance/paymentFees';
 import type { BillingCurrency, BillingPricingModel, Client, ClientBillingSetting, EditFlowAccountSearchResult, PaymentMethod, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
@@ -676,6 +678,7 @@ export function SettingsView({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState('...');
+  const [showReleaseNotes, setShowReleaseNotes] = useState(false);
   const [desktopPreferences, setDesktopPreferences] = useState<EditFlowDesktopPreferences | null>(null);
   const [desktopSaving, setDesktopSaving] = useState<keyof EditFlowDesktopPreferences | null>(null);
   const canManage = workspace.role === 'owner' || workspace.role === 'admin';
@@ -752,6 +755,7 @@ export function SettingsView({
   const nextDeadline = activeUserTasks
     .filter((task) => Boolean(task.due_at))
     .sort((left, right) => new Date(left.due_at!).getTime() - new Date(right.due_at!).getTime())[0];
+  const availableReleaseNotes = releaseNotesUpTo(appVersion);
 
   const saveWorkspace = async (event: FormEvent) => {
     event.preventDefault();
@@ -1064,9 +1068,23 @@ export function SettingsView({
               <div className="notification-events-card"><strong>Eventos acompanhados</strong><div><span>Mensagens da equipe</span><span>Tarefas atribuídas</span><span>Comentários e ajustes</span><span>Mudanças no fluxo</span><span>Convites aceitos</span></div><small>Os avisos continuam disponíveis dentro do EditFlow mesmo quando os alertas do Windows estiverem desativados.</small></div>
             </div> : <div className="desktop-settings-loading"><LoaderCircle className="spinner" size={18} />Carregando preferências…</div>}
           </section>
-          <section className="content-card update-settings-row"><div><h2>Atualizações</h2><p>Versão instalada: {appVersion}. O EditFlow também verifica automaticamente ao abrir.</p></div><button className="secondary-button" onClick={() => void checkForUpdates()}>Verificar atualizações</button></section>
+          <section className="content-card update-settings-row">
+            <div><h2>Atualizações</h2><p>Versão instalada: {appVersion}. O EditFlow também verifica automaticamente ao abrir.</p></div>
+            <div className="update-settings-actions">
+              <button className="secondary-button" disabled={!availableReleaseNotes.length} onClick={() => setShowReleaseNotes(true)}><PackageCheck size={15} />Ver novidades</button>
+              <button className="secondary-button" onClick={() => void checkForUpdates()}><RefreshCw size={15} />Verificar atualizações</button>
+            </div>
+          </section>
         </> : null}
       </main>
+      {showReleaseNotes && availableReleaseNotes.length ? (
+        <ReleaseNotesDialog
+          notes={availableReleaseNotes}
+          initialVersion={availableReleaseNotes[0].version}
+          primaryActionLabel="Fechar histórico"
+          onClose={() => setShowReleaseNotes(false)}
+        />
+      ) : null}
       {appDialog.host}
     </div>
   );

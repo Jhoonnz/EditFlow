@@ -4,7 +4,9 @@ import { ArrowLeft, Download, LoaderCircle, RotateCw, X } from 'lucide-react';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 import { watchThemePreference } from './lib/theme';
 import { parseAuthRecoveryCallback } from './lib/authRecovery';
+import { compareVersions, releaseNoteForVersion, releaseNotesUpTo, type ReleaseNote } from './lib/releaseNotes';
 import { AuthenticatedApp } from './features/workspace/AuthenticatedApp';
+import { ReleaseNotesDialog } from './components/ReleaseNotesDialog';
 
 type AuthMode = 'signin' | 'signup' | 'forgot' | 'recovery';
 type Notice = { kind: 'error' | 'success' | 'info'; message: string } | null;
@@ -15,6 +17,7 @@ function App() {
   const [themePreference, setThemePreference] = useState<EditFlowDesktopPreferences['theme']>('light');
   const [recoveryMode, setRecoveryMode] = useState(false);
   const [authCallbackNotice, setAuthCallbackNotice] = useState<Notice>(null);
+  const [patchNotes, setPatchNotes] = useState<{ currentVersion: string; notes: ReleaseNote[] } | null>(null);
   const handledAuthCallbacks = useRef(new Set<string>());
 
   useEffect(() => {
@@ -70,6 +73,36 @@ function App() {
     return unsubscribe;
   }, []);
 
+  useEffect(() => {
+    if (!session) {
+      setPatchNotes(null);
+      return;
+    }
+    let active = true;
+    void Promise.all([
+      window.editflow.getVersion(),
+      window.editflow.getDesktopPreferences(),
+    ]).then(([version, preferences]) => {
+      if (!active) return;
+      const currentNote = releaseNoteForVersion(version);
+      if (!currentNote || compareVersions(preferences.lastSeenPatchNotesVersion, currentNote.version) >= 0) return;
+      setPatchNotes({ currentVersion: currentNote.version, notes: releaseNotesUpTo(currentNote.version) });
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [session?.user.id]);
+
+  const dismissPatchNotes = () => {
+    if (!patchNotes) return;
+    const seenVersion = patchNotes.currentVersion;
+    setPatchNotes(null);
+    void window.editflow.getDesktopPreferences()
+      .then((preferences) => window.editflow.updateDesktopPreferences({
+        ...preferences,
+        lastSeenPatchNotesVersion: seenVersion,
+      }))
+      .catch(() => undefined);
+  };
+
   if (sessionLoading) {
     return (
       <>
@@ -95,6 +128,13 @@ function App() {
       <>
         <AuthenticatedApp user={session.user} />
         <UpdateNotice />
+        {patchNotes ? (
+          <ReleaseNotesDialog
+            notes={patchNotes.notes}
+            initialVersion={patchNotes.currentVersion}
+            onClose={dismissPatchNotes}
+          />
+        ) : null}
       </>
     );
   }

@@ -55,6 +55,10 @@ export type BoardColumn = {
   position: number;
   color: string | null;
   is_completion: boolean;
+  automation_register_start: boolean;
+  automation_required_link_category: TaskLinkCategory | null;
+  automation_notify_admins: boolean;
+  automation_inactivity_days: number | null;
 };
 
 export type Client = {
@@ -104,6 +108,8 @@ export type Task = {
   position: number;
   due_at: string | null;
   completed_at: string | null;
+  started_at: string | null;
+  started_by: string | null;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -206,7 +212,8 @@ export type TaskActivityAction =
   | 'comment_added'
   | 'adjustment_requested'
   | 'comment_resolved'
-  | 'comment_reopened';
+  | 'comment_reopened'
+  | 'work_started';
 
 export type TaskActivity = {
   id: string;
@@ -241,7 +248,7 @@ export type AppNotification = {
   user_id: string;
   task_id: string | null;
   actor_id: string | null;
-  type: 'assignment' | 'comment' | 'change_request' | 'task_updated' | 'task_moved' | 'invite_accepted' | 'chat_message' | 'chat_mention';
+  type: 'assignment' | 'comment' | 'change_request' | 'task_updated' | 'task_moved' | 'invite_accepted' | 'chat_message' | 'chat_mention' | 'automation_alert';
   conversation_id: string | null;
   message: string;
   read_at: string | null;

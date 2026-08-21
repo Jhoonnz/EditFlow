@@ -65,12 +65,16 @@ jobs:
         shell: pwsh
         run: |
           $appVersion = (Get-Content package.json | ConvertFrom-Json).version
+          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+            -File build/generate-release-notes.ps1 `
+            -Version $appVersion `
+            -OutputPath release/release-notes.md
           gh release create $env:GITHUB_REF_NAME `
             "release/EditFlow-Setup-$appVersion.exe" `
             "release/EditFlow-Setup-$appVersion.exe.blockmap" `
             "release/latest.yml" `
             --verify-tag `
             --title "EditFlow $env:GITHUB_REF_NAME" `
-            --generate-notes
+            --notes-file "release/release-notes.md"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
