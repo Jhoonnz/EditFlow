@@ -1,5 +1,22 @@
 [
   {
+    "version": "0.1.51",
+    "date": "2026-08-21",
+    "title": "Uma identidade mais integrada",
+    "summary": "A nova marca do EditFlow agora usa o mesmo roxo suave da interface, com leitura mais limpa no aplicativo e no Windows.",
+    "sections": [
+      {
+        "kind": "improved",
+        "title": "Identidade visual",
+        "items": [
+          "Fundo da marca alterado para um roxo único e sólido, sem degradê.",
+          "Símbolo Play + Fluxo simplificado em branco e lilás.",
+          "Ícones do aplicativo, instalador e bandeja atualizados com a mesma aparência."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.1.50",
     "date": "2026-08-21",
     "title": "Produção do seu jeito",
