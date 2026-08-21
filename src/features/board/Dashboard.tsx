@@ -37,6 +37,7 @@ import { fetchAllRows } from '../../lib/paginatedQuery';
 import { useDialogFocus } from '../../lib/useDialogFocus';
 import { useAppDialog } from '../../components/AppDialog';
 import { isVisibleDeadline, taskDeadlineDistance } from '../../lib/taskStatus';
+import { calculateDueDate, calendarDayOffset } from '../../lib/taskTemplate';
 import { ChatPanel, type ChatOpenRequest } from '../chat/ChatPanel';
 import { FinanceView } from '../finance/FinanceView';
 import { ClientsView, SettingsView, TeamView, type SettingsTab } from '../workspace/WorkspaceViews';
@@ -46,6 +47,7 @@ import type {
   Board,
   BoardColumn,
   Client,
+  ClientTaskTemplate,
   Task,
   TaskActivity,
   TaskComment,
@@ -72,6 +74,9 @@ type Props = {
 
 type SyncStatus = 'connecting' | 'connected' | 'offline' | 'error';
 type DashboardView = 'board' | 'clients' | 'team' | 'finance' | 'settings';
+type ClientTaskTemplateDraft = Pick<ClientTaskTemplate,
+  'title_template' | 'description_template' | 'priority' | 'assignee_id' | 'due_offset_days' | 'due_business_days' | 'link_label'
+>;
 
 const emptyDraft: TaskDraft = {
   title: '',
@@ -1770,6 +1775,15 @@ function TaskEditor({
   const [linkLabel, setLinkLabel] = useState('Arquivos para download');
   const [linkUrl, setLinkUrl] = useState('');
   const [linkCategory, setLinkCategory] = useState<TaskLinkCategory>('download');
+  const [clientTemplate, setClientTemplate] = useState<ClientTaskTemplate | null>(null);
+  const [templateDraft, setTemplateDraft] = useState<ClientTaskTemplateDraft | null>(null);
+  const [templateLoading, setTemplateLoading] = useState(false);
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [showTemplatePanel, setShowTemplatePanel] = useState(false);
+  const [templateNotice, setTemplateNotice] = useState<string | null>(null);
+  const [templateUndo, setTemplateUndo] = useState<{ draft: TaskDraft; linkLabel: string } | null>(null);
+  const [showCustomDueDate, setShowCustomDueDate] = useState(mode === 'edit' && Boolean(initialDraft.due_at));
+  const templateRequestRef = useRef(0);
   const [activities, setActivities] = useState<TaskActivity[]>([]);
   const [activityLimit, setActivityLimit] = useState(40);
   const [hasMoreActivities, setHasMoreActivities] = useState(false);
@@ -1785,7 +1799,7 @@ function TaskEditor({
   const appDialog = useAppDialog();
   const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(initialDraft)
     || (mode === 'new' && Boolean(linkUrl.trim())), [draft, initialDraft, linkUrl, mode]);
-  const busy = saving || linkSaving || commentSaving || resolvingCommentId !== null || deleting;
+  const busy = saving || linkSaving || commentSaving || templateSaving || resolvingCommentId !== null || deleting;
 
   const requestClose = async () => {
     if (busy) return;
@@ -1833,6 +1847,157 @@ function TaskEditor({
       .subscribe();
     return () => { void realtimeClient.removeChannel(channel); };
   }, [loadReviewData, task, userId]);
+
+  const fetchClientTemplate = async (clientId: string) => {
+    if (!supabase) return null;
+    const { data, error: templateError } = await supabase
+      .from('client_task_templates')
+      .select('*')
+      .eq('client_id', clientId)
+      .maybeSingle();
+    if (templateError) throw templateError;
+    return data as ClientTaskTemplate | null;
+  };
+
+  const applyClientTemplate = (template: ClientTaskTemplate, baseDraft: TaskDraft, allowUndo = true) => {
+    if (allowUndo) setTemplateUndo({ draft: baseDraft, linkLabel });
+    setClientTemplate(template);
+    setDraft({
+      ...baseDraft,
+      title: template.title_template || baseDraft.title,
+      description: template.description_template,
+      priority: template.priority,
+      assignee_id: template.assignee_id ?? '',
+      due_at: calculateDueDate(template.due_offset_days, template.due_business_days),
+    });
+    setLinkLabel(template.link_label);
+    setShowCustomDueDate(false);
+    const clientName = clients.find((client) => client.id === template.client_id)?.name ?? 'cliente';
+    setTemplateNotice(`Modelo de ${clientName} aplicado.`);
+  };
+
+  const changeTaskClient = async (clientId: string) => {
+    const nextDraft = { ...draft, client_id: clientId };
+    const requestId = ++templateRequestRef.current;
+    setDraft(nextDraft);
+    setClientTemplate(null);
+    setTemplateUndo(null);
+    setTemplateNotice(null);
+    setShowTemplatePanel(false);
+    if (!clientId || !canManagePlanning) return;
+
+    setTemplateLoading(true);
+    try {
+      const template = await fetchClientTemplate(clientId);
+      if (requestId !== templateRequestRef.current) return;
+      setClientTemplate(template);
+      if (template && mode === 'new') applyClientTemplate(template, nextDraft);
+      else if (!template) setTemplateNotice('Este cliente ainda não possui um modelo padrão.');
+    } catch (templateError) {
+      if (requestId !== templateRequestRef.current) return;
+      setError(readErrorMessage(templateError, 'Não foi possível carregar o modelo do cliente.'));
+    } finally {
+      if (requestId === templateRequestRef.current) setTemplateLoading(false);
+    }
+  };
+
+  const openTemplateEditor = async () => {
+    if (!draft.client_id || templateLoading) return;
+    setTemplateLoading(true);
+    setError(null);
+    try {
+      const template = clientTemplate?.client_id === draft.client_id
+        ? clientTemplate
+        : await fetchClientTemplate(draft.client_id);
+      setClientTemplate(template);
+      setTemplateDraft(template ? {
+        title_template: template.title_template,
+        description_template: template.description_template,
+        priority: template.priority,
+        assignee_id: template.assignee_id,
+        due_offset_days: template.due_offset_days,
+        due_business_days: template.due_business_days,
+        link_label: template.link_label,
+      } : {
+        title_template: draft.title,
+        description_template: draft.description,
+        priority: draft.priority,
+        assignee_id: draft.assignee_id || null,
+        due_offset_days: calendarDayOffset(draft.due_at),
+        due_business_days: false,
+        link_label: linkLabel.trim() || 'Arquivos para download',
+      });
+      setShowTemplatePanel(true);
+    } catch (templateError) {
+      setError(readErrorMessage(templateError, 'Não foi possível abrir o modelo do cliente.'));
+    } finally {
+      setTemplateLoading(false);
+    }
+  };
+
+  const saveClientTemplate = async () => {
+    if (!supabase || !draft.client_id || !templateDraft || templateSaving) return;
+    setTemplateSaving(true);
+    setError(null);
+    const payload = {
+      client_id: draft.client_id,
+      workspace_id: workspace.id,
+      title_template: templateDraft.title_template.trim(),
+      description_template: templateDraft.description_template.trim(),
+      priority: templateDraft.priority,
+      assignee_id: templateDraft.assignee_id || null,
+      due_offset_days: Math.max(0, Math.min(365, Math.trunc(templateDraft.due_offset_days))),
+      due_business_days: templateDraft.due_business_days,
+      link_label: templateDraft.link_label.trim() || 'Arquivos para download',
+      created_by: userId,
+    };
+    const { data, error: templateError } = await supabase
+      .from('client_task_templates')
+      .upsert(payload, { onConflict: 'client_id' })
+      .select('*')
+      .single();
+    setTemplateSaving(false);
+    if (templateError) {
+      setError(templateError.message);
+      return;
+    }
+    const savedTemplate = data as ClientTaskTemplate;
+    setShowTemplatePanel(false);
+    applyClientTemplate(savedTemplate, draft, false);
+    setTemplateNotice('Modelo salvo e aplicado à tarefa atual.');
+  };
+
+  const removeClientTemplate = async () => {
+    if (!supabase || !clientTemplate || templateSaving) return;
+    const confirmed = await appDialog.confirm({
+      title: 'Remover modelo deste cliente?',
+      description: 'As tarefas existentes não serão alteradas. As próximas deixarão de ser preenchidas automaticamente.',
+      confirmLabel: 'Remover modelo',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
+    setTemplateSaving(true);
+    const { error: templateError } = await supabase.from('client_task_templates').delete().eq('client_id', clientTemplate.client_id);
+    setTemplateSaving(false);
+    if (templateError) return setError(templateError.message);
+    setClientTemplate(null);
+    setTemplateDraft(null);
+    setShowTemplatePanel(false);
+    setTemplateNotice('Modelo removido. A tarefa atual foi mantida.');
+  };
+
+  const undoTemplateApplication = () => {
+    if (!templateUndo) return;
+    setDraft(templateUndo.draft);
+    setLinkLabel(templateUndo.linkLabel);
+    setTemplateUndo(null);
+    setTemplateNotice('Aplicação do modelo desfeita.');
+  };
+
+  const setQuickDueDate = (days: number | null) => {
+    setDraft((current) => ({ ...current, due_at: days === null ? '' : calculateDueDate(days) }));
+    setShowCustomDueDate(false);
+  };
 
   const saveTask = async (event: FormEvent) => {
     event.preventDefault();
@@ -1982,13 +2147,44 @@ function TaskEditor({
 
           <div className="editor-grid">
             <label><span>Prioridade</span><select value={draft.priority} disabled={!canManagePlanning} onChange={(event) => setDraft({ ...draft, priority: event.target.value as TaskPriority })}><option value="low">Baixa</option><option value="normal">Normal</option><option value="high">Alta</option><option value="urgent">Urgente</option></select></label>
-            <label><span>Prazo</span><input type="date" value={draft.due_at} disabled={!canManagePlanning} onChange={(event) => setDraft({ ...draft, due_at: event.target.value })} /></label>
+            <div className="due-date-field">
+              <span className="editor-field-label">Prazo</span>
+              <div className="due-date-control">
+                <div className="due-date-summary"><CalendarClock size={15} /><strong>{draft.due_at ? formatTaskDueDate(draft.due_at) : 'Sem prazo'}</strong><button type="button" disabled={!canManagePlanning} onClick={() => setShowCustomDueDate((show) => !show)}>Personalizar</button></div>
+                <div className="due-date-shortcuts">
+                  {[{ label: 'Hoje', days: 0 }, { label: 'Amanhã', days: 1 }, { label: '+3 dias', days: 3 }, { label: '+7 dias', days: 7 }].map((option) => <button type="button" key={option.label} className={draft.due_at === calculateDueDate(option.days) ? 'active' : ''} disabled={!canManagePlanning} onClick={() => setQuickDueDate(option.days)}>{option.label}</button>)}
+                  <button type="button" className={!draft.due_at ? 'active' : ''} disabled={!canManagePlanning} onClick={() => setQuickDueDate(null)}>Sem prazo</button>
+                </div>
+                {showCustomDueDate ? <input type="date" value={draft.due_at} disabled={!canManagePlanning} onChange={(event) => setDraft({ ...draft, due_at: event.target.value })} /> : null}
+              </div>
+            </div>
           </div>
 
           <label>
             <span>Cliente</span>
-            <select value={draft.client_id} disabled={!canManagePlanning} onChange={(event) => setDraft({ ...draft, client_id: event.target.value })}><option value="">Sem cliente</option>{clients.map((client) => <option value={client.id} key={client.id}>{client.name}</option>)}</select>
+            <div className="client-template-row">
+              <select value={draft.client_id} disabled={!canManagePlanning || templateLoading} onChange={(event) => void changeTaskClient(event.target.value)}><option value="">Sem cliente</option>{clients.map((client) => <option value={client.id} key={client.id}>{client.name}</option>)}</select>
+              {canManagePlanning ? <button type="button" disabled={!draft.client_id || templateLoading} onClick={() => void openTemplateEditor()}>{templateLoading ? <LoaderCircle className="spinner" size={15} /> : <Sparkles size={15} />}Modelo</button> : null}
+            </div>
           </label>
+
+          {templateNotice && draft.client_id ? <div className="task-template-notice"><Sparkles size={14} /><span>{templateNotice}</span>{templateUndo ? <button type="button" onClick={undoTemplateApplication}>Desfazer</button> : null}</div> : null}
+
+          {showTemplatePanel && templateDraft && draft.client_id ? (
+            <section className="task-template-panel">
+              <header><div><p>MODELO DO CLIENTE</p><h3>{clientTemplate ? 'Editar modelo padrão' : 'Criar modelo padrão'}</h3></div><button type="button" disabled={templateSaving} onClick={() => setShowTemplatePanel(false)} aria-label="Fechar modelo"><X size={16} /></button></header>
+              <label><span>Título padrão <small>Opcional</small></span><input maxLength={180} value={templateDraft.title_template} onChange={(event) => setTemplateDraft({ ...templateDraft, title_template: event.target.value })} placeholder="Deixe vazio para não preencher o título" /></label>
+              <label><span>Descrição padrão</span><textarea maxLength={4000} rows={3} value={templateDraft.description_template} onChange={(event) => setTemplateDraft({ ...templateDraft, description_template: event.target.value })} placeholder="Briefing que se repete neste cliente" /></label>
+              <div className="task-template-grid">
+                <label><span>Prioridade</span><select value={templateDraft.priority} onChange={(event) => setTemplateDraft({ ...templateDraft, priority: event.target.value as TaskPriority })}><option value="low">Baixa</option><option value="normal">Normal</option><option value="high">Alta</option><option value="urgent">Urgente</option></select></label>
+                <label><span>Responsável</span><select value={templateDraft.assignee_id ?? ''} onChange={(event) => setTemplateDraft({ ...templateDraft, assignee_id: event.target.value || null })}><option value="">Sem responsável</option>{members.map((member) => <option value={member.user_id} key={member.user_id}>{member.display_name}</option>)}</select></label>
+                <label><span>Prazo após criar</span><div className="template-days-input"><input type="number" min="0" max="365" value={templateDraft.due_offset_days} onChange={(event) => setTemplateDraft({ ...templateDraft, due_offset_days: Math.max(0, Math.min(365, Number(event.target.value) || 0)) })} /><small>dias</small></div></label>
+                <label><span>Nome do link</span><input maxLength={100} value={templateDraft.link_label} onChange={(event) => setTemplateDraft({ ...templateDraft, link_label: event.target.value })} /></label>
+              </div>
+              <label className="template-business-days"><input type="checkbox" checked={templateDraft.due_business_days} onChange={(event) => setTemplateDraft({ ...templateDraft, due_business_days: event.target.checked })} /><span>Contar somente dias úteis</span></label>
+              <footer>{clientTemplate ? <button type="button" className="template-remove" disabled={templateSaving} onClick={() => void removeClientTemplate()}>Remover modelo</button> : <span />}<button type="button" className="template-save" disabled={templateSaving} onClick={() => void saveClientTemplate()}>{templateSaving ? <LoaderCircle className="spinner" size={15} /> : <Sparkles size={15} />}Salvar e aplicar</button></footer>
+            </section>
+          ) : null}
 
           <div className="editor-grid">
             <label>
@@ -2213,6 +2409,15 @@ function formatCardDate(date: string) {
   return `${day} ${month} ${parsed.getFullYear()}`;
 }
 
+function formatTaskDueDate(date: string) {
+  const [year, month, day] = date.slice(0, 10).split('-').map(Number);
+  return new Intl.DateTimeFormat('pt-BR', {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+  }).format(new Date(year, month - 1, day));
+}
+
 function taskCountdown(date: string | null, completed = false): { label: string; state: 'neutral' | 'soon' | 'overdue' | 'completed' } {
   if (completed) return { label: 'Finalizado', state: 'completed' };
   if (!date) return { label: 'Sem prazo', state: 'neutral' };
@@ -2243,6 +2448,11 @@ function isOverdue(date: string) {
 
 function shortHost(url: string) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; }
+}
+
+function readErrorMessage(error: unknown, fallback: string) {
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') return error.message;
+  return fallback;
 }
 
 function syncLabel(status: SyncStatus) {

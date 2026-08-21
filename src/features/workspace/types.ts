@@ -74,6 +74,21 @@ export type Client = {
 
 export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 
+export type ClientTaskTemplate = {
+  client_id: string;
+  workspace_id: string;
+  title_template: string;
+  description_template: string;
+  priority: TaskPriority;
+  assignee_id: string | null;
+  due_offset_days: number;
+  due_business_days: boolean;
+  link_label: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Task = {
   id: string;
   workspace_id: string;
