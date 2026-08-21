@@ -1079,11 +1079,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                 </div>
 
                 {isCompletionColumn && columnTasks.length ? (
-                  <button className="completed-tasks-open" type="button" onClick={() => setShowCompletedTasks(true)}>
-                    <CheckCircle2 size={15} />
-                    <span>Ver todos os finalizados</span>
-                    <strong>{tasks.filter((task) => task.column_id === column.id).length}</strong>
-                  </button>
+                  <button className="column-add" type="button" onClick={() => setShowCompletedTasks(true)}>Ver todos os finalizados</button>
                 ) : null}
 
                 {canManagePlanning && column.id === columns[0]?.id ? <button className="column-add" onClick={() => setEditor({ mode: 'new', task: null, columnId: column.id })}><Plus size={16} />Adicionar tarefa</button> : null}
