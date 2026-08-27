@@ -700,6 +700,11 @@ button { color: inherit; }
 .completed-tasks-modal > header h2 { color: #30343a; font-size: 17px; }
 .completed-tasks-modal > header small { color: #92979a; font-size: 10px; }
 .completed-tasks-modal > header > button { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 1px solid #dde2e0; border-radius: 11px; background: #f5f7f6; color: #777d7a; cursor: pointer; }
+.completed-archive-filter { display: flex; align-items: center; gap: 5px; padding: 10px 18px 0; background: #f7f9f8; }
+.completed-archive-filter button { display: inline-flex; align-items: center; gap: 6px; min-height: 31px; padding: 0 10px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: #7f8581; font: inherit; font-size: 9px; font-weight: 750; cursor: pointer; }
+.completed-archive-filter button span { display: grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 99px; background: #e6ebe8; color: #777f7a; font-size: 8px; }
+.completed-archive-filter button.active { border-color: #d9e4de; background: #fff; color: #42775e; box-shadow: 0 4px 12px rgba(46,86,66,.06); }
+.completed-archive-filter button.active span { background: #dff0e7; color: #347657; }
 .completed-tasks-filters { display: grid; grid-template-columns: minmax(210px,1.4fr) minmax(150px,.8fr) minmax(150px,.8fr); gap: 10px; padding: 14px 18px; border-bottom: 1px solid #e8ebe9; background: #f7f9f8; }
 .completed-tasks-filters > label { display: grid; gap: 5px; }
 .completed-tasks-filters > label > span { color: #777d79; font-size: 9px; font-weight: 780; }
@@ -714,9 +719,15 @@ button { color: inherit; }
 .completed-month-group > header h3 { margin: 0; color: #656b68; font-size: 10px; text-transform: uppercase; letter-spacing: .07em; }
 .completed-month-group > header span { display: grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 99px; background: #e4f1ea; color: #397a59; font-size: 9px; font-weight: 800; }
 .completed-month-group > div { display: grid; gap: 6px; }
-.completed-month-group > div > button { display: grid; grid-template-columns: 34px minmax(0,1fr) auto; align-items: center; gap: 10px; width: 100%; min-height: 54px; padding: 7px 12px 7px 9px; border: 1px solid #e1e6e3; border-radius: 12px; background: #fff; color: inherit; cursor: pointer; text-align: left; transition: transform .15s ease,border-color .15s ease,background .15s ease; }
-.completed-month-group > div > button:hover { transform: translateY(-1px); border-color: #bcd8ca; background: #f5fbf7; }
+.completed-task-row { display: grid; grid-template-columns: minmax(0,1fr) auto; overflow: hidden; border: 1px solid #e1e6e3; border-radius: 12px; background: #fff; transition: transform .15s ease,border-color .15s ease,background .15s ease; }
+.completed-task-row:hover { transform: translateY(-1px); border-color: #bcd8ca; background: #f5fbf7; }
+.completed-task-row.archived { border-color: #e1e0e7; background: #f8f7fa; }
+.completed-task-open { display: grid; grid-template-columns: 34px minmax(0,1fr) auto; align-items: center; gap: 10px; min-width: 0; min-height: 54px; padding: 7px 12px 7px 9px; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+.completed-task-restore { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 94px; padding: 0 12px; border: 0; border-left: 1px solid #e3e2e8; background: rgba(255,255,255,.55); color: #6b62a0; font: inherit; font-size: 9px; font-weight: 780; cursor: pointer; }
+.completed-task-restore:hover { background: #eeeafa; color: #5646a4; }
+.completed-task-restore:disabled { cursor: wait; opacity: .58; }
 .completed-result-check { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: #e3f4eb; color: #329068; }
+.completed-task-row.archived .completed-result-check { background: #ebe9f1; color: #777184; }
 .completed-month-group button > span:nth-child(2) { display: grid; min-width: 0; gap: 3px; }
 .completed-month-group button strong,.completed-month-group button small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .completed-month-group button strong { color: #3d423f; font-size: 11px; }
@@ -728,8 +739,10 @@ button { color: inherit; }
 @media (max-width: 680px) {
   .completed-tasks-filters { grid-template-columns: 1fr; }
   .completed-search { align-self: auto; }
-  .completed-month-group > div > button { grid-template-columns: 34px minmax(0,1fr); }
+  .completed-task-open { grid-template-columns: 34px minmax(0,1fr); }
   .completed-month-group button time { display: none; }
+  .completed-task-restore { min-width: 40px; padding: 0 11px; }
+  .completed-task-restore span { display: none; }
 }
 
 /* Member profile */
@@ -789,6 +802,8 @@ button { color: inherit; }
 .empty-column { display: grid; place-items: center; min-height: 82px; border: 1px dashed #d4d5dc; border-radius: 11px; color: #a9aab2; font-size: 10px; }
 .column-add { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 35px; margin-top: 8px; border: 0; border-radius: 10px; background: transparent; color: #838590; font-size: 10px; cursor: pointer; }
 .column-add:hover { background: rgba(255,255,255,.65); color: #4c477e; }
+.column-add:disabled { cursor: wait; opacity: .58; }
+.completed-column-actions { display: grid; gap: 1px; }
 
 /* Task editor */
 .editor-backdrop { position: fixed; inset: 0; z-index: 80; display: flex; justify-content: flex-end; background: rgba(29,29,43,.2); backdrop-filter: blur(3px); animation: fade-in .16s ease; }
@@ -1752,6 +1767,11 @@ button { color: inherit; }
 :root[data-theme="dark"] .completed-tasks-modal > header p { color: #80bd9e; }
 :root[data-theme="dark"] .completed-tasks-modal > header small { color: #979d99; }
 :root[data-theme="dark"] .completed-tasks-modal > header > button { border-color: #4a504c; background: #2d312f; color: #acb1ae; }
+:root[data-theme="dark"] .completed-archive-filter { background: #292d2b; }
+:root[data-theme="dark"] .completed-archive-filter button { color: #9da39f; }
+:root[data-theme="dark"] .completed-archive-filter button span { background: #383e3a; color: #a5aca8; }
+:root[data-theme="dark"] .completed-archive-filter button.active { border-color: #4b5b52; background: #343a36; color: #9fd3b8; box-shadow: none; }
+:root[data-theme="dark"] .completed-archive-filter button.active span { background: #29483a; color: #8bd0ae; }
 :root[data-theme="dark"] .completed-tasks-filters { border-color: #414743; background: #292d2b; }
 :root[data-theme="dark"] .completed-tasks-filters > label > span { color: #a6ada9; }
 :root[data-theme="dark"] .completed-tasks-filters input,
@@ -1759,9 +1779,13 @@ button { color: inherit; }
 :root[data-theme="dark"] .completed-tasks-filters input::placeholder { color: #858c88; }
 :root[data-theme="dark"] .completed-month-group > header h3 { color: #b0b6b2; }
 :root[data-theme="dark"] .completed-month-group > header span { background: #2c4b3c; color: #91d4b1; }
-:root[data-theme="dark"] .completed-month-group > div > button { border-color: #424944; background: #2b2f2d; }
-:root[data-theme="dark"] .completed-month-group > div > button:hover { border-color: #527562; background: #303a35; }
+:root[data-theme="dark"] .completed-task-row { border-color: #424944; background: #2b2f2d; }
+:root[data-theme="dark"] .completed-task-row:hover { border-color: #527562; background: #303a35; }
+:root[data-theme="dark"] .completed-task-row.archived { border-color: #48464f; background: #2d2c33; }
+:root[data-theme="dark"] .completed-task-restore { border-color: #494650; background: rgba(255,255,255,.025); color: #b5acf0; }
+:root[data-theme="dark"] .completed-task-restore:hover { background: #3d384b; color: #d1c9ff; }
 :root[data-theme="dark"] .completed-result-check { background: #29483a; color: #7dd7aa; }
+:root[data-theme="dark"] .completed-task-row.archived .completed-result-check { background: #413d4b; color: #aaa3b6; }
 :root[data-theme="dark"] .completed-month-group button strong { color: #e6e9e7; }
 :root[data-theme="dark"] .completed-month-group button small,
 :root[data-theme="dark"] .completed-month-group button time { color: #929995; }

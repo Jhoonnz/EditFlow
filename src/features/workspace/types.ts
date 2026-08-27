@@ -110,6 +110,8 @@ export type Task = {
   completed_at: string | null;
   started_at: string | null;
   started_by: string | null;
+  archived_at: string | null;
+  archived_by: string | null;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -213,7 +215,9 @@ export type TaskActivityAction =
   | 'adjustment_requested'
   | 'comment_resolved'
   | 'comment_reopened'
-  | 'work_started';
+  | 'work_started'
+  | 'archived'
+  | 'restored';
 
 export type TaskActivity = {
   id: string;

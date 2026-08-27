@@ -1,5 +1,30 @@
 [
   {
+    "version": "0.1.52",
+    "date": "2026-08-27",
+    "title": "Finalizados organizados, histórico preservado",
+    "summary": "A coluna de conclusão agora pode ser limpa com segurança, mantendo cada trabalho disponível para consulta e restauração.",
+    "sections": [
+      {
+        "kind": "new",
+        "title": "Arquivo de produção",
+        "items": [
+          "Nova ação para arquivar de uma vez todos os trabalhos presentes na coluna de finalizados.",
+          "Histórico com filtros para ver todos, somente os que estão no quadro ou apenas os arquivados.",
+          "Trabalhos arquivados podem ser restaurados ao quadro quando necessário."
+        ]
+      },
+      {
+        "kind": "improved",
+        "title": "Histórico seguro",
+        "items": [
+          "Arquivar não apaga comentários, links, atividades, datas de conclusão ou lançamentos financeiros.",
+          "Cada arquivamento e restauração passa a ser registrado no histórico da tarefa."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.1.51",
     "date": "2026-08-21",
     "title": "Uma identidade mais integrada",

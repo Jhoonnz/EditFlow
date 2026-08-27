@@ -4,6 +4,8 @@ import type { RealtimeChannel, User } from '@supabase/supabase-js';
 import editflowMark from '../../assets/editflow-mark.png';
 import {
   AlertTriangle,
+  Archive,
+  ArchiveRestore,
   Bell,
   BriefcaseBusiness,
   CalendarDays,
@@ -152,6 +154,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [workspaceDialogError, setWorkspaceDialogError] = useState<string | null>(null);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showCompletedTasks, setShowCompletedTasks] = useState(false);
+  const [archivingCompletedTasks, setArchivingCompletedTasks] = useState(false);
+  const [restoringTaskId, setRestoringTaskId] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [liveNotification, setLiveNotification] = useState<AppNotification | null>(null);
   const [profileMemberId, setProfileMemberId] = useState<string | null>(null);
@@ -715,8 +719,9 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 
   const filteredTasks = useMemo(() => {
     const term = search.trim().toLocaleLowerCase('pt-BR');
-    if (!term) return tasks;
-    return tasks.filter((task) => {
+    const activeTasks = tasks.filter((task) => !task.archived_at);
+    if (!term) return activeTasks;
+    return activeTasks.filter((task) => {
       const client = clients.find((item) => item.id === task.client_id);
       const assignee = liveMembers.find((item) => item.user_id === task.assignee_id);
       return `${task.title} ${task.description} ${client?.name ?? ''} ${assignee?.display_name ?? ''}`.toLocaleLowerCase('pt-BR').includes(term);
@@ -735,7 +740,9 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 
   const moveTask = async (taskId: string, targetColumnId: string, beforeTaskId: string | null) => {
     if (!supabase || !board) return;
-    const originalTasks = tasks;
+    const storedTasks = tasks;
+    const archivedTasks = storedTasks.filter((task) => task.archived_at);
+    const originalTasks = storedTasks.filter((task) => !task.archived_at);
     const movingTask = originalTasks.find((item) => item.id === taskId);
     if (!movingTask || beforeTaskId === taskId) return;
 
@@ -767,17 +774,49 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     ));
     if (!orderChanged) return;
 
-    setTasks(nextTasks);
+    setTasks([...nextTasks, ...archivedTasks]);
     setError(null);
     const { error: reorderError } = await supabase.rpc('reorder_tasks', {
       target_board: board.id,
       ordered_items: nextTasks.map((item) => ({ id: item.id, column_id: item.column_id, position: item.position })),
     });
     if (reorderError) {
-      setTasks(originalTasks);
+      setTasks(storedTasks);
       setError(reorderError.message);
       await loadBoard(true);
     }
+  };
+
+  const archiveCompletedTasks = async () => {
+    if (!supabase || !board || !completionColumn || !canManagePlanning || archivingCompletedTasks) return;
+    const completedCount = tasks.filter((task) => (
+      task.column_id === completionColumn.id
+      && task.completed_at
+      && !task.archived_at
+    )).length;
+    if (!completedCount) return;
+
+    const confirmed = await appDialog.confirm({
+      title: 'Limpar a coluna de finalizados?',
+      description: `${completedCount} ${completedCount === 1 ? 'tarefa será arquivada' : 'tarefas serão arquivadas'} e continuará disponível no histórico, sem alterar ganhos, links ou comentários.`,
+      confirmLabel: 'Arquivar finalizados',
+    });
+    if (!confirmed) return;
+
+    setArchivingCompletedTasks(true);
+    const { error: archiveError } = await supabase.rpc('archive_completed_tasks', { target_board: board.id });
+    if (archiveError) setError(archiveError.message);
+    else await loadBoard(true);
+    setArchivingCompletedTasks(false);
+  };
+
+  const restoreCompletedTask = async (task: Task) => {
+    if (!supabase || !canManagePlanning || restoringTaskId) return;
+    setRestoringTaskId(task.id);
+    const { error: restoreError } = await supabase.rpc('restore_completed_task', { target_task: task.id });
+    if (restoreError) setError(restoreError.message);
+    else await loadBoard(true);
+    setRestoringTaskId(null);
   };
 
   const finishTaskDrag = () => {
@@ -798,7 +837,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     event.stopPropagation();
     const taskId = event.dataTransfer.getData('text/editflow-task') || draggedTaskId;
     const columnTasks = tasks
-      .filter((item) => item.column_id === targetTask.column_id && item.id !== taskId)
+      .filter((item) => !item.archived_at && item.column_id === targetTask.column_id && item.id !== taskId)
       .sort((first, second) => Number(first.position) - Number(second.position));
     const targetIndex = columnTasks.findIndex((item) => item.id === targetTask.id);
     const beforeTaskId = edge === 'before'
@@ -1065,6 +1104,9 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           {columns.map((column) => {
             const columnTasks = tasksByColumn.get(column.id) ?? [];
             const isCompletionColumn = column.id === completionColumn?.id;
+            const activeCompletedCount = isCompletionColumn
+              ? tasks.filter((task) => task.column_id === column.id && task.completed_at && !task.archived_at).length
+              : 0;
             const visibleColumnTasks = isCompletionColumn
               ? columnTasks.slice().sort((first, second) => completedTaskTime(second) - completedTaskTime(first)).slice(0, 10)
               : columnTasks;
@@ -1166,8 +1208,16 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                   {!columnTasks.length ? <div className="empty-column">Arraste uma tarefa para cá</div> : null}
                 </div>
 
-                {isCompletionColumn && columnTasks.length ? (
-                  <button className="column-add" type="button" onClick={() => setShowCompletedTasks(true)}>Ver todos os finalizados</button>
+                {isCompletionColumn && (activeCompletedCount || tasks.some((task) => task.column_id === column.id && task.archived_at)) ? (
+                  <div className="completed-column-actions">
+                    <button className="column-add" type="button" onClick={() => setShowCompletedTasks(true)}>Ver histórico de finalizados</button>
+                    {canManagePlanning && activeCompletedCount ? (
+                      <button className="column-add" type="button" disabled={archivingCompletedTasks} onClick={() => void archiveCompletedTasks()}>
+                        {archivingCompletedTasks ? <LoaderCircle className="spin" size={14} /> : <Archive size={14} />}
+                        Limpar coluna
+                      </button>
+                    ) : null}
+                  </div>
                 ) : null}
 
                 {canManagePlanning && column.id === columns[0]?.id ? <button className="column-add" onClick={() => setEditor({ mode: 'new', task: null, columnId: column.id })}><Plus size={16} />Adicionar tarefa</button> : null}
@@ -1232,8 +1282,11 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         <CompletedTasksModal
           tasks={tasks.filter((task) => task.column_id === completionColumn.id)}
           clients={clients}
+          canRestore={canManagePlanning}
+          restoringTaskId={restoringTaskId}
           onClose={() => setShowCompletedTasks(false)}
           onOpenTask={(task) => { setShowCompletedTasks(false); setEditor({ mode: 'edit', task }); }}
+          onRestore={(task) => void restoreCompletedTask(task)}
         />
       ) : null}
       {profileMemberId && liveMembers.find((member) => member.user_id === profileMemberId) ? (
@@ -1813,18 +1866,27 @@ function TaskLinksModal({ taskTitle, links, onClose }: { taskTitle: string; link
 function CompletedTasksModal({
   tasks,
   clients,
+  canRestore,
+  restoringTaskId,
   onClose,
   onOpenTask,
+  onRestore,
 }: {
   tasks: Task[];
   clients: Client[];
+  canRestore: boolean;
+  restoringTaskId: string | null;
   onClose: () => void;
   onOpenTask: (task: Task) => void;
+  onRestore: (task: Task) => void;
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [clientId, setClientId] = useState('');
   const [month, setMonth] = useState('');
+  const [archiveFilter, setArchiveFilter] = useState<'all' | 'board' | 'archived'>('all');
   const dialogRef = useDialogFocus<HTMLElement>(true, onClose);
+  const archivedCount = tasks.filter((task) => task.archived_at).length;
+  const boardCount = tasks.length - archivedCount;
   const clientById = useMemo(() => new Map(clients.map((client) => [client.id, client])), [clients]);
   const availableClients = useMemo(() => clients
     .filter((client) => tasks.some((task) => task.client_id === client.id))
@@ -1833,6 +1895,8 @@ function CompletedTasksModal({
   const filteredCompletedTasks = useMemo(() => {
     const normalizedSearch = normalizeText(searchTerm.trim());
     return tasks
+      .filter((task) => archiveFilter === 'all'
+        || (archiveFilter === 'archived' ? Boolean(task.archived_at) : !task.archived_at))
       .filter((task) => !clientId || task.client_id === clientId)
       .filter((task) => !month || completedTaskMonth(task) === month)
       .filter((task) => {
@@ -1841,7 +1905,7 @@ function CompletedTasksModal({
         return normalizeText(`${task.title} ${client?.name ?? ''}`).includes(normalizedSearch);
       })
       .sort((first, second) => completedTaskTime(second) - completedTaskTime(first));
-  }, [clientById, clientId, month, searchTerm, tasks]);
+  }, [archiveFilter, clientById, clientId, month, searchTerm, tasks]);
   const groupedTasks = useMemo(() => {
     const groups = new Map<string, Task[]>();
     filteredCompletedTasks.forEach((task) => {
@@ -1856,9 +1920,14 @@ function CompletedTasksModal({
       <section ref={dialogRef} tabIndex={-1} className="completed-tasks-modal" role="dialog" aria-modal="true" aria-labelledby="completed-tasks-title">
         <header>
           <span><CheckCircle2 size={21} /></span>
-          <div><p>HISTÓRICO DE PRODUÇÃO</p><h2 id="completed-tasks-title">Trabalhos finalizados</h2><small>{tasks.length} {tasks.length === 1 ? 'trabalho concluído' : 'trabalhos concluídos'}</small></div>
+          <div><p>HISTÓRICO DE PRODUÇÃO</p><h2 id="completed-tasks-title">Trabalhos finalizados</h2><small>{tasks.length} {tasks.length === 1 ? 'trabalho concluído' : 'trabalhos concluídos'} · {archivedCount} {archivedCount === 1 ? 'arquivado' : 'arquivados'}</small></div>
           <button type="button" onClick={onClose} aria-label="Fechar finalizados"><X size={19} /></button>
         </header>
+        <nav className="completed-archive-filter" aria-label="Filtrar histórico de finalizados">
+          <button type="button" className={archiveFilter === 'all' ? 'active' : ''} aria-pressed={archiveFilter === 'all'} onClick={() => setArchiveFilter('all')}>Todos <span>{tasks.length}</span></button>
+          <button type="button" className={archiveFilter === 'board' ? 'active' : ''} aria-pressed={archiveFilter === 'board'} onClick={() => setArchiveFilter('board')}>No quadro <span>{boardCount}</span></button>
+          <button type="button" className={archiveFilter === 'archived' ? 'active' : ''} aria-pressed={archiveFilter === 'archived'} onClick={() => setArchiveFilter('archived')}>Arquivados <span>{archivedCount}</span></button>
+        </nav>
         <div className="completed-tasks-filters">
           <label className="completed-search"><Search size={15} /><input autoFocus value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Buscar por título ou cliente..." /></label>
           <label><span>Cliente</span><select value={clientId} onChange={(event) => setClientId(event.target.value)}><option value="">Todos os clientes</option>{availableClients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label>
@@ -1871,7 +1940,21 @@ function CompletedTasksModal({
               <div>
                 {monthTasks.map((task) => {
                   const client = task.client_id ? clientById.get(task.client_id) : null;
-                  return <button type="button" key={task.id} onClick={() => onOpenTask(task)}><span className="completed-result-check"><CheckCircle2 size={16} /></span><span><strong>{task.title}</strong><small>{client?.name ?? 'Sem cliente'}</small></span><time>{formatCompletedDate(completedTaskDate(task))}</time></button>;
+                  return (
+                    <div className={`completed-task-row ${task.archived_at ? 'archived' : ''}`} key={task.id}>
+                      <button className="completed-task-open" type="button" onClick={() => onOpenTask(task)}>
+                        <span className="completed-result-check">{task.archived_at ? <Archive size={16} /> : <CheckCircle2 size={16} />}</span>
+                        <span><strong>{task.title}</strong><small>{client?.name ?? 'Sem cliente'}{task.archived_at ? ' · Arquivado' : ''}</small></span>
+                        <time>{formatCompletedDate(completedTaskDate(task))}</time>
+                      </button>
+                      {task.archived_at && canRestore ? (
+                        <button className="completed-task-restore" type="button" disabled={Boolean(restoringTaskId)} onClick={() => onRestore(task)} title="Restaurar no quadro">
+                          {restoringTaskId === task.id ? <LoaderCircle className="spin" size={15} /> : <ArchiveRestore size={15} />}
+                          <span>Restaurar</span>
+                        </button>
+                      ) : null}
+                    </div>
+                  );
                 })}
               </div>
             </section>
@@ -2635,6 +2718,8 @@ function activityDescription(activity: TaskActivity, columns: BoardColumn[], mem
   if (activity.action === 'adjustment_requested') return `solicitou um ajuste na revisão V${activity.details.revision_round ?? '?'}.`;
   if (activity.action === 'comment_resolved') return `marcou um feedback da V${activity.details.revision_round ?? '?'} como resolvido.`;
   if (activity.action === 'work_started') return 'iniciou o trabalho nesta tarefa.';
+  if (activity.action === 'archived') return 'arquivou esta tarefa no histórico de finalizados.';
+  if (activity.action === 'restored') return 'restaurou esta tarefa no quadro.';
   return `reabriu um feedback da V${activity.details.revision_round ?? '?'}.`;
 }
 
