@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.1.53",
+    "date": "2026-08-27",
+    "title": "Ganhos no ritmo de cada contrato",
+    "summary": "O financeiro agora pode seguir um ciclo personalizado da equipe, sem limitar vídeos e ganhos ao primeiro e último dia do mês.",
+    "sections": [
+      {
+        "kind": "new",
+        "title": "Ciclo financeiro personalizado",
+        "items": [
+          "O proprietário pode escolher em qual dia do mês um novo ciclo financeiro começa.",
+          "Navegação por períodos reais, como 28 de agosto a 27 de setembro.",
+          "Meses curtos ajustam automaticamente os ciclos configurados para os dias 29, 30 ou 31."
+        ]
+      },
+      {
+        "kind": "improved",
+        "title": "Resumo e relatórios coerentes",
+        "items": [
+          "Totais, vídeos concluídos, clientes, lançamentos e pendências usam o mesmo intervalo.",
+          "O PDF financeiro identifica o ciclo completo em vez de mostrar apenas o mês do calendário.",
+          "Alterar o ciclo reorganiza a visualização sem apagar ou reescrever lançamentos existentes."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.1.52",
     "date": "2026-08-27",
     "title": "Finalizados organizados, histórico preservado",

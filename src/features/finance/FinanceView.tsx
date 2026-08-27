@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import {
   BadgeDollarSign,
   Banknote,
+  CalendarRange,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   CircleDollarSign,
   Clock3,
   FileDown,
@@ -14,6 +17,7 @@ import {
   ReceiptText,
   RefreshCw,
   Save,
+  Settings2,
   TrendingUp,
   Trash2,
   Video,
@@ -25,6 +29,14 @@ import { useAppDialog } from '../../components/AppDialog';
 import { useLatestRequest } from '../../lib/asyncRequest';
 import { useDialogFocus } from '../../lib/useDialogFocus';
 import { fetchAllRows } from '../../lib/paginatedQuery';
+import {
+  currentFinancialCycle,
+  financialCycleRange,
+  formatFinancialCycle,
+  isDateInRange,
+  normalizeCycleStartDay,
+  shiftMonthKey,
+} from '../../lib/financialCycle';
 import { paymentFeeRule, paymentMethodLabel } from './paymentFees';
 import type {
   Client,
@@ -62,7 +74,8 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
   const [earnings, setEarnings] = useState<Earning[]>([]);
   const [events, setEvents] = useState<EarningEvent[]>([]);
   const [rate, setRate] = useState<EditFlowUsdBrlRate | null>(null);
-  const [month, setMonth] = useState(currentMonth());
+  const [cycleMonth, setCycleMonth] = useState(currentMonth());
+  const [cycleStartDay, setCycleStartDay] = useState(1);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [rateLoading, setRateLoading] = useState(false);
@@ -75,6 +88,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
   const [syncing, setSyncing] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
+  const cycleWorkspaceRef = useRef<string | null>(null);
   const setManualEditor = (value: Earning | 'new' | null) => {
     if (saving && value === null) return;
     setManualEditorState(value);
@@ -101,12 +115,13 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     const requestId = beginFinanceRequest();
     if (!quiet) setLoading(true);
     setError(null);
-    const [settingsResult, earningsResult, eventsResult] = await Promise.all([
+    const [settingsResult, earningsResult, eventsResult, workspaceCycleResult] = await Promise.all([
       fetchAllRows<ClientBillingSetting>(async (from, to) => await client.from('client_billing_settings').select('client_id, workspace_id, currency, pricing_model, amount_usd, bundle_size, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, created_at, updated_at').eq('workspace_id', workspace.id).order('created_at').range(from, to)),
       fetchAllRows<Earning>(async (from, to) => await client.from('earnings').select('id, workspace_id, client_id, source_type, description, item_count, currency, amount_usd, net_amount_usd, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, status, earned_at, received_at, exchange_rate_brl, amount_brl, created_at, updated_at').eq('workspace_id', workspace.id).order('earned_at', { ascending: false }).range(from, to)),
       fetchAllRows<EarningEvent>(async (from, to) => await client.from('earning_events').select('id, workspace_id, client_id, task_id, task_title, completed_at, pricing_model, currency, amount_usd, bundle_size, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, earning_id, created_at').eq('workspace_id', workspace.id).order('completed_at', { ascending: false }).range(from, to)),
+      client.from('workspaces').select('financial_cycle_start_day').eq('id', workspace.id).single(),
     ]);
-    const loadError = settingsResult.error ?? earningsResult.error ?? eventsResult.error;
+    const loadError = settingsResult.error ?? earningsResult.error ?? eventsResult.error ?? workspaceCycleResult.error;
     if (!isLatestFinanceRequest(requestId)) return;
     if (loadError) {
       setMigrationMissing(isMissingFinanceSchema(loadError.message));
@@ -119,6 +134,12 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     setSettings((settingsResult.data ?? []).map(normalizeBillingSetting));
     setEarnings((earningsResult.data ?? []).map(normalizeEarning));
     setEvents((eventsResult.data ?? []).map(normalizeEarningEvent));
+    const loadedCycleDay = normalizeCycleStartDay(workspaceCycleResult.data?.financial_cycle_start_day);
+    setCycleStartDay(loadedCycleDay);
+    if (cycleWorkspaceRef.current !== workspace.id) {
+      cycleWorkspaceRef.current = workspace.id;
+      setCycleMonth(currentFinancialCycle(loadedCycleDay));
+    }
     setLoading(false);
   }, [beginFinanceRequest, isLatestFinanceRequest, workspace.id]);
 
@@ -147,22 +168,24 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     };
   }, [loadFinance, migrationMissing, workspace.id]);
 
-  const monthlyEarnings = useMemo(() => earnings.filter((earning) => monthKey(earning.earned_at) === month), [earnings, month]);
-  const usdEarnings = monthlyEarnings.filter((earning) => earning.currency === 'USD');
-  const brlEarnings = monthlyEarnings.filter((earning) => earning.currency === 'BRL');
+  const cycleRange = useMemo(() => financialCycleRange(cycleMonth, cycleStartDay), [cycleMonth, cycleStartDay]);
+  const cycleLabel = formatFinancialCycle(cycleRange);
+  const cycleEarnings = useMemo(() => earnings.filter((earning) => isDateInRange(earning.earned_at, cycleRange)), [cycleRange, earnings]);
+  const usdEarnings = cycleEarnings.filter((earning) => earning.currency === 'USD');
+  const brlEarnings = cycleEarnings.filter((earning) => earning.currency === 'BRL');
   const grossUsd = sum(usdEarnings.map((earning) => earning.amount_usd));
   const netUsd = sum(usdEarnings.map((earning) => earning.net_amount_usd));
   const netNativeBrl = sum(brlEarnings.map((earning) => earning.net_amount_usd));
-  const pendingEarnings = monthlyEarnings.filter((earning) => earning.status === 'pending');
-  const receivedEarnings = monthlyEarnings.filter((earning) => earning.status === 'received');
+  const pendingEarnings = cycleEarnings.filter((earning) => earning.status === 'pending');
+  const receivedEarnings = cycleEarnings.filter((earning) => earning.status === 'received');
   const receivedBrl = sum(receivedEarnings.map((earning) => earning.amount_brl ?? 0));
   const pendingNetBrl = totalEarningsBrl(pendingEarnings, (earning) => earning.net_amount_usd, rate);
-  const grossBrl = totalEarningsBrl(monthlyEarnings, (earning) => earning.amount_usd, rate);
-  const feeBrl = totalEarningsBrl(monthlyEarnings, (earning) => earning.amount_usd - earning.net_amount_usd, rate);
+  const grossBrl = totalEarningsBrl(cycleEarnings, (earning) => earning.amount_usd, rate);
+  const feeBrl = totalEarningsBrl(cycleEarnings, (earning) => earning.amount_usd - earning.net_amount_usd, rate);
   const expectedNetBrl = pendingNetBrl === null ? null : receivedBrl + pendingNetBrl;
   const nativeNetSummary = [grossUsd ? formatUsd(netUsd) : '', netNativeBrl ? formatBrl(netNativeBrl) : ''].filter(Boolean).join(' + ');
   const clientSummaries = useMemo(() => clients.map((client) => {
-    const clientEarnings = monthlyEarnings.filter((earning) => earning.client_id === client.id);
+    const clientEarnings = cycleEarnings.filter((earning) => earning.client_id === client.id);
     const setting = settings.find((item) => item.client_id === client.id);
     const unallocated = events.filter((event) => event.client_id === client.id && !event.earning_id);
     return {
@@ -173,9 +196,9 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
       itemCount: sum(clientEarnings.map((earning) => earning.item_count)),
       pendingItems: unallocated.length,
     };
-  }).filter((summary) => summary.setting || summary.grossBrl), [clients, events, monthlyEarnings, rate, settings]);
-  const completedMonthTasks = useMemo(() => tasks.filter((task) => task.completed_at && monthKey(task.completed_at) === month), [month, tasks]);
-  const deliveryIssues = useMemo(() => completedMonthTasks.flatMap((task) => {
+  }).filter((summary) => summary.setting || summary.grossBrl), [clients, cycleEarnings, events, rate, settings]);
+  const completedCycleTasks = useMemo(() => tasks.filter((task) => task.completed_at && isDateInRange(task.completed_at, cycleRange)), [cycleRange, tasks]);
+  const deliveryIssues = useMemo(() => completedCycleTasks.flatMap((task) => {
     const event = events.find((item) => item.task_id === task.id);
     if (event?.earning_id) return [];
     if (event?.pricing_model === 'per_video') return [{ task, clientName: clients.find((item) => item.id === task.client_id)?.name ?? 'Cliente', reason: 'O evento está pronto para ser sincronizado.' }];
@@ -184,7 +207,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     if (!task.client_id || !client) return [{ task, clientName: 'Sem cliente', reason: 'Vincule um cliente para contabilizar esta entrega.' }];
     if (!settings.some((item) => item.client_id === task.client_id)) return [{ task, clientName: client.name, reason: 'Configure o pagamento deste cliente.' }];
     return [{ task, clientName: client.name, reason: 'A entrega está pronta para ser sincronizada.' }];
-  }), [clients, completedMonthTasks, events, settings]);
+  }), [clients, completedCycleTasks, events, settings]);
   const bundleProgress = useMemo(() => clients.flatMap((client) => {
     const setting = settings.find((item) => item.client_id === client.id);
     if (!setting || setting.pricing_model !== 'bundle') return [];
@@ -192,12 +215,44 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     return pendingEvents.length ? [{ client, setting, pendingEvents }] : [];
   }), [clients, events, settings]);
 
+  const configureFinancialCycle = async () => {
+    if (!supabase) return;
+    const value = await appDialog.prompt({
+      title: 'Início do ciclo financeiro',
+      description: 'Escolha o dia em que um novo período de ganhos começa. Nos meses mais curtos, será usado o último dia disponível.',
+      inputLabel: 'Dia do início (1 a 31)',
+      initialValue: String(cycleStartDay),
+      confirmLabel: 'Salvar ciclo',
+    });
+    if (value === null) return;
+    const parsedDay = Number(value);
+    if (!Number.isInteger(parsedDay) || parsedDay < 1 || parsedDay > 31) {
+      setError('Informe um dia inteiro entre 1 e 31.');
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    const { error: cycleError } = await supabase.rpc('update_workspace_financial_cycle', {
+      target_workspace: workspace.id,
+      cycle_start_day: parsedDay,
+    });
+    setSaving(false);
+    if (cycleError) return setError(financeErrorMessage(cycleError.message));
+    setCycleStartDay(parsedDay);
+    setCycleMonth(currentFinancialCycle(parsedDay));
+    setSuccess(parsedDay === 1
+      ? 'O financeiro voltou a acompanhar os meses do calendário.'
+      : `O ciclo financeiro agora começa no dia ${parsedDay}.`);
+  };
+
   const openManualEditor = (earning?: Earning) => {
     setError(null);
     setSuccess(null);
     if (!earning) {
       setManualEditor('new');
-      setManualDraft(emptyManualDraft(month));
+      setManualDraft(emptyManualDraft(cycleMonth, cycleStartDay));
       return;
     }
     setManualEditor(earning);
@@ -373,8 +428,8 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     try {
       const result = await window.editflow.exportFinancialReport({
         workspaceName: workspace.name,
-        month,
-        monthLabel: formatMonth(month),
+        month: cycleMonth,
+        monthLabel: cycleLabel,
         generatedAt: new Intl.DateTimeFormat('pt-BR', { dateStyle: 'long', timeStyle: 'short' }).format(new Date()),
         usdBrlRate: rate?.rate ?? null,
         totals: {
@@ -383,9 +438,9 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
           netBrl: expectedNetBrl,
           receivedBrl,
           pendingBrl: pendingNetBrl,
-          entries: monthlyEarnings.length,
+          entries: cycleEarnings.length,
         },
-        rows: monthlyEarnings.map((earning) => {
+        rows: cycleEarnings.map((earning) => {
           const client = clients.find((item) => item.id === earning.client_id);
           return {
             client: client?.name || (earning.source_type === 'manual' ? 'Lançamento avulso' : 'Cliente removido'),
@@ -401,7 +456,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
           };
         }),
       });
-      if (!result.cancelled) setSuccess(`Relatório de ${formatMonth(month)} exportado em PDF.`);
+      if (!result.cancelled) setSuccess(`Relatório do ciclo ${cycleLabel} exportado em PDF.`);
     } catch (exportError) {
       setError(exportError instanceof Error ? exportError.message : 'Não foi possível exportar o relatório em PDF.');
     } finally {
@@ -416,7 +471,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
       <div className="finance-view finance-empty-state">
         <span><WalletCards size={25} /></span>
         <h2>Ative o módulo financeiro</h2>
-        <p>Execute as migrations financeiras pendentes, incluindo <strong>020_financial_currencies.sql</strong>, no SQL Editor do Supabase. Depois, volte aqui e tente novamente.</p>
+        <p>Execute as migrations financeiras pendentes, incluindo <strong>026_financial_cycles.sql</strong>, no SQL Editor do Supabase. Depois, volte aqui e tente novamente.</p>
         <button className="secondary-button" onClick={() => void loadFinance()}><RefreshCw size={15} />Tentar novamente</button>
       </div>
     );
@@ -428,14 +483,22 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
         <div className="finance-hero-copy">
           <p>VISÃO FINANCEIRA</p>
           <h2>{expectedNetBrl === null ? 'Cotação indisponível' : formatBrl(expectedNetBrl)}</h2>
-          <span>Líquido estimado em {formatMonth(month)}{nativeNetSummary ? ` · ${nativeNetSummary} nas moedas originais` : ''}</span>
+          <span>Líquido estimado no ciclo de {cycleLabel}{nativeNetSummary ? ` · ${nativeNetSummary} nas moedas originais` : ''}</span>
         </div>
         <div className="finance-rate-card">
           <span><TrendingUp size={17} /></span>
           <div><small>USD → BRL</small><strong>{rate ? formatRate(rate.rate) : '—'}</strong><em>{rate ? `${rate.stale ? 'Última cotação salva' : 'Cotação atual'} · ${formatCompactDate(rate.sourceUpdatedAt)}` : 'Sem cotação salva'}</em></div>
           <button aria-label="Atualizar cotação" onClick={() => void loadRate()} disabled={rateLoading}><RefreshCw className={rateLoading ? 'spinner' : ''} size={15} /></button>
         </div>
-        <label className="finance-month"><span>Mês</span><input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label>
+        <div className="finance-cycle">
+          <span>Ciclo financeiro</span>
+          <div>
+            <button type="button" aria-label="Ciclo anterior" onClick={() => setCycleMonth((current) => shiftMonthKey(current, -1))}><ChevronLeft size={15} /></button>
+            <strong><CalendarRange size={14} />{cycleLabel}</strong>
+            <button type="button" aria-label="Próximo ciclo" onClick={() => setCycleMonth((current) => shiftMonthKey(current, 1))}><ChevronRight size={15} /></button>
+          </div>
+          <button className="finance-cycle-setting" type="button" disabled={saving} onClick={() => void configureFinancialCycle()}><Settings2 size={12} />Inicia no dia {cycleStartDay}</button>
+        </div>
         <div className="finance-hero-actions"><button className="secondary-button" disabled={exporting} onClick={() => void exportMonthlyReport()}>{exporting ? <LoaderCircle className="spinner" size={14} /> : <FileDown size={14} />}Exportar PDF</button><button className="secondary-button" disabled={syncing} onClick={() => void synchronizeEarnings()}>{syncing ? <LoaderCircle className="spinner" size={14} /> : <RefreshCw size={14} />}Sincronizar</button><button className="primary-button" onClick={() => openManualEditor()}><Plus size={14} />Novo lançamento</button></div>
       </section>
 
@@ -443,14 +506,14 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
       {success ? <div className="panel-success finance-success"><CheckCircle2 size={15} />{success}</div> : null}
 
       <section className="finance-metrics">
-        <article><span className="purple"><BadgeDollarSign size={18} /></span><div><small>Faturamento bruto</small><strong>{grossBrl === null ? '—' : formatBrl(grossBrl)}</strong><em>{monthlyEarnings.length} lançamentos</em></div></article>
+        <article><span className="purple"><BadgeDollarSign size={18} /></span><div><small>Faturamento bruto</small><strong>{grossBrl === null ? '—' : formatBrl(grossBrl)}</strong><em>{cycleEarnings.length} lançamentos</em></div></article>
         <article><span className="orange"><ReceiptText size={18} /></span><div><small>Taxas estimadas</small><strong>{feeBrl === null ? '—' : `-${formatBrl(feeBrl)}`}</strong><em>USD e BRL consolidados</em></div></article>
         <article><span className="blue"><CircleDollarSign size={18} /></span><div><small>Líquido estimado</small><strong>{expectedNetBrl === null ? '—' : formatBrl(expectedNetBrl)}</strong><em>{nativeNetSummary || 'Sem lançamentos'}</em></div></article>
         <article><span className="green"><Banknote size={18} /></span><div><small>Recebido</small><strong>{formatBrl(receivedBrl)}</strong><em>{receivedEarnings.length} pagamentos</em></div></article>
       </section>
 
       <section className="finance-card client-earnings-card finance-client-summary">
-          <header><span><WalletCards size={18} /></span><div><h3>Resumo por cliente</h3><p>Valores gerados no mês selecionado. Configure o pagamento ao criar ou editar um cliente.</p></div></header>
+          <header><span><WalletCards size={18} /></span><div><h3>Resumo por cliente</h3><p>Valores gerados no ciclo selecionado. Configure o pagamento ao criar ou editar um cliente.</p></div></header>
           <div className="client-earning-list">
             {clientSummaries.map(({ client, setting, grossBrl: clientGrossBrl, netBrl: clientNetBrl, itemCount, pendingItems }) => (
               <article key={client.id}>
@@ -472,10 +535,10 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
       </section> : null}
 
       <section className="finance-card earnings-history-card">
-        <header><span><CheckCircle2 size={18} /></span><div><h3>Lançamentos do mês</h3><p>Automáticos vêm da última coluna; manuais podem ser corrigidos ou removidos.</p></div><button className="finance-add-entry" onClick={() => openManualEditor()}><Plus size={14} />Adicionar</button></header>
+        <header><span><CheckCircle2 size={18} /></span><div><h3>Lançamentos do ciclo</h3><p>Automáticos vêm da última coluna; manuais podem ser corrigidos ou removidos.</p></div><button className="finance-add-entry" onClick={() => openManualEditor()}><Plus size={14} />Adicionar</button></header>
         <div className="earnings-table">
           <div className="earnings-table-head"><span>Cliente / lançamento</span><span>Data</span><span>Valor</span><span>Status / ações</span></div>
-          {monthlyEarnings.map((earning) => {
+          {cycleEarnings.map((earning) => {
             const client = clients.find((item) => item.id === earning.client_id);
             const displayBrl = earningNetBrl(earning, rate);
             const earningFee = earning.amount_usd - earning.net_amount_usd;
@@ -490,7 +553,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
               </article>
             );
           })}
-          {!monthlyEarnings.length ? <div className="finance-list-empty">Nenhum ganho foi gerado neste mês.</div> : null}
+          {!cycleEarnings.length ? <div className="finance-list-empty">Nenhum ganho foi gerado neste ciclo.</div> : null}
         </div>
       </section>
 
@@ -576,10 +639,11 @@ function normalizeEarningEvent(row: Record<string, unknown>) {
   } as EarningEvent;
 }
 
-function emptyManualDraft(selectedMonth = currentMonth()): ManualEarningDraft {
+function emptyManualDraft(selectedCycle = currentMonth(), cycleStartDay = 1): ManualEarningDraft {
   const today = new Date();
-  const todayMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
-  const date = `${selectedMonth}-${selectedMonth === todayMonth ? String(today.getDate()).padStart(2, '0') : '01'}`;
+  const range = financialCycleRange(selectedCycle, cycleStartDay);
+  const selectedDate = isDateInRange(today, range) ? today : range.start;
+  const date = localDateInputValue(selectedDate);
   return {
     clientId: '',
     description: '',
@@ -603,6 +667,9 @@ function earningSourceLabel(source: Earning['source_type']) {
 
 function financeErrorMessage(message: string) {
   const normalized = message.toLowerCase();
+  if (normalized.includes('update_workspace_financial_cycle') || normalized.includes('financial_cycle_start_day')) {
+    return 'Execute a migration 026_financial_cycles.sql no Supabase para configurar ciclos financeiros.';
+  }
   if (normalized.includes('create_manual_earning') || normalized.includes('update_manual_earning') || normalized.includes('sync_workspace_earnings') || normalized.includes('schema cache')) {
     return 'Execute as migrations financeiras pendentes, incluindo 020_financial_currencies.sql, no Supabase.';
   }
@@ -614,7 +681,7 @@ function financeErrorMessage(message: string) {
 
 function isMissingFinanceSchema(message: string) {
   const normalized = message.toLowerCase();
-  return normalized.includes('client_billing_settings') || normalized.includes('earning_events') || normalized.includes('net_amount_usd') || normalized.includes('currency') || normalized.includes('payment_method') || normalized.includes('schema cache');
+  return normalized.includes('client_billing_settings') || normalized.includes('earning_events') || normalized.includes('net_amount_usd') || normalized.includes('currency') || normalized.includes('payment_method') || normalized.includes('financial_cycle_start_day') || normalized.includes('schema cache');
 }
 
 function currentMonth() {
@@ -622,14 +689,8 @@ function currentMonth() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,'0')}`;
 }
 
-function monthKey(date: string) {
-  const parsed = new Date(date);
-  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2,'0')}`;
-}
-
-function formatMonth(month: string) {
-  const [year, value] = month.split('-').map(Number);
-  return new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(new Date(year, value - 1, 1));
+function localDateInputValue(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 function formatUsd(value: number) {

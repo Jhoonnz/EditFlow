@@ -14,6 +14,7 @@ type DialogOptions = {
 type PromptOptions = DialogOptions & {
   inputLabel: string;
   placeholder?: string;
+  initialValue?: string;
   requiredValue?: string;
 };
 
@@ -41,7 +42,7 @@ export function useAppDialog() {
   }), []);
 
   const prompt = useCallback((options: PromptOptions) => new Promise<string | null>((resolve) => {
-    setInputValue('');
+    setInputValue(options.initialValue ?? '');
     setRequest({ kind: 'prompt', options, resolve });
   }), []);
 

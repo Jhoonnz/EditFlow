@@ -257,11 +257,11 @@ const financialReportHtml = (report: EditFlowFinancialReport) => {
     .empty { padding: 34px; border: 1px dashed #d9d5df; border-radius: 10px; color: #918d99; text-align: center; }
     footer { display: flex; justify-content: space-between; margin-top: 12px; padding: 8px 2px 0; border-top: 1px solid #ece9f0; color: #8c8894; font-size: 7.5px; }
   </style></head><body>
-    <header><div class="brand"><div class="logo">E</div><div><h1>EditFlow</h1><p>${escapeReportHtml(report.workspaceName)} · Relatório financeiro mensal</p></div></div><div class="period"><strong>${escapeReportHtml(report.monthLabel)}</strong><small>Gerado em ${escapeReportHtml(report.generatedAt)}</small></div></header>
+    <header><div class="brand"><div class="logo">E</div><div><h1>EditFlow</h1><p>${escapeReportHtml(report.workspaceName)} · Relatório por ciclo financeiro</p></div></div><div class="period"><strong>${escapeReportHtml(report.monthLabel)}</strong><small>Gerado em ${escapeReportHtml(report.generatedAt)}</small></div></header>
     <section class="summary">
       <article><span>Faturamento bruto</span><strong>${escapeReportHtml(reportBrl(report.totals.grossBrl))}</strong></article>
       <article><span>Taxas estimadas</span><strong>${escapeReportHtml(reportBrl(report.totals.feesBrl))}</strong></article>
-      <article class="net"><span>Líquido do mês</span><strong>${escapeReportHtml(reportBrl(report.totals.netBrl))}</strong></article>
+      <article class="net"><span>Líquido do ciclo</span><strong>${escapeReportHtml(reportBrl(report.totals.netBrl))}</strong></article>
       <article><span>Já recebido</span><strong>${escapeReportHtml(reportBrl(report.totals.receivedBrl))}</strong></article>
       <article><span>Pendente</span><strong>${escapeReportHtml(reportBrl(report.totals.pendingBrl))}</strong></article>
     </section>
