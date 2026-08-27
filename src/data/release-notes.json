@@ -1,5 +1,39 @@
 [
   {
+    "version": "0.1.54",
+    "date": "2026-08-27",
+    "title": "Uma interface mais clara e consistente",
+    "summary": "O EditFlow recebeu uma revisão visual completa para melhorar leitura, equilíbrio e adaptação a diferentes tamanhos de janela.",
+    "sections": [
+      {
+        "kind": "new",
+        "title": "Tipografia incorporada",
+        "items": [
+          "A fonte variável Inter agora acompanha o aplicativo e mantém o mesmo desenho em todos os computadores.",
+          "Uma escala comum organiza textos, legendas, controles e títulos em todas as áreas."
+        ]
+      },
+      {
+        "kind": "improved",
+        "title": "Ganhos mais equilibrado",
+        "items": [
+          "O ciclo financeiro ganhou espaço próprio e o calendário não fica mais comprimido.",
+          "A cotação USD para BRL virou uma informação compacta no canto do resumo.",
+          "O seletor nativo de data agora mantém o ícone visível nos modos claro e escuro."
+        ]
+      },
+      {
+        "kind": "improved",
+        "title": "Leitura e acessibilidade",
+        "items": [
+          "Textos excessivamente pequenos foram normalizados em Produção, Chat, Meu trabalho, Perfil, Equipe, Clientes e notas da versão.",
+          "Metadados receberam mais contraste e controles mantêm áreas de interação consistentes.",
+          "A interface respeita de forma mais abrangente a preferência do sistema por movimento reduzido."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.1.53",
     "date": "2026-08-27",
     "title": "Ganhos no ritmo de cada contrato",

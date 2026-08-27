@@ -485,8 +485,11 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
           <h2>{expectedNetBrl === null ? 'Cotação indisponível' : formatBrl(expectedNetBrl)}</h2>
           <span>Líquido estimado no ciclo de {cycleLabel}{nativeNetSummary ? ` · ${nativeNetSummary} nas moedas originais` : ''}</span>
         </div>
-        <div className="finance-rate-card">
-          <span><TrendingUp size={17} /></span>
+        <div
+          className="finance-rate-card"
+          title={rate ? `${rate.stale ? 'Última cotação salva' : 'Cotação atual'} · ${formatCompactDate(rate.sourceUpdatedAt)}` : 'Sem cotação salva'}
+        >
+          <span><TrendingUp size={14} /></span>
           <div><small>USD → BRL</small><strong>{rate ? formatRate(rate.rate) : '—'}</strong><em>{rate ? `${rate.stale ? 'Última cotação salva' : 'Cotação atual'} · ${formatCompactDate(rate.sourceUpdatedAt)}` : 'Sem cotação salva'}</em></div>
           <button aria-label="Atualizar cotação" onClick={() => void loadRate()} disabled={rateLoading}><RefreshCw className={rateLoading ? 'spinner' : ''} size={15} /></button>
         </div>
@@ -494,7 +497,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
           <span>Ciclo financeiro</span>
           <div>
             <button type="button" aria-label="Ciclo anterior" onClick={() => setCycleMonth((current) => shiftMonthKey(current, -1))}><ChevronLeft size={15} /></button>
-            <strong><CalendarRange size={14} />{cycleLabel}</strong>
+            <strong><CalendarRange size={14} /><span>{cycleLabel}</span></strong>
             <button type="button" aria-label="Próximo ciclo" onClick={() => setCycleMonth((current) => shiftMonthKey(current, 1))}><ChevronRight size={15} /></button>
           </div>
           <button className="finance-cycle-setting" type="button" disabled={saving} onClick={() => void configureFinancialCycle()}><Settings2 size={12} />Inicia no dia {cycleStartDay}</button>
@@ -563,7 +566,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
             <header><span><FilePlus2 size={18} /></span><div><h3 id="manual-earning-title">{manualEditor === 'new' ? 'Novo lançamento' : 'Editar lançamento'}</h3><p>Registre bônus, extras ou trabalhos que não vieram de uma tarefa.</p></div><button onClick={() => setManualEditor(null)} aria-label="Fechar"><X size={17} /></button></header>
             <div className="manual-earning-grid">
               <label><span>Cliente</span><select value={manualDraft.clientId} onChange={(event) => applyManualClient(event.target.value)}><option value="">Sem cliente específico</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label>
-              <label><span>Data do lançamento</span><input type="date" value={manualDraft.earnedDate} onChange={(event) => setManualDraft({ ...manualDraft, earnedDate: event.target.value })} /></label>
+              <label className="manual-date-field"><span>Data do lançamento</span><input type="date" value={manualDraft.earnedDate} onChange={(event) => setManualDraft({ ...manualDraft, earnedDate: event.target.value })} /></label>
               <label className="wide"><span>Descrição</span><input maxLength={300} value={manualDraft.description} onChange={(event) => setManualDraft({ ...manualDraft, description: event.target.value })} placeholder="Ex.: Bônus do projeto especial" /></label>
               <label><span>Moeda</span><select value={manualDraft.currency} onChange={(event) => applyManualCurrency(event.target.value as BillingCurrency)}><option value="USD">Dólar americano (USD)</option><option value="BRL">Real brasileiro (BRL)</option></select></label>
               <label><span>Valor bruto</span><div className="manual-money-input"><b>{manualDraft.currency === 'BRL' ? 'R$' : 'US$'}</b><input inputMode="decimal" value={manualDraft.amountUsd} onChange={(event) => setManualDraft({ ...manualDraft, amountUsd: event.target.value })} placeholder={manualDraft.currency === 'BRL' ? '0,00' : '0.00'} /></div></label>

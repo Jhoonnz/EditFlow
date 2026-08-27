@@ -1,15 +1,33 @@
 :root {
-  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-ui: "Inter Variable", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --text-micro: 10px;
+  --text-caption: 11px;
+  --text-body: 12px;
+  --text-control: 12px;
+  --text-section: 15px;
+  --control-height: 40px;
+  --radius-control: 10px;
+  --radius-card: 16px;
+  --radius-dialog: 20px;
+  --surface-page: #f6f6f9;
+  --surface-card: rgba(255,255,255,.82);
+  --text-primary: #34323d;
+  --text-secondary: #6f6b77;
+  --text-muted: #73707c;
+  --border-soft: #e2e0e8;
+  --focus-ring: rgba(117,104,220,.16);
+  font-family: var(--font-ui);
   color: #30323c;
   background: #f5f7f6;
   font-synthesis: none;
+  font-optical-sizing: auto;
   text-rendering: optimizeLegibility;
 }
 
 * { box-sizing: border-box; }
 html, body, #root { width: 100%; min-width: 320px; min-height: 100%; margin: 0; }
 body { min-height: 100vh; overflow: hidden; }
-button, input { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button { color: inherit; }
 
 .liquid-page {
@@ -87,7 +105,7 @@ button { color: inherit; }
 .login-heading h1 {
   margin: 0 0 19px;
   color: #2d3038;
-  font-size: 38px;
+  font-size: 34px;
   font-weight: 720;
   line-height: 1.12;
   letter-spacing: -.025em;
@@ -95,7 +113,7 @@ button { color: inherit; }
 .login-heading p {
   margin: 0;
   color: #73717e;
-  font-size: 19px;
+  font-size: 16px;
   line-height: 1.4;
 }
 
@@ -105,7 +123,7 @@ button { color: inherit; }
   display: block;
   margin-bottom: 10px;
   color: #3d3d49;
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 430;
 }
 .plain-field input {
@@ -118,7 +136,7 @@ button { color: inherit; }
   background: rgba(255,255,255,.18);
   box-shadow: inset 0 1px 2px rgba(255,255,255,.18);
   color: #30323c;
-  font-size: 17px;
+  font-size: 14px;
   transition: border-color .18s ease, background .18s ease, box-shadow .18s ease;
 }
 .plain-field input::placeholder { color: #9998a7; opacity: 1; }
@@ -140,7 +158,7 @@ button { color: inherit; }
   background: #11136d;
   box-shadow: 0 2px 5px rgba(17,19,109,.13);
   color: #fff;
-  font-size: 17px;
+  font-size: 14px;
   font-weight: 700;
   cursor: pointer;
   transition: transform .16s ease, background .16s ease, box-shadow .16s ease;
@@ -175,7 +193,7 @@ button { color: inherit; }
   background: rgba(255,255,255,.26);
   box-shadow: inset 0 1px 1px rgba(255,255,255,.55), 0 1px 3px rgba(51,49,83,.04);
   color: #3f414b;
-  font-size: 18px;
+  font-size: 15px;
   cursor: pointer;
   transition: background .16s ease, transform .16s ease;
 }
@@ -210,7 +228,7 @@ button { color: inherit; }
   display: block;
   margin: 34px auto 0;
   padding: 0;
-  font-size: 18px;
+  font-size: 14px;
 }
 .forgot-button:hover, .back-button:hover { color: #11136d; }
 .back-button {
@@ -1283,31 +1301,33 @@ button { color: inherit; }
 .finance-empty-state p { max-width: 450px; margin: 0 0 17px; color: #85838f; font-size: 10px; line-height: 1.6; }
 .finance-error { margin-bottom: 14px; }
 .finance-success { margin-bottom: 14px; }
-.finance-hero { position: relative; display: grid; grid-template-columns: minmax(230px,1fr) 250px 190px auto; align-items: center; gap: 12px; min-height: 126px; margin-bottom: 14px; padding: 20px 21px; overflow: hidden; border: 1px solid rgba(255,255,255,.88); border-radius: 20px; background: linear-gradient(135deg,rgba(255,255,255,.86),rgba(246,241,255,.72) 58%,rgba(238,244,255,.78)); box-shadow: inset 0 1px 0 rgba(255,255,255,.9),0 12px 30px rgba(52,48,86,.08); backdrop-filter: blur(20px) saturate(125%); }
+.finance-hero { position: relative; display: grid; grid-template-columns: minmax(280px,1fr) auto; grid-template-areas: "copy rate" "cycle actions"; align-items: center; gap: 14px 18px; min-height: 150px; margin-bottom: 14px; padding: 20px 21px; overflow: hidden; border: 1px solid rgba(255,255,255,.88); border-radius: 20px; background: linear-gradient(135deg,rgba(255,255,255,.86),rgba(246,241,255,.72) 58%,rgba(238,244,255,.78)); box-shadow: inset 0 1px 0 rgba(255,255,255,.9),0 12px 30px rgba(52,48,86,.08); backdrop-filter: blur(20px) saturate(125%); }
 .finance-hero::after { content:""; position: absolute; top: -95px; right: 20%; width: 260px; height: 230px; border-radius: 50%; background: rgba(162,130,255,.14); filter: blur(23px); pointer-events: none; }
 .finance-hero-copy,.finance-rate-card,.finance-cycle { position: relative; z-index: 1; }
+.finance-hero-copy { grid-area: copy; }
 .finance-hero-copy p { margin: 0 0 7px; color: #655cb1; font-size: 10px; font-weight: 850; letter-spacing: .15em; }
 .finance-hero-copy h2 { margin: 0 0 5px; color: #2d2c39; font-size: 30px; line-height: 1; letter-spacing: -.045em; }
 .finance-hero-copy > span { color: #8f8c99; font-size: 11px; text-transform: capitalize; }
-.finance-rate-card { display: grid; grid-template-columns: 36px minmax(0,1fr) 29px; align-items: center; gap: 9px; min-height: 70px; padding: 9px 10px; border: 1px solid rgba(211,208,225,.72); border-radius: 15px; background: rgba(255,255,255,.55); }
-.finance-rate-card > span { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; background: #e9f7ef; color: #34875e; }
-.finance-rate-card > div { display: grid; min-width: 0; gap: 2px; }
-.finance-rate-card small { color: #8d8b95; font-size: 11px; font-weight: 800; }
-.finance-rate-card strong { color: #41404b; font-size: 13px; }
-.finance-rate-card em { overflow: hidden; color: #9b98a3; font-size: 6px; font-style: normal; white-space: nowrap; text-overflow: ellipsis; }
-.finance-rate-card > button { display: grid; place-items: center; width: 29px; height: 29px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: #807c91; cursor: pointer; }
+.finance-rate-card { grid-area: rate; display: grid; grid-template-columns: 25px auto 27px; align-items: center; justify-self: end; gap: 7px; min-height: 38px; padding: 5px 6px 5px 7px; border: 1px solid rgba(211,208,225,.72); border-radius: 12px; background: rgba(255,255,255,.48); }
+.finance-rate-card > span { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 8px; background: #e9f7ef; color: #34875e; }
+.finance-rate-card > div { display: flex; align-items: baseline; min-width: 0; gap: 5px; }
+.finance-rate-card small { color: #7f7b88; font-size: var(--text-micro); font-weight: 750; }
+.finance-rate-card strong { color: #41404b; font-size: var(--text-caption); }
+.finance-rate-card em { display: none; }
+.finance-rate-card > button { display: grid; place-items: center; width: 27px; height: 27px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: #807c91; cursor: pointer; }
 .finance-rate-card > button:hover { background: rgba(112,104,200,.09); color: #5e56a8; }
-.finance-cycle { display: grid; gap: 5px; }
-.finance-cycle > span { color: #777480; font-size: 9px; font-weight: 800; }
-.finance-cycle > div { display: grid; grid-template-columns: 29px minmax(0,1fr) 29px; align-items: center; height: 38px; overflow: hidden; border: 1px solid rgba(210,208,220,.8); border-radius: 10px; background: rgba(255,255,255,.64); }
-.finance-cycle > div > button { display: grid; place-items: center; width: 29px; height: 100%; padding: 0; border: 0; background: transparent; color: #827d91; cursor: pointer; }
+.finance-cycle { grid-area: cycle; display: grid; width: min(430px,100%); gap: 6px; }
+.finance-cycle > span { color: #716d79; font-size: var(--text-micro); font-weight: 750; }
+.finance-cycle > div { display: grid; grid-template-columns: 34px minmax(0,1fr) 34px; align-items: center; height: 42px; overflow: hidden; border: 1px solid rgba(210,208,220,.8); border-radius: 11px; background: rgba(255,255,255,.64); }
+.finance-cycle > div > button { display: grid; place-items: center; width: 34px; height: 100%; padding: 0; border: 0; background: transparent; color: #827d91; cursor: pointer; }
 .finance-cycle > div > button:hover { background: rgba(104,91,184,.08); color: #5d52ad; }
-.finance-cycle strong { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; overflow: hidden; color: #4d4b58; font-size: 8px; white-space: nowrap; text-overflow: ellipsis; }
+.finance-cycle strong { display: flex; align-items: center; justify-content: center; gap: 7px; min-width: 0; overflow: hidden; color: #4d4b58; font-size: var(--text-caption); white-space: nowrap; }
 .finance-cycle strong svg { flex: 0 0 auto; color: #6a5fc0; }
-.finance-cycle-setting { display: inline-flex; align-items: center; justify-content: center; gap: 4px; justify-self: start; padding: 0; border: 0; background: transparent; color: #817b9c; font: inherit; font-size: 7px; cursor: pointer; }
+.finance-cycle strong span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.finance-cycle-setting { display: inline-flex; align-items: center; justify-content: center; gap: 5px; justify-self: start; min-height: 24px; padding: 0 4px; border: 0; border-radius: 7px; background: transparent; color: #746d8f; font: inherit; font-size: var(--text-micro); font-weight: 650; cursor: pointer; }
 .finance-cycle-setting:hover { color: #5d50ae; }
 .finance-cycle-setting:disabled { cursor: wait; opacity: .58; }
-.finance-hero-actions { position: relative; z-index: 1; display: flex; gap: 6px; }
+.finance-hero-actions { position: relative; z-index: 1; grid-area: actions; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .finance-hero-actions button { min-width: 105px; white-space: nowrap; }
 .finance-metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; margin-bottom: 14px; }
 .finance-metrics article { display: flex; align-items: center; gap: 10px; min-height: 80px; padding: 12px; border: 1px solid #e5e3ec; border-radius: 15px; background: rgba(255,255,255,.78); box-shadow: 0 6px 17px rgba(44,42,61,.045); }
@@ -1423,7 +1443,10 @@ button { color: inherit; }
 .manual-earning-grid label { display: grid; gap: 6px; }
 .manual-earning-grid label.wide { grid-column: 1 / -1; }
 .manual-earning-grid label > span { color: #5f5c68; font-size: 10px; font-weight: 760; }
-.manual-earning-grid input,.manual-earning-grid select { width: 100%; height: 41px; padding: 0 10px; border: 1px solid #dedbe6; border-radius: 10px; outline: 0; background: #fff; color: #41404a; font-family: inherit; font-size: 11px; }
+.manual-earning-grid input,.manual-earning-grid select { width: 100%; min-width: 0; height: 41px; padding: 0 10px; border: 1px solid #dedbe6; border-radius: 10px; outline: 0; background: #fff; color: #41404a; font-family: inherit; font-size: 11px; }
+.manual-date-field input { padding-right: 8px; color-scheme: light; }
+.manual-date-field input::-webkit-calendar-picker-indicator { flex: 0 0 auto; width: 18px; height: 18px; margin: 0; padding: 5px; border-radius: 7px; opacity: .62; cursor: pointer; transition: opacity .15s ease,background .15s ease; }
+.manual-date-field input::-webkit-calendar-picker-indicator:hover { background: #efecf8; opacity: 1; }
 .manual-earning-grid input:focus,.manual-earning-grid select:focus { border-color: #8a83d7; box-shadow: 0 0 0 3px rgba(138,131,215,.1); }
 .manual-money-input { display: flex; align-items: center; height: 41px; padding: 0 10px; border: 1px solid #dedbe6; border-radius: 10px; background: #fff; }
 .manual-money-input:focus-within { border-color: #8a83d7; box-shadow: 0 0 0 3px rgba(138,131,215,.1); }
@@ -1547,10 +1570,7 @@ button { color: inherit; }
   .welcome-footer { align-items: flex-start; flex-direction: column; }
   .welcome-footer-actions { justify-content: space-between; width: 100%; }
   .finance-view { padding-inline: 20px; }
-  .finance-hero { grid-template-columns: minmax(0,1fr) 145px; }
-  .finance-hero-copy { grid-column: 1 / -1; }
-  .finance-rate-card { grid-column: 1 / 2; }
-  .finance-hero-actions { grid-column: 1 / -1; justify-content: flex-end; }
+  .finance-hero { grid-template-columns: minmax(280px,1fr) auto; grid-template-areas: "copy rate" "cycle actions"; }
   .finance-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .finance-grid { grid-template-columns: 1fr; }
   .earnings-table { overflow-x: auto; }
@@ -1567,9 +1587,9 @@ button { color: inherit; }
   .welcome-footer-actions { align-items: stretch; flex-direction: column; }
   .welcome-enter { width: 100%; }
   .finance-view { padding: 16px 14px 28px; }
-  .finance-hero { grid-template-columns: 1fr; padding: 17px; }
-  .finance-hero-copy { grid-column: auto; }
-  .finance-rate-card,.finance-hero-actions { grid-column: auto; }
+  .finance-hero { grid-template-columns: 1fr; grid-template-areas: "copy" "rate" "cycle" "actions"; padding: 17px; }
+  .finance-rate-card { justify-self: start; }
+  .finance-cycle { width: 100%; }
   .finance-hero-actions { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); }
   .finance-hero-actions button { width: 100%; min-width: 0; }
   .finance-hero-copy h2 { font-size: 26px; }
@@ -1614,6 +1634,15 @@ button { color: inherit; }
 /* Dark appearance */
 :root[data-theme="dark"] { color: #f2f2f5; background: #1e1e23; }
 :root[data-theme="dark"] body { background: #1e1e23; }
+:root[data-theme="dark"] {
+  --surface-page: #202026;
+  --surface-card: rgba(43,42,49,.88);
+  --text-primary: #efedf3;
+  --text-secondary: #b4afba;
+  --text-muted: #aaa5b0;
+  --border-soft: #414047;
+  --focus-ring: rgba(151,134,238,.2);
+}
 :root[data-theme="dark"] .loading-screen,
 :root[data-theme="dark"] .app-loading { background: #1e1e23; color: #9e96ef; }
 
@@ -2139,6 +2168,8 @@ button { color: inherit; }
 :root[data-theme="dark"] .manual-earning-grid input,
 :root[data-theme="dark"] .manual-earning-grid select,
 :root[data-theme="dark"] .manual-money-input { border-color: #4a4752; background: #302f36; color: #efedf3; }
+:root[data-theme="dark"] .manual-date-field input { color-scheme: dark; }
+:root[data-theme="dark"] .manual-date-field input::-webkit-calendar-picker-indicator:hover { background: rgba(151,134,238,.12); }
 :root[data-theme="dark"] .manual-money-input input { background: transparent; color: #efedf3; }
 :root[data-theme="dark"] .manual-money-input b { color: #aaa6b2; }
 :root[data-theme="dark"] .manual-earning-dialog > footer { border-color: #45434c; }
@@ -2593,3 +2624,208 @@ button { color: inherit; }
   .board-toolbar { grid-template-columns: 1fr; }.board-search,.board-toolbar-actions,.production-view-switcher { grid-column: 1; width: 100%; }.board-search { grid-row: 1; }.production-view-switcher { grid-row: 2; }.production-view-switcher button { min-width: 0; flex: 1; }.board-toolbar-actions { grid-row: 3; justify-self: stretch; justify-content: space-between; }.production-list-view,.production-calendar-scroll { padding-inline: 15px; }.production-calendar-header { padding-inline: 15px; }
 }
 @media (prefers-reduced-motion: reduce) { .production-view-enter { animation: none; } }
+
+/* Unified visual scale — keep dense desktop layouts readable and consistent. */
+body { font-size: var(--text-body); line-height: 1.45; }
+
+.content-card,.finance-card,.my-work-card,.team-profile-card,.team-add-card {
+  border-radius: var(--radius-card);
+}
+.app-dialog,.manual-earning-dialog,.receive-dialog,.task-links-modal,.profile-crop-modal {
+  border-radius: var(--radius-dialog);
+}
+.board-search,.team-search,.profile-icon-input,.password-setting-field,
+.manual-money-input,.youtube-channel-field > div {
+  min-height: var(--control-height);
+  border-radius: var(--radius-control);
+}
+
+.primary-button,.secondary-button,.danger-button {
+  min-height: var(--control-height);
+  border-radius: var(--radius-control);
+  font-size: var(--text-caption);
+}
+.new-column-button,.team-invite-button,.finance-add-entry,
+.production-view-switcher button,.my-work-card > header > button {
+  font-size: var(--text-caption);
+}
+
+.settings-form input,.settings-form select,.invite-form input,.invite-form select,
+.team-invite-panel input,.team-invite-panel select,
+.manual-earning-grid input,.manual-earning-grid select,
+.completed-tasks-filters input,.completed-tasks-filters select {
+  min-height: var(--control-height);
+  font-size: var(--text-caption);
+}
+
+.workspace-switcher-menu > strong,
+.workspace-switcher-menu small,
+.task-download-popover > strong,
+.task-assignee-popover > strong,
+.task-assignee-popover small,
+.profile-preview-stats small,
+.profile-presence-readonly small,
+.client-payment-models small,
+.payment-estimate span,
+.payment-estimate > small,
+.team-card-copy h3 small,
+.finance-pending-list em small,
+.earning-source,
+.receive-dialog-summary span,
+.chat-conversation-meta small,
+.chat-day-divider,
+.chat-message-bubble > span,
+.chat-composer > small {
+  font-size: var(--text-micro);
+  line-height: 1.35;
+}
+
+.column-automation-panel > header small,
+.column-automation-toggle small,
+.column-completion-note small,
+.column-automation-readonly small,
+.completed-card-open small,
+.task-links-modal > header p,
+.task-links-groups h3 small,
+.completed-tasks-modal > header p,
+.completed-archive-filter button,
+.completed-archive-filter button span,
+.completed-tasks-filters > label > span,
+.completed-month-group > header span,
+.completed-task-restore,
+.completed-month-group button small,
+.completed-month-group button time,
+.task-started-note small,
+.due-date-summary button,
+.due-date-shortcuts button,
+.task-template-notice button,
+.task-template-panel > header p,
+.task-template-panel label > span small,
+.template-days-input small,
+.task-template-panel > footer button,
+.activity-toggle > span:nth-child(2) small,
+.team-account-results em,
+.chat-mention-picker > header small,
+.chat-mention-picker button small {
+  font-size: var(--text-micro);
+}
+
+.chat-message-bubble p { font-size: var(--text-body); }
+.chat-room-header strong,.chat-empty strong,.chat-mention-picker > header strong,.chat-mention-picker button strong { font-size: var(--text-caption); }
+.chat-composer textarea { font-size: var(--text-body); }
+.chat-composer > small { margin-top: 7px; }
+
+.my-work-hero > div:nth-child(2) > span,
+.my-work-metric small,.my-work-metric > i,
+.my-work-card > header p,.my-work-card > header > button,
+.my-work-task-copy small,.my-work-task-owner,.my-work-task-due,
+.my-work-news-avatar,.my-work-news-list strong,.my-work-news-list small,.my-work-news-list time,
+.my-work-empty strong,.my-work-empty small,.my-work-team-stats span,
+.my-work-member-row > span,.my-work-member-row small,
+.my-work-finance-total small,.my-work-finance-total span {
+  font-size: var(--text-micro);
+}
+.my-work-card > header h3,.my-work-task-copy strong { font-size: var(--text-caption); }
+
+.release-notes-header p,
+.release-notes-versions > span,
+.release-notes-versions strong,
+.release-notes-versions small,
+.release-notes-version-heading span,
+.release-notes-version-heading time,
+.release-notes-footer > span,
+.release-notes-footer > button {
+  font-size: var(--text-micro);
+}
+.release-note-section header strong { font-size: var(--text-caption); }
+.release-note-section li { font-size: var(--text-caption); line-height: 1.55; }
+
+.production-view-switcher button,
+.production-list-heading,
+.production-list-group > header h2,
+.production-list-group > header span,
+.production-list-client-avatar,
+.production-list-copy small,
+.production-list-priority,
+.production-list-due,
+.production-list-assignee,
+.production-list-assignee > i,
+.production-calendar-header small,
+.production-calendar-header nav button,
+.production-calendar-weekdays span,
+.production-calendar-day > header > span,
+.production-calendar-day > header small,
+.production-calendar-day > div > button strong,
+.production-calendar-day > div > button small,
+.production-calendar-unscheduled strong,
+.production-calendar-unscheduled small,
+.production-calendar-unscheduled button span,
+.production-calendar-unscheduled button small {
+  font-size: var(--text-micro);
+}
+.production-list-copy strong,.production-list-stage select,.production-calendar-header strong { font-size: var(--text-caption); }
+.production-list-stage select { min-height: 36px; }
+.production-calendar-day > div > button { min-height: 34px; }
+
+.finance-card header p,.finance-empty-state p,.billing-form label > span,
+.manual-earning-grid label > span,.receive-dialog > label > span,
+.manual-earning-dialog header p,.receive-dialog header p { font-size: var(--text-caption); }
+.finance-card h3,.manual-earning-dialog h3,.receive-dialog h3 { font-size: var(--text-section); }
+.finance-metrics small,.finance-metrics em,.client-earning-list small,
+.earnings-table-head,.earnings-table article small,.earnings-table article > span { font-size: var(--text-caption); }
+
+/* Improve low-contrast metadata without changing the EditFlow palette. */
+.workspace-switcher-menu > strong,.workspace-switcher-menu small,
+.task-download-popover > strong,.task-assignee-popover > strong,.task-assignee-popover small,
+.profile-preview-stats small,.profile-presence-readonly small,
+.client-payment-models small,.payment-estimate span,.payment-estimate > small,
+.finance-pending-list em small,.receive-dialog-summary span,
+.chat-conversation-meta small,.chat-day-divider,.chat-message-bubble > span,.chat-composer > small,
+.my-work-metric > i,.my-work-card > header p,.my-work-task-copy small,
+.my-work-news-list small,.my-work-news-list time,.my-work-empty small,
+.my-work-team-stats span,.my-work-member-row small,.my-work-finance-total small,.my-work-finance-total span,
+.release-notes-versions > span,.release-notes-versions small,.release-notes-version-heading time,
+.production-list-heading,.production-list-copy small,.production-calendar-header small,
+.production-calendar-weekdays span,.production-calendar-day > header small,
+.production-calendar-day > div > button small,.production-calendar-unscheduled small {
+  color: var(--text-muted);
+}
+
+.dashboard-header p,.editor-header p,.section-title p,
+.content-card-heading p,.danger-zone p,.update-settings-row p,
+.team-hero p,.finance-card header p,.finance-empty-state p,
+.manual-earning-dialog header p,.receive-dialog header p,
+.chat-sidebar-header small,.chat-conversation-copy small,.chat-room-header small,
+.notification-heading small,.notification-message,.notification-time {
+  color: var(--text-muted);
+}
+
+:where(button,a,input,select,textarea,[tabindex]):focus-visible {
+  outline: 2px solid #7568dc;
+  outline-offset: 2px;
+}
+
+:root[data-theme="dark"] :where(button,a,input,select,textarea,[tabindex]):focus-visible {
+  outline-color: #a494f2;
+}
+
+@media (max-width: 780px) {
+  .finance-hero { grid-template-columns: 1fr; grid-template-areas: "copy" "rate" "cycle" "actions"; }
+  .finance-rate-card { justify-self: start; }
+  .finance-cycle { width: 100%; }
+  .finance-hero-actions { justify-content: stretch; }
+  .finance-hero-actions button { flex: 1; }
+}
+
+@media (max-width: 480px) {
+  .finance-hero-actions { display: grid; grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,*::before,*::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
