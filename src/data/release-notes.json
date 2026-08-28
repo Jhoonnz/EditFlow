@@ -1,5 +1,30 @@
 [
   {
+    "version": "0.1.55",
+    "date": "2026-08-28",
+    "title": "Pagamentos em lote",
+    "summary": "Receba vários vídeos de um cliente em uma única operação e mantenha o financeiro alinhado à transferência real.",
+    "sections": [
+      {
+        "kind": "new",
+        "title": "Recebimento quinzenal simplificado",
+        "items": [
+          "Ganhos pendentes podem ser selecionados por cliente e período e confirmados todos de uma vez.",
+          "Cada transferência ganha um registro expansível com período, vídeos, valor bruto e valor recebido.",
+          "Um pagamento lançado por engano pode ser reaberto por inteiro, devolvendo seus itens para pendentes."
+        ]
+      },
+      {
+        "kind": "improved",
+        "title": "Taxas calculadas por transferência",
+        "items": [
+          "A taxa fixa do PayPal ou Wise é aplicada uma única vez ao lote, e não uma vez em cada vídeo.",
+          "Clientes em real usam PIX sem taxas ou conversão, com o valor bruto igual ao recebido."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.1.54",
     "date": "2026-08-27",
     "title": "Uma interface mais clara e consistente",

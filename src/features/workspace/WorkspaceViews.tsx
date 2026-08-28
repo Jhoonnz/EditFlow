@@ -293,7 +293,7 @@ export function ClientsView({
                       <label><span>Valor bruto</span><div><b>{billingCurrency === 'BRL' ? 'R$' : 'US$'}</b><input inputMode="decimal" value={amountUsd} onChange={(event) => setAmountUsd(event.target.value)} placeholder={billingCurrency === 'BRL' ? '800,00' : '200.00'} /></div></label>
                     {billingMode === 'bundle' ? <label><span>Vídeos no pacote</span><div><input type="number" min="2" max="1000" value={bundleSize} onChange={(event) => setBundleSize(event.target.value)} /><b>vídeos</b></div></label> : null}
                   </div>
-                  <label className="payment-provider-select"><span>Como você recebe</span><select value={paymentMethod} onChange={(event) => applyPaymentMethod(event.target.value as PaymentMethod)}>{paymentFeeRules.filter((rule) => billingCurrency === 'USD' || rule.method === 'none' || rule.method === 'custom').map((rule) => <option value={rule.method} key={rule.method}>{rule.label}</option>)}</select></label>
+                  <label className="payment-provider-select"><span>Como você recebe</span><select value={paymentMethod} onChange={(event) => applyPaymentMethod(event.target.value as PaymentMethod)}>{paymentFeeRules.filter((rule) => billingCurrency === 'USD' || rule.method === 'none').map((rule) => <option value={rule.method} key={rule.method}>{billingCurrency === 'BRL' ? 'PIX · sem taxas' : rule.label}</option>)}</select></label>
                   {paymentMethod === 'custom' ? (
                     <div className="client-fee-values">
                       <label><span>Taxa percentual</span><div><input inputMode="decimal" value={feePercent} onChange={(event) => setFeePercent(event.target.value)} /><b>%</b></div></label>
@@ -1286,7 +1286,7 @@ function PaymentEstimate({ currency, grossAmount, paymentMethod, feePercent, fix
       <div><span>Bruto</span><strong>{formatBillingCurrency(grossAmount, currency)}</strong></div>
       <div><span>Taxas estimadas</span><strong>-{formatBillingCurrency(feeAmount, currency)}</strong></div>
       <div className="net"><span>Líquido estimado</span><strong>{formatBillingCurrency(netAmount, currency)}</strong></div>
-      <small>{paymentFeeRule(paymentMethod).note}</small>
+      <small>{currency === 'BRL' ? 'Recebimento por PIX: o valor bruto e o líquido serão iguais.' : paymentFeeRule(paymentMethod).note}</small>
     </div>
   );
 }

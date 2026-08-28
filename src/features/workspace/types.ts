@@ -157,8 +157,31 @@ export type Earning = {
   received_at: string | null;
   exchange_rate_brl: number | null;
   amount_brl: number | null;
+  payment_id: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type EarningPayment = {
+  id: string;
+  workspace_id: string;
+  client_id: string | null;
+  currency: BillingCurrency;
+  payment_method: PaymentMethod;
+  entry_count: number;
+  item_count: number;
+  gross_amount: number;
+  estimated_net_amount: number;
+  fee_percent: number;
+  fee_fixed: number;
+  conversion_spread_percent: number;
+  received_amount_brl: number;
+  effective_exchange_rate: number;
+  period_start: string;
+  period_end: string;
+  received_at: string;
+  created_by: string;
+  created_at: string;
 };
 
 export type EarningEvent = {
