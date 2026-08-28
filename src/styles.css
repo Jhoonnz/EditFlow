@@ -1393,7 +1393,12 @@ button { color: inherit; }
 .finance-pending-list article.issue em { color: #ae7024; font-size: 11px; }
 .finance-list-empty { display: grid; place-items: center; min-height: 90px; padding: 12px; border: 1px dashed #d9d7e0; border-radius: 11px; color: #9a97a2; font-size: 10px; text-align: center; }
 .earnings-history-card { margin-bottom: 5px; }
-.finance-add-entry { display: inline-flex; align-items: center; gap: 5px; min-height: 31px; margin-left: auto; padding: 0 10px; border: 1px solid #ddd9ed; border-radius: 9px; background: #f1effa; color: #595197; font-size: 10px; font-weight: 750; cursor: pointer; }
+.finance-entry-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.finance-add-entry,.finance-view-all,.finance-batch-entry { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 31px; padding: 0 10px; border: 1px solid #ddd9ed; border-radius: 9px; background: #f1effa; color: #595197; font: inherit; font-size: 10px; font-weight: 750; white-space: nowrap; cursor: pointer; }
+.finance-view-all { background: transparent; color: #716d7c; }
+.finance-batch-entry { border-color: #cee5d7; background: #edf8f2; color: #367d59; }
+.finance-add-entry:disabled,.finance-view-all:disabled,.finance-batch-entry:disabled { opacity: .45; cursor: not-allowed; }
+.finance-list-more { display: block; margin: 11px auto 0; padding: 5px 8px; border: 0; background: transparent; color: #665bb0; font: inherit; font-size: var(--text-caption); font-weight: 800; cursor: pointer; }
 .earnings-table { overflow: hidden; border: 1px solid #e7e5ec; border-radius: 12px; }
 .earnings-table-head,.earnings-table > article { display: grid; grid-template-columns: minmax(220px,1.25fr) 125px 170px 135px; align-items: center; gap: 10px; }
 .earnings-table-head { min-height: 34px; padding: 0 11px; background: #f5f4f8; color: #96939f; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
@@ -1432,6 +1437,14 @@ button { color: inherit; }
 .receive-dialog > small { display: block; margin: 8px 0 13px; color: #9996a1; font-size: 11px; line-height: 1.45; }
 .receive-dialog-error { margin-bottom: 10px; }
 .receive-dialog > .primary-button { width: 100%; }
+.individual-receive-fields { display: grid; gap: 11px; }
+.individual-receive-fields > label { display: grid; gap: 6px; }
+.individual-receive-fields > label > span { color: #5e5b67; font-size: var(--text-caption); font-weight: 760; }
+.individual-receive-fields > label > input { width: 100%; min-width: 0; height: 42px; padding: 0 10px; border: 1px solid #dcd9e5; border-radius: 11px; outline: 0; background: #fff; color: #3d3c46; color-scheme: light; font: inherit; font-size: var(--text-caption); }
+.individual-receive-fields > label > div { display: flex; align-items: center; gap: 7px; height: 42px; padding: 0 11px; border: 1px solid #dcd9e5; border-radius: 11px; background: #fff; }
+.individual-receive-fields > label > div b { color: #4d8b69; font-size: var(--text-caption); }
+.individual-receive-fields > label > div input { min-width: 0; flex: 1; height: 38px; padding: 0; border: 0; outline: 0; background: transparent; color: #3d3c46; font: inherit; font-size: var(--text-body); }
+.individual-receive-fields .batch-pix-note { margin-bottom: 0; }
 .manual-earning-backdrop { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 20px; background: rgba(29,28,42,.38); backdrop-filter: blur(7px); animation: fade-in .16s ease; }
 .manual-earning-dialog { width: min(650px,100%); max-height: calc(100vh - 40px); padding: 20px; overflow-y: auto; border: 1px solid rgba(255,255,255,.84); border-radius: 20px; background: rgba(252,251,255,.96); box-shadow: 0 26px 70px rgba(30,28,49,.26); backdrop-filter: blur(24px); }
 .manual-earning-dialog > header { display: grid; grid-template-columns: 39px minmax(0,1fr) 31px; align-items: center; gap: 10px; margin-bottom: 17px; }
@@ -1455,6 +1468,24 @@ button { color: inherit; }
 .manual-money-input.received b { color: #38865e; }
 .manual-earning-error { margin-top: 12px; }
 .manual-earning-dialog > footer { display: flex; justify-content: flex-end; gap: 7px; margin-top: 17px; padding-top: 15px; border-top: 1px solid #e8e5ed; }
+
+.earning-history-backdrop { position: fixed; inset: 0; z-index: 68; display: grid; place-items: center; padding: 20px; background: rgba(29,28,42,.38); backdrop-filter: blur(7px); animation: fade-in .16s ease; }
+.earning-history-dialog { display: grid; grid-template-rows: auto auto minmax(0,1fr) auto; width: min(1040px,100%); max-height: calc(100vh - 40px); overflow: hidden; border: 1px solid rgba(255,255,255,.84); border-radius: 20px; background: rgba(252,251,255,.97); box-shadow: 0 26px 70px rgba(30,28,49,.26); backdrop-filter: blur(24px); }
+.earning-history-dialog > header { display: grid; grid-template-columns: 39px minmax(0,1fr) 31px; align-items: center; gap: 10px; padding: 19px 20px 14px; }
+.earning-history-dialog > header > span { display: grid; place-items: center; width: 39px; height: 39px; border-radius: 12px; background: #ece9fb; color: #5b53a2; }
+.earning-history-dialog h3 { margin: 0 0 3px; color: #393843; font-size: var(--text-section); }
+.earning-history-dialog header p { margin: 0; color: #94919d; font-size: var(--text-caption); }
+.earning-history-dialog header button { display: grid; place-items: center; width: 31px; height: 31px; padding: 0; border: 0; border-radius: 9px; background: transparent; color: #8d8a95; cursor: pointer; }
+.earning-history-filters { display: grid; grid-template-columns: auto minmax(170px,1fr) minmax(170px,1fr); align-items: end; gap: 9px; padding: 0 20px 13px; }
+.earning-status-filter { display: flex; align-items: center; height: 40px; padding: 3px; border: 1px solid #dedbe6; border-radius: 11px; background: #f4f2f8; }
+.earning-status-filter button { height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: #77727f; font: inherit; font-size: var(--text-caption); font-weight: 750; cursor: pointer; }
+.earning-status-filter button.active { background: #fff; color: #5b52a0; box-shadow: 0 2px 7px rgba(45,40,75,.1); }
+.earning-history-filters label { display: grid; gap: 5px; }
+.earning-history-filters label > span { color: #77737f; font-size: var(--text-micro); font-weight: 780; }
+.earning-history-filters select { width: 100%; min-width: 0; height: 40px; padding: 0 10px; border: 1px solid #dedbe6; border-radius: 11px; outline: 0; background: #fff; color: #45434d; font: inherit; font-size: var(--text-caption); }
+.earning-history-table { min-height: 0; margin: 0 20px; overflow: auto; }
+.earning-history-table .earnings-table-head { position: sticky; top: 0; z-index: 1; }
+.earning-history-dialog > footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 13px 20px 17px; color: #96929e; font-size: var(--text-caption); }
 
 /* Notifications */
 .notification-wrap { position: relative; }
@@ -2138,7 +2169,9 @@ button { color: inherit; }
 :root[data-theme="dark"] .finance-pending-list small { color: #918e98; }
 :root[data-theme="dark"] .pending-progress { background: #414049; }
 :root[data-theme="dark"] .pending-warning { background: #433521; color: #e3ae61; }
-:root[data-theme="dark"] .finance-add-entry { border-color: #4d485e; background: #383448; color: #bdb6ff; }
+:root[data-theme="dark"] .finance-add-entry,:root[data-theme="dark"] .finance-view-all { border-color: #4d485e; background: #383448; color: #bdb6ff; }
+:root[data-theme="dark"] .finance-batch-entry { border-color: #365d49; background: #293d33; color: #83cfa5; }
+:root[data-theme="dark"] .finance-list-more { color: #bdb6ff; }
 :root[data-theme="dark"] .client-earning-list article > button { background: #373348; color: #bbb4ff; }
 :root[data-theme="dark"] .finance-list-empty { border-color: #48464f; color: #8f8c96; }
 :root[data-theme="dark"] .earnings-table-head { background: #302f36; color: #96939f; }
@@ -2160,6 +2193,9 @@ button { color: inherit; }
 :root[data-theme="dark"] .receive-dialog > label > span { color: #c0bdc7; }
 :root[data-theme="dark"] .receive-dialog > label > div { border-color: #4a4752; background: #302f36; }
 :root[data-theme="dark"] .receive-dialog > label input { color: #efedf3; }
+:root[data-theme="dark"] .individual-receive-fields > label > span { color: #c0bdc7; }
+:root[data-theme="dark"] .individual-receive-fields > label > input,:root[data-theme="dark"] .individual-receive-fields > label > div { border-color: #4a4752; background: #302f36; color: #efedf3; color-scheme: dark; }
+:root[data-theme="dark"] .individual-receive-fields > label > div input { color: #efedf3; }
 :root[data-theme="dark"] .manual-earning-backdrop { background: rgba(8,8,12,.62); }
 :root[data-theme="dark"] .manual-earning-dialog { border-color: rgba(255,255,255,.11); background: rgba(39,38,46,.97); box-shadow: 0 26px 70px rgba(0,0,0,.46); }
 :root[data-theme="dark"] .manual-earning-dialog h3 { color: #efedf3; }
@@ -2173,6 +2209,15 @@ button { color: inherit; }
 :root[data-theme="dark"] .manual-money-input input { background: transparent; color: #efedf3; }
 :root[data-theme="dark"] .manual-money-input b { color: #aaa6b2; }
 :root[data-theme="dark"] .manual-earning-dialog > footer { border-color: #45434c; }
+:root[data-theme="dark"] .earning-history-backdrop { background: rgba(8,8,12,.62); }
+:root[data-theme="dark"] .earning-history-dialog { border-color: rgba(255,255,255,.11); background: rgba(39,38,46,.97); box-shadow: 0 26px 70px rgba(0,0,0,.46); }
+:root[data-theme="dark"] .earning-history-dialog h3 { color: #efedf3; }
+:root[data-theme="dark"] .earning-history-dialog header p,:root[data-theme="dark"] .earning-history-dialog > footer { color: #96939e; }
+:root[data-theme="dark"] .earning-status-filter { border-color: #494650; background: #302f36; }
+:root[data-theme="dark"] .earning-status-filter button { color: #aaa6b2; }
+:root[data-theme="dark"] .earning-status-filter button.active { background: #413b58; color: #c5beff; box-shadow: none; }
+:root[data-theme="dark"] .earning-history-filters label > span { color: #aaa6b2; }
+:root[data-theme="dark"] .earning-history-filters select { border-color: #4a4752; background: #302f36; color: #efedf3; }
 :root[data-theme="dark"] .finance-empty-state > span { background: #353148; color: #b9b2ff; }
 :root[data-theme="dark"] .finance-empty-state h2 { color: #efedf3; }
 :root[data-theme="dark"] .finance-empty-state p { color: #9996a0; }
@@ -2631,7 +2676,7 @@ body { font-size: var(--text-body); line-height: 1.45; }
 .content-card,.finance-card,.my-work-card,.team-profile-card,.team-add-card {
   border-radius: var(--radius-card);
 }
-.app-dialog,.manual-earning-dialog,.receive-dialog,.task-links-modal,.profile-crop-modal {
+.app-dialog,.manual-earning-dialog,.receive-dialog,.earning-history-dialog,.task-links-modal,.profile-crop-modal {
   border-radius: var(--radius-dialog);
 }
 .board-search,.team-search,.profile-icon-input,.password-setting-field,
@@ -2645,7 +2690,7 @@ body { font-size: var(--text-body); line-height: 1.45; }
   border-radius: var(--radius-control);
   font-size: var(--text-caption);
 }
-.new-column-button,.team-invite-button,.finance-add-entry,
+.new-column-button,.team-invite-button,.finance-add-entry,.finance-view-all,.finance-batch-entry,
 .production-view-switcher button,.my-work-card > header > button {
   font-size: var(--text-caption);
 }
@@ -2832,56 +2877,20 @@ body { font-size: var(--text-body); line-height: 1.45; }
 
 /* Batch payments — one transfer can settle several client deliveries. */
 .client-earning-list article {
-  grid-template-columns: 36px minmax(0,1fr) auto auto;
+  grid-template-columns: 36px minmax(0,1fr) auto;
 }
-.client-earning-actions { display: flex !important; align-items: center; justify-content: flex-end; gap: 5px; }
-.client-earning-actions button {
-  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
-  min-height: 30px; padding: 0 9px; border: 1px solid #d9d4ed; border-radius: 9px;
-  background: #f4f1ff; color: #6256ad; font: inherit; font-size: var(--text-micro);
-  font-weight: 800; white-space: nowrap; cursor: pointer;
-}
-.client-earning-actions button:hover { border-color: #bbb1e5; background: #ece7ff; }
-
-.payment-history-card { margin-bottom: 14px; }
-.payment-history-list { display: grid; gap: 7px; }
-.payment-history-list > article { overflow: hidden; border: 1px solid #e5e2eb; border-radius: 12px; background: rgba(255,255,255,.46); }
-.payment-history-list > article.expanded { border-color: #d5cfee; background: rgba(250,248,255,.82); }
-.payment-history-main {
-  display: grid; grid-template-columns: 34px minmax(180px,1fr) auto 20px; align-items: center;
-  gap: 10px; width: 100%; min-height: 56px; padding: 8px 10px; border: 0;
-  background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;
-}
-.payment-history-main:hover { background: rgba(119,102,206,.045); }
-.payment-history-main > span { display: grid; min-width: 0; gap: 3px; }
-.payment-history-main > span:nth-child(3) { justify-items: end; text-align: right; }
-.payment-history-main strong,.payment-history-main small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.payment-history-main strong { color: #494650; font-size: var(--text-caption); }
-.payment-history-main small { color: var(--text-muted); font-size: var(--text-micro); }
-.payment-history-icon { place-items: center; width: 34px; height: 34px; border-radius: 10px; background: #e8f6ee; color: #378760; }
-.payment-history-main > svg { color: #8f899b; transition: transform .16s ease; }
-.payment-history-list > article.expanded .payment-history-main > svg { transform: rotate(180deg); }
-.payment-history-details { position: relative; display: grid; gap: 10px; padding: 11px 12px 12px 56px; border-top: 1px solid #e7e3ee; }
-.payment-history-meta { display: flex; flex-wrap: wrap; gap: 7px 16px; color: var(--text-muted); font-size: var(--text-micro); }
-.payment-history-meta strong { color: #57525f; }
-.payment-history-items { display: grid; gap: 6px; }
-.payment-history-items > span { display: grid; grid-template-columns: 5px minmax(0,1fr) auto; align-items: center; gap: 8px; color: #706b77; font-size: var(--text-caption); }
-.payment-history-items i { width: 5px; height: 5px; border-radius: 50%; background: #8d7fd8; }
-.payment-history-items strong { color: #4f4b56; }
-.payment-reopen-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; justify-self: end; min-height: 29px; padding: 0 9px; border: 1px solid #e4d9dc; border-radius: 8px; background: #fff8f8; color: #a4515e; font: inherit; font-size: var(--text-micro); font-weight: 800; cursor: pointer; }
-
 .batch-receive-dialog { width: min(760px,100%); max-height: calc(100vh - 40px); overflow-y: auto; }
 .batch-receive-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; margin-bottom: 12px; }
 .batch-receive-grid label,.batch-payment-fields label { display: grid; gap: 6px; }
 .batch-receive-grid label > span,.batch-payment-fields label > span { color: #5e5b67; font-size: var(--text-caption); font-weight: 760; }
-.batch-receive-grid input,.batch-payment-fields select { width: 100%; min-width: 0; height: 40px; padding: 0 10px; border: 1px solid #dcd9e5; border-radius: 10px; outline: 0; background: #fff; color: #3d3c46; font: inherit; font-size: var(--text-caption); }
+.batch-receive-grid input,.batch-receive-grid select,.batch-payment-fields select { width: 100%; min-width: 0; height: 40px; padding: 0 10px; border: 1px solid #dcd9e5; border-radius: 10px; outline: 0; background: #fff; color: #3d3c46; font: inherit; font-size: var(--text-caption); }
 .batch-receive-grid input { color-scheme: light; }
 .batch-receive-selection { margin-bottom: 12px; overflow: hidden; border: 1px solid #e3e0e9; border-radius: 12px; background: rgba(255,255,255,.62); }
 .batch-receive-selection > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 42px; padding: 7px 10px; border-bottom: 1px solid #ebe8ef; }
-.batch-receive-selection > header > div { display: grid; gap: 2px; }
+.batch-receive-selection > header > div { display: grid; min-width: 0; gap: 2px; }
 .batch-receive-selection > header strong { color: #4c4954; font-size: var(--text-caption); }
 .batch-receive-selection > header small { color: var(--text-muted); font-size: var(--text-micro); }
-.batch-receive-selection > header button { padding: 5px 0; border: 0; background: transparent; color: #665ab1; font: inherit; font-size: var(--text-micro); font-weight: 800; cursor: pointer; }
+.batch-receive-selection > header button { flex: 0 0 auto; max-width: 100%; padding: 5px 0; border: 0; background: transparent; color: #665ab1; font: inherit; font-size: var(--text-micro); font-weight: 800; white-space: nowrap; cursor: pointer; }
 .batch-receive-selection > div { display: grid; max-height: 190px; overflow-y: auto; }
 .batch-receive-selection > div > label { display: grid; grid-template-columns: 17px minmax(0,1fr) auto; align-items: center; gap: 9px; min-height: 45px; padding: 6px 10px; border-bottom: 1px solid #efedf2; cursor: pointer; }
 .batch-receive-selection > div > label:last-child { border-bottom: 0; }
@@ -2902,14 +2911,9 @@ body { font-size: var(--text-body); line-height: 1.45; }
 .batch-pix-note strong { color: #37684e; font-size: var(--text-caption); }
 .batch-pix-note small { color: #668273; font-size: var(--text-micro); }
 
-:root[data-theme="dark"] .client-earning-actions button { border-color: #4d4762; background: #373348; color: #c0b8ff; }
-:root[data-theme="dark"] .payment-history-list > article { border-color: #403e47; background: rgba(255,255,255,.025); }
-:root[data-theme="dark"] .payment-history-list > article.expanded { border-color: #574f75; background: rgba(77,67,105,.16); }
-:root[data-theme="dark"] .payment-history-main strong,:root[data-theme="dark"] .payment-history-items strong,:root[data-theme="dark"] .payment-history-meta strong { color: #ece9f0; }
-:root[data-theme="dark"] .payment-history-details,:root[data-theme="dark"] .batch-receive-selection > header,:root[data-theme="dark"] .batch-receive-selection > div > label { border-color: #45424c; }
-:root[data-theme="dark"] .payment-history-items > span { color: #b8b3bf; }
+:root[data-theme="dark"] .batch-receive-selection > header,:root[data-theme="dark"] .batch-receive-selection > div > label { border-color: #45424c; }
 :root[data-theme="dark"] .batch-receive-grid label > span,:root[data-theme="dark"] .batch-payment-fields label > span { color: #c0bdc7; }
-:root[data-theme="dark"] .batch-receive-grid input,:root[data-theme="dark"] .batch-payment-fields select,:root[data-theme="dark"] .batch-payment-fields label > div { border-color: #4a4752; background: #302f36; color: #efedf3; }
+:root[data-theme="dark"] .batch-receive-grid input,:root[data-theme="dark"] .batch-receive-grid select,:root[data-theme="dark"] .batch-payment-fields select,:root[data-theme="dark"] .batch-payment-fields label > div { border-color: #4a4752; background: #302f36; color: #efedf3; }
 :root[data-theme="dark"] .batch-receive-grid input { color-scheme: dark; }
 :root[data-theme="dark"] .batch-payment-fields label > div input { color: #efedf3; }
 :root[data-theme="dark"] .batch-receive-selection { border-color: #45424c; background: #302f36; }
@@ -2920,16 +2924,25 @@ body { font-size: var(--text-body); line-height: 1.45; }
 
 @media (max-width: 760px) {
   .client-earning-list article { grid-template-columns: 36px minmax(0,1fr) auto; }
-  .client-earning-actions { grid-column: 2 / -1; }
-  .payment-history-main { grid-template-columns: 34px minmax(150px,1fr) 20px; }
-  .payment-history-main > span:nth-child(3) { grid-column: 2; grid-row: 2; justify-items: start; text-align: left; }
-  .payment-history-main > svg { grid-column: 3; grid-row: 1 / 3; }
-  .payment-history-details { padding-left: 12px; }
   .batch-receive-grid { grid-template-columns: 1fr; }
+  .earnings-history-card > header { flex-wrap: wrap; }
+  .finance-entry-actions { width: 100%; margin-left: 47px; }
+  .earning-history-filters { grid-template-columns: 1fr 1fr; }
+  .earning-status-filter { grid-column: 1 / -1; }
 }
 
 @media (max-width: 520px) {
   .batch-payment-fields { grid-template-columns: 1fr; }
   .batch-payment-fields label.wide { grid-column: auto; }
-  .payment-history-main { grid-template-columns: 32px minmax(0,1fr) 18px; }
+  .finance-entry-actions { display: grid; grid-template-columns: 1fr 1fr; margin-left: 0; }
+  .finance-entry-actions .finance-add-entry { grid-column: 1 / -1; }
+  .earning-history-backdrop { padding: 10px; }
+  .earning-history-dialog { max-height: calc(100vh - 20px); }
+  .earning-history-filters { grid-template-columns: 1fr; }
+  .earning-status-filter { grid-column: auto; }
+  .earning-history-dialog > header { padding-inline: 14px; }
+  .earning-history-filters { padding-inline: 14px; }
+  .earning-history-table { margin-inline: 14px; }
+  .earning-history-dialog > footer { padding-inline: 14px; }
+  .batch-receive-selection > header { align-items: flex-start; flex-direction: column; gap: 4px; }
 }

@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.1.56",
+    "date": "2026-08-28",
+    "title": "Recebimentos mais simples",
+    "summary": "A aba Ganhos agora separa claramente pagamentos individuais e em lote, com uma consulta completa mais organizada.",
+    "sections": [
+      {
+        "kind": "improved",
+        "title": "Individual ou em lote",
+        "items": [
+          "Marcar recebido em uma linha registra somente aquele lançamento como pagamento individual.",
+          "Receber em lote ganhou uma ação própria e exige pelo menos dois lançamentos do mesmo cliente e moeda.",
+          "Pagamentos antigos com apenas um lançamento agora aparecem corretamente como individuais."
+        ]
+      },
+      {
+        "kind": "improved",
+        "title": "Histórico organizado",
+        "items": [
+          "A seção separada de pagamentos recebidos foi incorporada à lista de lançamentos do ciclo.",
+          "O modal Ver tudo permite filtrar por status, cliente e recebimentos individuais ou em lote.",
+          "O seletor de lançamentos em lote foi ajustado para manter Selecionar todos e Desmarcar todos dentro do campo."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.1.55",
     "date": "2026-08-28",
     "title": "Pagamentos em lote",

@@ -5,19 +5,18 @@ import {
   Banknote,
   CalendarRange,
   CheckCircle2,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleDollarSign,
   Clock3,
   FileDown,
   FilePlus2,
+  ListFilter,
   LoaderCircle,
   Pencil,
   Plus,
   ReceiptText,
   RefreshCw,
-  RotateCcw,
   Save,
   Settings2,
   TrendingUp,
@@ -86,6 +85,9 @@ type BatchReceiveDraft = {
   actualAmountBrl: string;
 };
 
+type EarningHistoryStatus = 'all' | 'pending' | 'received';
+type EarningHistoryKind = 'all' | 'individual' | 'batch';
+
 export function FinanceView({ workspace, clients, tasks }: Props) {
   const [settings, setSettings] = useState<ClientBillingSetting[]>([]);
   const [earnings, setEarnings] = useState<Earning[]>([]);
@@ -100,7 +102,13 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [migrationMissing, setMigrationMissing] = useState(false);
   const [receivingBatch, setReceivingBatch] = useState<BatchReceiveDraft | null>(null);
-  const [expandedPayments, setExpandedPayments] = useState<string[]>([]);
+  const [receivingEarning, setReceivingEarning] = useState<Earning | null>(null);
+  const [actualReceivedBrl, setActualReceivedBrl] = useState('');
+  const [individualReceivedDate, setIndividualReceivedDate] = useState(() => localDateInputValue(new Date()));
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyStatus, setHistoryStatus] = useState<EarningHistoryStatus>('all');
+  const [historyClientId, setHistoryClientId] = useState('all');
+  const [historyKind, setHistoryKind] = useState<EarningHistoryKind>('all');
   const [manualEditor, setManualEditorState] = useState<Earning | 'new' | null>(null);
   const [manualDraft, setManualDraft] = useState<ManualEarningDraft>(() => emptyManualDraft());
   const [syncing, setSyncing] = useState(false);
@@ -115,6 +123,8 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
   const { begin: beginFinanceRequest, isLatest: isLatestFinanceRequest, cancel: cancelFinanceRequests } = useLatestRequest();
   useDialogFocus<HTMLElement>(Boolean(manualEditor) && !appDialog.open, () => setManualEditor(null), !saving, '.manual-earning-dialog');
   useDialogFocus<HTMLElement>(Boolean(receivingBatch) && !appDialog.open, () => setReceivingBatch(null), !saving, '.receive-dialog');
+  useDialogFocus<HTMLElement>(Boolean(receivingEarning) && !appDialog.open, () => setReceivingEarning(null), !saving, '.individual-receive-dialog');
+  useDialogFocus<HTMLElement>(historyOpen && !appDialog.open, () => setHistoryOpen(false), true, '.earning-history-dialog');
 
   const loadRate = useCallback(async () => {
     setRateLoading(true);
@@ -202,7 +212,6 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     + sum(pendingPaymentGroups.filter((group) => group.currency === 'USD').map((group) => group.net));
   const netNativeBrl = sum(receivedEarnings.filter((earning) => earning.currency === 'BRL').map((earning) => earning.net_amount_usd))
     + sum(pendingPaymentGroups.filter((group) => group.currency === 'BRL').map((group) => group.net));
-  const cyclePayments = payments.filter((payment) => isDateInRange(payment.received_at, cycleRange));
   const receivedPaymentCount = new Set(receivedEarnings.flatMap((earning) => earning.payment_id ? [earning.payment_id] : [earning.id])).size;
   const receivedBrl = sum(receivedEarnings.map((earning) => earning.amount_brl ?? 0));
   const pendingNetBrl = totalPendingGroupsBrl(pendingPaymentGroups, (group) => group.net, rate);
@@ -248,13 +257,13 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     const pendingEvents = events.filter((event) => event.client_id === client.id && !event.earning_id);
     return pendingEvents.length ? [{ client, setting, pendingEvents }] : [];
   }), [clients, events, settings]);
-  const receivingBatchEligible = useMemo(() => receivingBatch ? earnings.filter((earning) => (
+  const receivingBatchEligible = useMemo(() => receivingBatch ? cycleEarnings.filter((earning) => (
     earning.client_id === receivingBatch.clientId
     && earning.currency === receivingBatch.currency
     && earning.status === 'pending'
     && earningInputDate(earning.earned_at) >= receivingBatch.periodStart
     && earningInputDate(earning.earned_at) <= receivingBatch.periodEnd
-  )) : [], [earnings, receivingBatch]);
+  )) : [], [cycleEarnings, receivingBatch]);
   const receivingBatchSelected = useMemo(() => receivingBatch
     ? receivingBatchEligible.filter((earning) => receivingBatch.selectedIds.includes(earning.id))
     : [], [receivingBatch, receivingBatchEligible]);
@@ -266,6 +275,29 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     ? receivingBatchGross
     : estimateNetUsd(receivingBatchGross, receivingBatchFeePercent, receivingBatchFeeFixed, receivingBatchSpread);
   const receivingBatchClient = clients.find((client) => client.id === receivingBatch?.clientId);
+  const paymentById = useMemo(() => new Map(payments.map((payment) => [payment.id, payment])), [payments]);
+  const recentCycleEarnings = cycleEarnings.slice(0, 6);
+  const batchEligibleGroups = useMemo(() => {
+    const groups = new Map<string, { clientId: string; currency: BillingCurrency; earnings: Earning[] }>();
+    cycleEarnings.forEach((earning) => {
+      if (earning.status !== 'pending' || !earning.client_id) return;
+      const key = `${earning.client_id}:${earning.currency}`;
+      const group = groups.get(key) ?? { clientId: earning.client_id, currency: earning.currency, earnings: [] };
+      group.earnings.push(earning);
+      groups.set(key, group);
+    });
+    return Array.from(groups.values()).filter((group) => group.earnings.length >= 2);
+  }, [cycleEarnings]);
+  const historyEarnings = useMemo(() => cycleEarnings.filter((earning) => {
+    if (historyStatus !== 'all' && earning.status !== historyStatus) return false;
+    if (historyClientId === 'unassigned' && earning.client_id !== null) return false;
+    if (historyClientId !== 'all' && historyClientId !== 'unassigned' && earning.client_id !== historyClientId) return false;
+    const payment = earning.payment_id ? paymentById.get(earning.payment_id) : null;
+    const isBatch = Boolean(payment && payment.entry_count > 1);
+    if (historyKind === 'individual' && (earning.status !== 'received' || isBatch)) return false;
+    if (historyKind === 'batch' && (earning.status !== 'received' || !isBatch)) return false;
+    return true;
+  }), [cycleEarnings, historyClientId, historyKind, historyStatus, paymentById]);
 
   const configureFinancialCycle = async () => {
     if (!supabase) return;
@@ -426,12 +458,11 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     setSuccess(Number(data) > 0 ? `${data} novo(s) lançamento(s) gerado(s).` : 'Tudo certo. Nenhum lançamento novo foi necessário.');
   };
 
-  const openBatchReceive = (clientId: string | null, currency: BillingCurrency, singleEarning?: Earning) => {
-    const pending = earnings
+  const batchDraftFor = (clientId: string, currency: BillingCurrency): BatchReceiveDraft | null => {
+    const selected = cycleEarnings
       .filter((earning) => earning.client_id === clientId && earning.currency === currency && earning.status === 'pending')
       .sort((left, right) => left.earned_at.localeCompare(right.earned_at));
-    const selected = singleEarning ? pending.filter((earning) => earning.id === singleEarning.id) : pending;
-    if (!selected.length) return;
+    if (selected.length < 2) return null;
     const setting = settings.find((item) => item.client_id === clientId);
     const paymentMethod = currency === 'BRL' ? 'none' : (setting?.payment_method ?? selected[0].payment_method);
     const rule = currency === 'BRL' ? paymentFeeRule('none') : paymentFeeRule(paymentMethod);
@@ -441,7 +472,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     const gross = sum(selected.map((earning) => earning.amount_usd));
     const estimatedNet = currency === 'BRL' ? gross : estimateNetUsd(gross, feePercent, feeFixed, spread);
     const estimatedBrl = currency === 'BRL' ? gross : (rate ? estimatedNet * rate.rate : null);
-    setReceivingBatch({
+    return {
       clientId,
       currency,
       selectedIds: selected.map((earning) => earning.id),
@@ -453,16 +484,72 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
       feeFixed: String(feeFixed),
       conversionSpreadPercent: String(spread),
       actualAmountBrl: estimatedBrl === null ? '' : String(roundCurrency(estimatedBrl)).replace('.', ','),
-    });
+    };
+  };
+
+  const openBatchReceive = () => {
+    const firstGroup = batchEligibleGroups[0];
+    if (!firstGroup) {
+      setError('É necessário ter pelo menos dois lançamentos pendentes do mesmo cliente e moeda para receber em lote.');
+      return;
+    }
+    setReceivingBatch(batchDraftFor(firstGroup.clientId, firstGroup.currency));
     setError(null);
     setSuccess(null);
+  };
+
+  const changeBatchGroup = (clientId: string, currency?: BillingCurrency) => {
+    const nextGroup = batchEligibleGroups.find((group) => group.clientId === clientId && (!currency || group.currency === currency))
+      ?? batchEligibleGroups.find((group) => group.clientId === clientId);
+    if (nextGroup) setReceivingBatch(batchDraftFor(nextGroup.clientId, nextGroup.currency));
+  };
+
+  const openIndividualReceive = (earning: Earning) => {
+    const estimatedBrl = earning.currency === 'BRL'
+      ? earning.net_amount_usd
+      : (rate ? earning.net_amount_usd * rate.rate : null);
+    setReceivingEarning(earning);
+    setHistoryOpen(false);
+    setActualReceivedBrl(estimatedBrl === null ? '' : String(roundCurrency(estimatedBrl)).replace('.', ','));
+    setIndividualReceivedDate(localDateInputValue(new Date()));
+    setError(null);
+    setSuccess(null);
+  };
+
+  const markIndividualReceived = async () => {
+    if (!supabase || !receivingEarning) return;
+    const amountBrl = receivingEarning.currency === 'BRL'
+      ? receivingEarning.net_amount_usd
+      : Number(actualReceivedBrl.replace(',', '.'));
+    if (!individualReceivedDate) return setError('Informe a data do recebimento.');
+    const receivedAt = new Date(`${individualReceivedDate}T12:00:00`);
+    if (Number.isNaN(receivedAt.getTime()) || receivedAt.getTime() > Date.now() + 86_400_000) return setError('A data do recebimento é inválida.');
+    if (!Number.isFinite(amountBrl) || amountBrl <= 0) return setError('Informe o valor em reais que realmente caiu na conta.');
+    setSaving(true);
+    setError(null);
+    const { error: updateError } = await supabase.from('earnings').update({
+      status: 'received',
+      received_at: receivedAt.toISOString(),
+      exchange_rate_brl: receivingEarning.currency === 'BRL'
+        ? 1
+        : receivingEarning.net_amount_usd > 0
+        ? roundRate(amountBrl / receivingEarning.net_amount_usd)
+        : (rate?.rate ?? 1),
+      amount_brl: roundCurrency(amountBrl),
+    }).eq('id', receivingEarning.id);
+    setSaving(false);
+    if (updateError) return setError(financeErrorMessage(updateError.message));
+    setReceivingEarning(null);
+    setActualReceivedBrl('');
+    await loadFinance(true);
+    setSuccess('Pagamento individual registrado.');
   };
 
   const updateBatchPeriod = (field: 'periodStart' | 'periodEnd', value: string) => {
     setReceivingBatch((current) => {
       if (!current) return current;
       const next = { ...current, [field]: value };
-      const selectedIds = earnings
+      const selectedIds = cycleEarnings
         .filter((earning) => earning.client_id === current.clientId
           && earning.currency === current.currency
           && earning.status === 'pending'
@@ -496,7 +583,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
   const markBatchReceived = async () => {
     if (!supabase || !receivingBatch) return;
     const selected = earnings.filter((earning) => receivingBatch.selectedIds.includes(earning.id));
-    if (!selected.length) return setError('Selecione pelo menos um lançamento para receber.');
+    if (selected.length < 2) return setError('Selecione pelo menos dois lançamentos para receber em lote.');
     if (!receivingBatch.periodStart || !receivingBatch.periodEnd || !receivingBatch.receivedDate) return setError('Preencha o período e a data do recebimento.');
     if (receivingBatch.periodEnd < receivingBatch.periodStart) return setError('A data final deve ser igual ou posterior à data inicial.');
     const feePercent = Number(receivingBatch.feePercent.replace(',', '.'));
@@ -528,14 +615,16 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     if (paymentError) return setError(financeErrorMessage(paymentError.message));
     setReceivingBatch(null);
     await loadFinance(true);
-    setSuccess(`Pagamento de ${selected.length} ${selected.length === 1 ? 'lançamento' : 'lançamentos'} registrado.`);
+    setSuccess(`Pagamento em lote com ${selected.length} lançamentos registrado.`);
   };
 
   const reopenPayment = async (payment: EarningPayment) => {
     if (!supabase || saving) return;
     const confirmed = await appDialog.confirm({
       title: 'Reabrir este pagamento?',
-      description: `Os ${payment.entry_count} lançamentos voltarão para pendentes. O registro do pagamento será removido.`,
+      description: payment.entry_count === 1
+        ? 'Este lançamento voltará para pendente. O registro do pagamento será removido.'
+        : `Os ${payment.entry_count} lançamentos voltarão para pendentes. O registro do pagamento será removido.`,
       confirmLabel: 'Reabrir pagamento',
       tone: 'danger',
     });
@@ -611,6 +700,24 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     }
   };
 
+  const renderEarningRow = (earning: Earning) => {
+    const client = clients.find((item) => item.id === earning.client_id);
+    const displayBrl = earningNetBrl(earning, rate);
+    const earningFee = earning.amount_usd - earning.net_amount_usd;
+    const payment = earning.payment_id ? paymentById.get(earning.payment_id) : null;
+    const isBatchPayment = Boolean(payment && payment.entry_count > 1);
+    return (
+      <article key={earning.id}>
+        <div><strong>{client?.name || (earning.source_type === 'manual' ? 'Lançamento avulso' : 'Cliente removido')}<i className={`earning-source ${earning.source_type}`}>{earningSourceLabel(earning.source_type)}</i></strong><small>{earning.description} · {paymentMethodLabel(earning.payment_method)}{earning.source_type !== 'manual' ? ` · ${earning.item_count} ${earning.item_count === 1 ? 'vídeo' : 'vídeos'}` : ''}{isBatchPayment && payment ? ` · lote com ${payment.entry_count}` : ''}</small></div>
+        <span>{formatCompactDate(earning.earned_at)}</span>
+        <div className="earning-value"><strong>{displayBrl === null ? '—' : formatBrl(displayBrl)}</strong><small>{earning.currency} · líquido {formatMoney(earning.net_amount_usd, earning.currency)} · bruto {formatMoney(earning.amount_usd, earning.currency)} · taxas {formatMoney(earningFee, earning.currency)}{earning.currency === 'USD' && earning.exchange_rate_brl ? ` · câmbio efetivo ${formatRate(earning.exchange_rate_brl)}` : ''}</small></div>
+        <div className="earning-row-actions">{earning.status === 'received'
+          ? <button className="earning-status received" disabled={saving} onClick={() => void reopenEarning(earning)}><CheckCircle2 size={13} />{isBatchPayment ? 'Recebido em lote' : 'Recebido'}</button>
+          : <button className="earning-status pending" disabled={saving} onClick={() => openIndividualReceive(earning)}><Clock3 size={13} />Marcar recebido</button>}{earning.source_type === 'manual' && !earning.payment_id ? <><button className="earning-icon-action" onClick={() => openManualEditor(earning)} aria-label="Editar lançamento"><Pencil size={13} /></button><button className="earning-icon-action danger" onClick={() => void deleteManualEarning(earning)} aria-label="Excluir lançamento"><Trash2 size={13} /></button></> : null}</div>
+      </article>
+    );
+  };
+
   if (loading) return <div className="finance-loading"><LoaderCircle className="spinner" size={24} />Carregando ganhos…</div>;
 
   if (migrationMissing) {
@@ -665,45 +772,16 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
       <section className="finance-card client-earnings-card finance-client-summary">
           <header><span><WalletCards size={18} /></span><div><h3>Resumo por cliente</h3><p>Valores gerados no ciclo selecionado. Configure o pagamento ao criar ou editar um cliente.</p></div></header>
           <div className="client-earning-list">
-            {clientSummaries.map(({ client, setting, grossBrl: clientGrossBrl, netBrl: clientNetBrl, itemCount, pendingItems, pendingCurrencies }) => (
+            {clientSummaries.map(({ client, setting, grossBrl: clientGrossBrl, netBrl: clientNetBrl, itemCount, pendingItems }) => (
               <article key={client.id}>
                 <span className="finance-client-avatar">{client.youtube_thumbnail_url ? <img src={client.youtube_thumbnail_url} alt={`Canal de ${client.name}`} /> : client.name.slice(0,1).toUpperCase()}</span>
                 <div><strong>{client.name}</strong><small>{setting ? billingDescription(setting) : 'Sem configuração atual'}{setting?.pricing_model === 'bundle' && pendingItems ? ` · ${pendingItems}/${setting.bundle_size} no próximo pacote` : ''}</small></div>
                 <em>{clientNetBrl === null ? '—' : formatBrl(clientNetBrl)}<small>líquido · bruto {clientGrossBrl === null ? '—' : formatBrl(clientGrossBrl)} · {itemCount} vídeos</small></em>
-                {pendingCurrencies.length ? <div className="client-earning-actions">{pendingCurrencies.map((currency) => {
-                  const pendingCount = earnings.filter((earning) => earning.client_id === client.id && earning.currency === currency && earning.status === 'pending').length;
-                  return <button key={currency} onClick={() => openBatchReceive(client.id, currency)}><Banknote size={12} />Receber {pendingCount}{pendingCurrencies.length > 1 ? ` ${currency}` : ''}</button>;
-                })}</div> : null}
               </article>
             ))}
             {!clientSummaries.length ? <div className="finance-list-empty">Configure o primeiro cliente para começar a contabilizar as entregas.</div> : null}
           </div>
       </section>
-
-      {cyclePayments.length ? <section className="finance-card payment-history-card">
-        <header><span><ReceiptText size={18} /></span><div><h3>Pagamentos recebidos</h3><p>Cada transferência reúne os lançamentos pagos pelo cliente naquele período.</p></div></header>
-        <div className="payment-history-list">
-          {cyclePayments.map((payment) => {
-            const paymentEarnings = earnings.filter((earning) => earning.payment_id === payment.id);
-            const client = clients.find((item) => item.id === payment.client_id);
-            const paymentClientName = client?.name ?? (paymentEarnings.every((earning) => earning.source_type === 'manual') ? 'Lançamento avulso' : 'Cliente removido');
-            const expanded = expandedPayments.includes(payment.id);
-            return <article key={payment.id} className={expanded ? 'expanded' : ''}>
-              <button className="payment-history-main" onClick={() => setExpandedPayments((current) => current.includes(payment.id) ? current.filter((id) => id !== payment.id) : [...current, payment.id])}>
-                <span className="payment-history-icon"><Banknote size={15} /></span>
-                <span><strong>{paymentClientName}</strong><small>{formatDateOnly(payment.period_start)} a {formatDateOnly(payment.period_end)} · {payment.entry_count} lançamentos · {payment.item_count} vídeos</small></span>
-                <span><strong>{formatBrl(payment.received_amount_brl)}</strong><small>{payment.currency === 'BRL' ? 'PIX · sem taxas' : `${formatMoney(payment.gross_amount, payment.currency)} bruto · ${paymentMethodLabel(payment.payment_method)}`}</small></span>
-                <ChevronDown size={15} />
-              </button>
-              {expanded ? <div className="payment-history-details">
-                <div className="payment-history-meta"><span>Recebido em <strong>{formatCompactDate(payment.received_at)}</strong></span><span>Líquido estimado <strong>{formatMoney(payment.estimated_net_amount, payment.currency)}</strong></span>{payment.currency === 'USD' ? <span>Câmbio efetivo <strong>{formatRate(payment.effective_exchange_rate)}</strong></span> : null}</div>
-                <div className="payment-history-items">{paymentEarnings.map((earning) => <span key={earning.id}><i />{earning.description}<strong>{formatMoney(earning.amount_usd, earning.currency)}</strong></span>)}</div>
-                <button className="payment-reopen-button" disabled={saving} onClick={() => void reopenPayment(payment)}><RotateCcw size={12} />Reabrir pagamento</button>
-              </div> : null}
-            </article>;
-          })}
-        </div>
-      </section> : null}
 
       {(deliveryIssues.length || bundleProgress.length) ? <section className="finance-card finance-pending-card">
         <header><span><Clock3 size={18} /></span><div><h3>Entregas em acompanhamento</h3><p>Veja o que ainda não virou um lançamento completo.</p></div></header>
@@ -714,26 +792,13 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
       </section> : null}
 
       <section className="finance-card earnings-history-card">
-        <header><span><CheckCircle2 size={18} /></span><div><h3>Lançamentos do ciclo</h3><p>Automáticos vêm da última coluna; manuais podem ser corrigidos ou removidos.</p></div><button className="finance-add-entry" onClick={() => openManualEditor()}><Plus size={14} />Adicionar</button></header>
+        <header><span><CheckCircle2 size={18} /></span><div><h3>Lançamentos do ciclo</h3><p>Os seis lançamentos mais recentes. Abra a lista completa para consultar e filtrar.</p></div><div className="finance-entry-actions"><button className="finance-view-all" onClick={() => setHistoryOpen(true)}><ListFilter size={14} />Ver tudo</button><button className="finance-batch-entry" disabled={!batchEligibleGroups.length} title={!batchEligibleGroups.length ? 'São necessários dois lançamentos pendentes do mesmo cliente e moeda' : undefined} onClick={openBatchReceive}><Banknote size={14} />Receber em lote</button><button className="finance-add-entry" onClick={() => openManualEditor()}><Plus size={14} />Adicionar</button></div></header>
         <div className="earnings-table">
           <div className="earnings-table-head"><span>Cliente / lançamento</span><span>Data</span><span>Valor</span><span>Status / ações</span></div>
-          {cycleEarnings.map((earning) => {
-            const client = clients.find((item) => item.id === earning.client_id);
-            const displayBrl = earningNetBrl(earning, rate);
-            const earningFee = earning.amount_usd - earning.net_amount_usd;
-            return (
-              <article key={earning.id}>
-                <div><strong>{client?.name || (earning.source_type === 'manual' ? 'Lançamento avulso' : 'Cliente removido')}<i className={`earning-source ${earning.source_type}`}>{earningSourceLabel(earning.source_type)}</i></strong><small>{earning.description} · {paymentMethodLabel(earning.payment_method)}{earning.source_type !== 'manual' ? ` · ${earning.item_count} ${earning.item_count === 1 ? 'vídeo' : 'vídeos'}` : ''}</small></div>
-                <span>{formatCompactDate(earning.earned_at)}</span>
-                <div className="earning-value"><strong>{displayBrl === null ? '—' : formatBrl(displayBrl)}</strong><small>{earning.currency} · líquido {formatMoney(earning.net_amount_usd, earning.currency)} · bruto {formatMoney(earning.amount_usd, earning.currency)} · taxas {formatMoney(earningFee, earning.currency)}{earning.currency === 'USD' && earning.exchange_rate_brl ? ` · câmbio efetivo ${formatRate(earning.exchange_rate_brl)}` : ''}</small></div>
-                <div className="earning-row-actions">{earning.status === 'received'
-                  ? <button className="earning-status received" disabled={saving} onClick={() => void reopenEarning(earning)}><CheckCircle2 size={13} />{earning.payment_id ? 'Recebido em lote' : 'Recebido'}</button>
-                  : <button className="earning-status pending" disabled={saving} onClick={() => openBatchReceive(earning.client_id, earning.currency, earning)}><Clock3 size={13} />Marcar recebido</button>}{earning.source_type === 'manual' && !earning.payment_id ? <><button className="earning-icon-action" onClick={() => openManualEditor(earning)} aria-label="Editar lançamento"><Pencil size={13} /></button><button className="earning-icon-action danger" onClick={() => void deleteManualEarning(earning)} aria-label="Excluir lançamento"><Trash2 size={13} /></button></> : null}</div>
-              </article>
-            );
-          })}
+          {recentCycleEarnings.map(renderEarningRow)}
           {!cycleEarnings.length ? <div className="finance-list-empty">Nenhum ganho foi gerado neste ciclo.</div> : null}
         </div>
+        {cycleEarnings.length > recentCycleEarnings.length ? <button className="finance-list-more" onClick={() => setHistoryOpen(true)}>Ver todos os {cycleEarnings.length} lançamentos</button> : null}
       </section>
 
       {manualEditor ? (
@@ -759,13 +824,54 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
         </div>
       ) : null}
 
+      {historyOpen ? (
+        <div className="earning-history-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryOpen(false); }}>
+          <section className="earning-history-dialog" role="dialog" aria-modal="true" aria-labelledby="earning-history-title">
+            <header><span><ReceiptText size={18} /></span><div><h3 id="earning-history-title">Todos os lançamentos</h3><p>{cycleLabel} · consulte pendências e pagamentos já recebidos.</p></div><button onClick={() => setHistoryOpen(false)} aria-label="Fechar"><X size={17} /></button></header>
+            <div className="earning-history-filters">
+              <div className="earning-status-filter" aria-label="Filtrar por status">
+                {(['all', 'pending', 'received'] as EarningHistoryStatus[]).map((status) => <button key={status} className={historyStatus === status ? 'active' : ''} onClick={() => setHistoryStatus(status)}>{status === 'all' ? 'Todos' : status === 'pending' ? 'Pendentes' : 'Recebidos'}</button>)}
+              </div>
+              <label><span>Cliente</span><select value={historyClientId} onChange={(event) => setHistoryClientId(event.target.value)}><option value="all">Todos os clientes</option><option value="unassigned">Lançamentos avulsos</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label>
+              <label><span>Recebimento</span><select value={historyKind} onChange={(event) => { const kind = event.target.value as EarningHistoryKind; setHistoryKind(kind); if (kind !== 'all') setHistoryStatus('received'); }}><option value="all">Individual e em lote</option><option value="individual">Somente individuais</option><option value="batch">Somente lotes</option></select></label>
+            </div>
+            <div className="earnings-table earning-history-table">
+              <div className="earnings-table-head"><span>Cliente / lançamento</span><span>Data</span><span>Valor</span><span>Status / ações</span></div>
+              {historyEarnings.map(renderEarningRow)}
+              {!historyEarnings.length ? <div className="finance-list-empty">Nenhum lançamento corresponde aos filtros selecionados.</div> : null}
+            </div>
+            <footer><span>{historyEarnings.length} de {cycleEarnings.length} lançamentos</span><button className="secondary-button" onClick={() => setHistoryOpen(false)}>Fechar</button></footer>
+          </section>
+        </div>
+      ) : null}
+
+      {receivingEarning ? (
+        <div className="receive-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setReceivingEarning(null); }}>
+          <section className="receive-dialog individual-receive-dialog" role="dialog" aria-modal="true" aria-labelledby="individual-receive-title">
+            <header><span><Banknote size={18} /></span><div><h3 id="individual-receive-title">Receber lançamento</h3><p>Registre este pagamento individualmente.</p></div><button disabled={saving} onClick={() => setReceivingEarning(null)} aria-label="Fechar"><X size={17} /></button></header>
+            <div className="receive-dialog-summary"><div><span>Bruto</span><strong>{formatMoney(receivingEarning.amount_usd, receivingEarning.currency)}</strong></div><div><span>Líquido estimado</span><strong>{formatMoney(receivingEarning.net_amount_usd, receivingEarning.currency)}</strong></div><div><span>Meio</span><strong>{paymentMethodLabel(receivingEarning.payment_method)}</strong></div></div>
+            <div className="individual-receive-fields">
+              <label><span>Data do recebimento</span><input type="date" value={individualReceivedDate} onChange={(event) => setIndividualReceivedDate(event.target.value)} /></label>
+              {receivingEarning.currency === 'BRL'
+                ? <div className="batch-pix-note"><span><CheckCircle2 size={15} /></span><div><strong>Recebimento por PIX</strong><small>Sem taxas ou conversão · {formatBrl(receivingEarning.net_amount_usd)}.</small></div></div>
+                : <label><span>Quanto realmente caiu na conta?</span><div><b>R$</b><input autoFocus inputMode="decimal" value={actualReceivedBrl} onChange={(event) => setActualReceivedBrl(event.target.value)} placeholder="0,00" /></div></label>}
+            </div>
+            <small>Este lançamento será registrado como recebimento individual.</small>
+            {error ? <div className="panel-error receive-dialog-error">{error}</div> : null}
+            <button className="primary-button" disabled={saving} onClick={() => void markIndividualReceived()}>{saving ? <LoaderCircle className="spinner" size={15} /> : <CheckCircle2 size={15} />}Confirmar recebimento</button>
+          </section>
+        </div>
+      ) : null}
+
       {receivingBatch ? (
         <div className="receive-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setReceivingBatch(null); }}>
           <section className="receive-dialog batch-receive-dialog" role="dialog" aria-modal="true" aria-labelledby="receive-dialog-title">
-            <header><span><Banknote size={18} /></span><div><h3 id="receive-dialog-title">Registrar pagamento</h3><p>{receivingBatchClient?.name ?? 'Lançamento avulso'} · escolha os lançamentos incluídos na transferência.</p></div><button disabled={saving} onClick={() => setReceivingBatch(null)} aria-label="Fechar"><X size={17} /></button></header>
+            <header><span><Banknote size={18} /></span><div><h3 id="receive-dialog-title">Receber em lote</h3><p>{receivingBatchClient?.name} · escolha pelo menos dois lançamentos da transferência.</p></div><button disabled={saving} onClick={() => setReceivingBatch(null)} aria-label="Fechar"><X size={17} /></button></header>
             <div className="receive-dialog-summary"><div><span>Lançamentos</span><strong>{receivingBatchSelected.length} · {sum(receivingBatchSelected.map((earning) => earning.item_count))} vídeos</strong></div><div><span>Bruto</span><strong>{formatMoney(receivingBatchGross, receivingBatch.currency)}</strong></div><div><span>Líquido estimado</span><strong>{formatMoney(receivingBatchNet, receivingBatch.currency)}</strong></div></div>
 
             <div className="batch-receive-grid">
+              <label><span>Cliente</span><select value={receivingBatch.clientId ?? ''} onChange={(event) => changeBatchGroup(event.target.value)}>{Array.from(new Set(batchEligibleGroups.map((group) => group.clientId))).map((clientId) => <option key={clientId} value={clientId}>{clients.find((client) => client.id === clientId)?.name ?? 'Cliente'}</option>)}</select></label>
+              <label><span>Moeda</span><select value={receivingBatch.currency} onChange={(event) => changeBatchGroup(receivingBatch.clientId ?? '', event.target.value as BillingCurrency)}>{batchEligibleGroups.filter((group) => group.clientId === receivingBatch.clientId).map((group) => <option key={group.currency} value={group.currency}>{group.currency}</option>)}</select></label>
               <label><span>Início do período</span><input type="date" value={receivingBatch.periodStart} onChange={(event) => updateBatchPeriod('periodStart', event.target.value)} /></label>
               <label><span>Fim do período</span><input type="date" value={receivingBatch.periodEnd} onChange={(event) => updateBatchPeriod('periodEnd', event.target.value)} /></label>
               <label><span>Data do recebimento</span><input type="date" value={receivingBatch.receivedDate} onChange={(event) => setReceivingBatch({ ...receivingBatch, receivedDate: event.target.value })} /></label>
@@ -790,7 +896,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
 
             <small>A taxa fixa é aplicada uma única vez sobre todo o pagamento.</small>
             {error ? <div className="panel-error receive-dialog-error">{error}</div> : null}
-            <button className="primary-button" disabled={saving || !receivingBatchSelected.length} onClick={() => void markBatchReceived()}>{saving ? <LoaderCircle className="spinner" size={15} /> : <CheckCircle2 size={15} />}Confirmar {receivingBatchSelected.length} {receivingBatchSelected.length === 1 ? 'lançamento' : 'lançamentos'}</button>
+            <button className="primary-button" disabled={saving || receivingBatchSelected.length < 2} onClick={() => void markBatchReceived()}>{saving ? <LoaderCircle className="spinner" size={15} /> : <CheckCircle2 size={15} />}Confirmar lote com {receivingBatchSelected.length} lançamentos</button>
           </section>
         </div>
       ) : null}
@@ -918,10 +1024,6 @@ function localDateInputValue(date: Date) {
 
 function earningInputDate(date: string) {
   return localDateInputValue(new Date(date));
-}
-
-function formatDateOnly(date: string) {
-  return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(`${date}T12:00:00`));
 }
 
 function parseDraftNumber(value?: string) {
