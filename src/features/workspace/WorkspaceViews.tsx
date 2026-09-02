@@ -7,7 +7,7 @@ import { ReleaseNotesDialog } from '../../components/ReleaseNotesDialog';
 import { releaseNotesUpTo } from '../../lib/releaseNotes';
 import { useDialogFocus } from '../../lib/useDialogFocus';
 import { estimateNetUsd, paymentFeeRule, paymentFeeRules, paymentMethodLabel } from '../finance/paymentFees';
-import type { BillingCurrency, BillingPricingModel, Client, ClientBillingSetting, EditFlowAccountSearchResult, PaymentMethod, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
+import type { BillingCurrency, BillingPricingModel, Client, ClientBillingSetting, EditFlowAccountSearchResult, EditorClientCompensationRate, EditorCompensationSetting, PaymentMethod, Task, WorkspaceInvitation, WorkspaceMember, WorkspaceRole, WorkspaceSummary } from './types';
 
 export function ClientsView({
   workspace,
@@ -359,10 +359,17 @@ export function ClientsView({
 
 type TeamFilter = 'all' | 'available' | 'admins';
 
+type EditorClientRateDraft = {
+  clientId: string;
+  currency: BillingCurrency;
+  amount: string;
+};
+
 export function TeamView({
   userId,
   workspace,
   members,
+  clients,
   tasks,
   onChanged,
   onMemberProfile,
@@ -371,6 +378,7 @@ export function TeamView({
   userId: string;
   workspace: WorkspaceSummary;
   members: WorkspaceMember[];
+  clients: Client[];
   tasks: Task[];
   onChanged: () => Promise<void>;
   onMemberProfile: (memberId: string) => void;
@@ -387,10 +395,24 @@ export function TeamView({
   const [accountSearchError, setAccountSearchError] = useState<string | null>(null);
   const [pendingInvitations, setPendingInvitations] = useState<WorkspaceInvitation[]>([]);
   const [memberMenuId, setMemberMenuId] = useState<string | null>(null);
+  const [compensationSettings, setCompensationSettings] = useState<EditorCompensationSetting[]>([]);
+  const [compensationRates, setCompensationRates] = useState<EditorClientCompensationRate[]>([]);
+  const [compensationEditor, setCompensationEditor] = useState<WorkspaceMember | null>(null);
+  const [compensationDefaultEnabled, setCompensationDefaultEnabled] = useState(true);
+  const [compensationDefaultCurrency, setCompensationDefaultCurrency] = useState<BillingCurrency>('BRL');
+  const [compensationDefaultAmount, setCompensationDefaultAmount] = useState('');
+  const [compensationOverrides, setCompensationOverrides] = useState<EditorClientRateDraft[]>([]);
+  const [newRateClientId, setNewRateClientId] = useState('');
+  const [newRateCurrency, setNewRateCurrency] = useState<BillingCurrency>('BRL');
+  const [newRateAmount, setNewRateAmount] = useState('');
+  const [compensationAvailable, setCompensationAvailable] = useState(true);
+  const [compensationNotice, setCompensationNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const canManage = workspace.role === 'owner' || workspace.role === 'admin';
+  const isOwner = workspace.role === 'owner';
   const appDialog = useAppDialog();
+  useDialogFocus<HTMLElement>(Boolean(compensationEditor) && !appDialog.open, () => setCompensationEditor(null), !saving, '.editor-compensation-dialog');
 
   useEffect(() => {
     if (!memberMenuId) return;
@@ -423,7 +445,30 @@ export function TeamView({
     })) as WorkspaceInvitation[]);
   }, [canManage, workspace.id, workspace.name]);
 
+  const loadCompensation = useCallback(async () => {
+    if (!supabase || !isOwner) {
+      setCompensationSettings([]);
+      setCompensationRates([]);
+      return;
+    }
+    const [settingsResult, ratesResult] = await Promise.all([
+      supabase.from('editor_compensation_settings').select('workspace_id, editor_user_id, currency, amount_per_video, created_at, updated_at').eq('workspace_id', workspace.id),
+      supabase.from('editor_client_compensation_rates').select('workspace_id, editor_user_id, client_id, currency, amount_per_video, created_at, updated_at').eq('workspace_id', workspace.id),
+    ]);
+    const loadError = settingsResult.error ?? ratesResult.error;
+    if (loadError) {
+      const missing = /editor_compensation|editor_client_compensation|schema cache|could not find/i.test(loadError.message);
+      setCompensationAvailable(!missing);
+      if (!missing) setError(loadError.message);
+      return;
+    }
+    setCompensationAvailable(true);
+    setCompensationSettings((settingsResult.data ?? []).map((setting) => ({ ...setting, amount_per_video: Number(setting.amount_per_video) })) as EditorCompensationSetting[]);
+    setCompensationRates((ratesResult.data ?? []).map((rate) => ({ ...rate, amount_per_video: Number(rate.amount_per_video) })) as EditorClientCompensationRate[]);
+  }, [isOwner, workspace.id]);
+
   useEffect(() => { void loadInvitations(); }, [loadInvitations]);
+  useEffect(() => { void loadCompensation(); }, [loadCompensation]);
 
   useEffect(() => {
     const query = inviteEmail.trim();
@@ -472,6 +517,17 @@ export function TeamView({
       .subscribe();
     return () => { void realtimeClient.removeChannel(channel); };
   }, [canManage, loadInvitations, workspace.id]);
+
+  useEffect(() => {
+    if (!supabase || !isOwner || !compensationAvailable) return;
+    const realtimeClient = supabase;
+    const channel = realtimeClient
+      .channel(`editflow-editor-compensation:${workspace.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'editor_compensation_settings', filter: `workspace_id=eq.${workspace.id}` }, () => void loadCompensation())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'editor_client_compensation_rates', filter: `workspace_id=eq.${workspace.id}` }, () => void loadCompensation())
+      .subscribe();
+    return () => { void realtimeClient.removeChannel(channel); };
+  }, [compensationAvailable, isOwner, loadCompensation, workspace.id]);
 
   const visibleMembers = members.filter((member) => {
     const matchesFilter = filter === 'all'
@@ -549,6 +605,74 @@ export function TeamView({
     await onChanged();
   };
 
+  const openCompensationEditor = (member: WorkspaceMember) => {
+    if (!compensationAvailable) {
+      setError('Execute a migration 028_editor_compensation.sql no Supabase para configurar pagamentos de editores.');
+      return;
+    }
+    const defaultSetting = compensationSettings.find((setting) => setting.editor_user_id === member.user_id);
+    const overrides = compensationRates
+      .filter((rate) => rate.editor_user_id === member.user_id)
+      .map((rate) => ({ clientId: rate.client_id, currency: rate.currency, amount: String(rate.amount_per_video).replace('.', ',') }));
+    setCompensationDefaultEnabled(Boolean(defaultSetting));
+    setCompensationDefaultCurrency(defaultSetting?.currency ?? 'BRL');
+    setCompensationDefaultAmount(defaultSetting ? String(defaultSetting.amount_per_video).replace('.', ',') : '');
+    setCompensationOverrides(overrides);
+    setNewRateClientId(clients.find((client) => !overrides.some((rate) => rate.clientId === client.id))?.id ?? '');
+    setNewRateCurrency(defaultSetting?.currency ?? 'BRL');
+    setNewRateAmount('');
+    setCompensationNotice(null);
+    setError(null);
+    setMemberMenuId(null);
+    setCompensationEditor(member);
+  };
+
+  const addCompensationOverride = () => {
+    const amount = parsePositiveMoney(newRateAmount);
+    if (!newRateClientId) return setError('Escolha um cliente para o valor personalizado.');
+    if (compensationOverrides.some((rate) => rate.clientId === newRateClientId)) return setError('Esse cliente já possui um valor personalizado.');
+    if (amount === null) return setError('Informe um valor por vídeo maior que zero.');
+    const next = [...compensationOverrides, { clientId: newRateClientId, currency: newRateCurrency, amount: newRateAmount }];
+    setCompensationOverrides(next);
+    setNewRateClientId(clients.find((client) => !next.some((rate) => rate.clientId === client.id))?.id ?? '');
+    setNewRateAmount('');
+    setError(null);
+  };
+
+  const saveEditorCompensation = async () => {
+    if (!supabase || !compensationEditor) return;
+    const defaultAmount = compensationDefaultEnabled ? parsePositiveMoney(compensationDefaultAmount) : null;
+    if (compensationDefaultEnabled && defaultAmount === null) return setError('Informe o valor padrão por vídeo ou desative essa regra.');
+    const normalizedOverrides = compensationOverrides.map((rate) => ({
+      client_id: rate.clientId,
+      currency: rate.currency,
+      amount: parsePositiveMoney(rate.amount),
+    }));
+    if (normalizedOverrides.some((rate) => rate.amount === null)) return setError('Revise os valores personalizados por cliente.');
+
+    setSaving(true);
+    setError(null);
+    const { error: saveError } = await supabase.rpc('update_editor_compensation', {
+      target_workspace: workspace.id,
+      target_editor: compensationEditor.user_id,
+      default_currency: compensationDefaultCurrency,
+      default_amount: defaultAmount,
+      client_rates: normalizedOverrides,
+    });
+    setSaving(false);
+    if (saveError) {
+      const missing = /update_editor_compensation|editor_compensation|schema cache|could not find/i.test(saveError.message);
+      if (missing) setCompensationAvailable(false);
+      return setError(missing
+        ? 'Execute a migration 028_editor_compensation.sql no Supabase para ativar esta configuração.'
+        : saveError.message);
+    }
+    const editorName = compensationEditor.display_name;
+    setCompensationEditor(null);
+    await loadCompensation();
+    setCompensationNotice(`Pagamento de ${editorName} atualizado. As próximas conclusões serão contabilizadas automaticamente.`);
+  };
+
   return (
     <div className="team-view">
       <section className="team-hero">
@@ -566,6 +690,8 @@ export function TeamView({
       </div>
 
       {error ? <div className="panel-error">{error}</div> : null}
+      {compensationNotice ? <div className="panel-success team-compensation-notice"><CheckCircle2 size={15} />{compensationNotice}</div> : null}
+      {isOwner && !compensationAvailable ? <div className="panel-error team-compensation-missing">Execute a migration <strong>028_editor_compensation.sql</strong> no Supabase para ativar os valores automáticos dos editores.</div> : null}
       {inviteOpen && canManage ? (
         <form className="team-invite-panel" onSubmit={inviteMember}>
           <div className="team-invite-intro"><Mail size={18} /><span><strong>Novo convite</strong><small>Busque uma conta EditFlow ou digite um e-mail.</small></span></div>
@@ -613,17 +739,56 @@ export function TeamView({
           const activeTasks = memberTasks.filter((task) => !task.completed_at).length;
           const deliveredTasks = memberTasks.filter((task) => Boolean(task.completed_at)).length;
           const canManageMember = canManage && member.role !== 'owner' && member.user_id !== userId;
+          const editorDefaultRate = compensationSettings.find((setting) => setting.editor_user_id === member.user_id);
+          const editorOverrideCount = compensationRates.filter((rate) => rate.editor_user_id === member.user_id).length;
           return <article className="team-profile-card" key={member.user_id}>
             <span className={`team-presence ${member.availability}`} title={teamAvailabilityLabel(member.availability)} />
-            {canManageMember ? <div className="team-card-menu-wrap"><button className="team-card-menu-button" onClick={() => setMemberMenuId((current) => current === member.user_id ? null : member.user_id)} aria-label={`Gerenciar ${member.display_name}`}><MoreHorizontal size={17} /></button>{memberMenuId === member.user_id ? <div className="team-card-menu"><label><span>Cargo</span><select value={member.role} disabled={saving} onChange={(event) => void changeMemberRole(member, event.target.value as Exclude<WorkspaceRole, 'owner'>)}><option value="editor">Editor</option><option value="admin">Administrador</option></select></label><button onClick={() => void removeMember(member)}><Trash2 size={13} />Remover da equipe</button></div> : null}</div> : null}
+            {canManageMember ? <div className="team-card-menu-wrap"><button className="team-card-menu-button" onClick={() => setMemberMenuId((current) => current === member.user_id ? null : member.user_id)} aria-label={`Gerenciar ${member.display_name}`}><MoreHorizontal size={17} /></button>{memberMenuId === member.user_id ? <div className="team-card-menu"><label><span>Cargo</span><select value={member.role} disabled={saving} onChange={(event) => void changeMemberRole(member, event.target.value as Exclude<WorkspaceRole, 'owner'>)}><option value="editor">Editor</option><option value="admin">Administrador</option></select></label>{isOwner && member.role === 'editor' ? <button onClick={() => openCompensationEditor(member)}><CircleDollarSign size={13} />Valor por vídeo</button> : null}<button className="danger" onClick={() => void removeMember(member)}><Trash2 size={13} />Remover da equipe</button></div> : null}</div> : null}
             <button className="team-card-avatar" onClick={() => onMemberProfile(member.user_id)} aria-label={`Abrir perfil de ${member.display_name}`}>{member.avatar_url ? <img src={member.avatar_url} alt="" /> : <span>{member.display_name.slice(0,1).toUpperCase()}</span>}</button>
-            <div className="team-card-copy"><h3>{member.display_name}{member.user_id === userId ? <small>você</small> : null}</h3><p>{member.specialty || teamRoleLabel(member.role)}</p><span>{activeTasks} {activeTasks === 1 ? 'trabalho ativo' : 'trabalhos ativos'} · {deliveredTasks} entregues</span><em className={member.availability}>{teamAvailabilityLabel(member.availability)}</em></div>
+            <div className="team-card-copy"><h3>{member.display_name}{member.user_id === userId ? <small>você</small> : null}</h3><p>{member.specialty || teamRoleLabel(member.role)}</p><span>{activeTasks} {activeTasks === 1 ? 'trabalho ativo' : 'trabalhos ativos'} · {deliveredTasks} entregues</span>{isOwner && member.role === 'editor' ? <button className="team-editor-rate" onClick={() => openCompensationEditor(member)}>{editorDefaultRate ? `${formatBillingCurrency(editorDefaultRate.amount_per_video, editorDefaultRate.currency)} padrão` : editorOverrideCount ? 'Somente por cliente' : 'Pagamento não configurado'}{editorOverrideCount ? <small>+{editorOverrideCount} {editorOverrideCount === 1 ? 'cliente' : 'clientes'}</small> : null}</button> : null}<em className={member.availability}>{teamAvailabilityLabel(member.availability)}</em></div>
             <footer><button onClick={() => onMemberProfile(member.user_id)}><UserRound size={15} />Perfil</button><button onClick={() => onMemberTasks(member)}><ListVideo size={15} />Trabalhos</button></footer>
           </article>;
         })}
         {canManage && filter === 'all' && !search.trim() ? <button className="team-add-card" onClick={() => { setInviteOpen(true); window.setTimeout(() => document.querySelector<HTMLInputElement>('.team-invite-panel input')?.focus(), 0); }}><span><UserPlus size={25} /></span><strong>Adicionar membro</strong><small>Convide alguém para colaborar com sua equipe.</small></button> : null}
       </section>
       {!visibleMembers.length ? <div className="team-empty"><Users size={24} /><strong>Nenhum membro encontrado</strong><span>Tente mudar o filtro ou o termo de busca.</span></div> : null}
+      {compensationEditor ? (
+        <div className="editor-compensation-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setCompensationEditor(null); }}>
+          <section className="editor-compensation-dialog" role="dialog" aria-modal="true" aria-labelledby="editor-compensation-title">
+            <header><span><CircleDollarSign size={19} /></span><div><h3 id="editor-compensation-title">Pagamento de {compensationEditor.display_name}</h3><p>Defina quanto este editor recebe por vídeo concluído.</p></div><button disabled={saving} onClick={() => setCompensationEditor(null)} aria-label="Fechar"><X size={17} /></button></header>
+            <div className="editor-compensation-body">
+              <section className="editor-default-rate">
+                <div><strong>Valor padrão</strong><small>Usado para qualquer cliente que não tenha uma exceção.</small></div>
+                <label className="editor-rate-toggle"><input type="checkbox" checked={compensationDefaultEnabled} onChange={(event) => setCompensationDefaultEnabled(event.target.checked)} /><span><i /></span></label>
+                {compensationDefaultEnabled ? <div className="editor-rate-fields"><label><span>Moeda</span><select value={compensationDefaultCurrency} onChange={(event) => setCompensationDefaultCurrency(event.target.value as BillingCurrency)}><option value="BRL">Real (BRL)</option><option value="USD">Dólar (USD)</option></select></label><label><span>Por vídeo</span><div><b>{compensationDefaultCurrency === 'BRL' ? 'R$' : 'US$'}</b><input autoFocus inputMode="decimal" value={compensationDefaultAmount} onChange={(event) => setCompensationDefaultAmount(event.target.value)} placeholder="0,00" /></div></label></div> : <p className="editor-default-disabled">Sem valor geral: apenas os clientes configurados abaixo gerarão custo.</p>}
+              </section>
+
+              <section className="editor-client-rates">
+                <header><div><strong>Valores por cliente</strong><small>Estas regras têm prioridade sobre o valor padrão.</small></div><span>{compensationOverrides.length}</span></header>
+                <div className="editor-new-rate">
+                  <select value={newRateClientId} onChange={(event) => setNewRateClientId(event.target.value)} aria-label="Cliente"><option value="">Escolha o cliente</option>{clients.filter((client) => !compensationOverrides.some((rate) => rate.clientId === client.id)).map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select>
+                  <select value={newRateCurrency} onChange={(event) => setNewRateCurrency(event.target.value as BillingCurrency)} aria-label="Moeda"><option value="BRL">BRL</option><option value="USD">USD</option></select>
+                  <input inputMode="decimal" value={newRateAmount} onChange={(event) => setNewRateAmount(event.target.value)} placeholder="Valor" aria-label="Valor por vídeo" />
+                  <button type="button" onClick={addCompensationOverride} disabled={!newRateClientId}><Plus size={15} />Adicionar</button>
+                </div>
+                <div className="editor-rate-list">
+                  {compensationOverrides.map((rate, index) => <article key={rate.clientId}>
+                    <span>{clients.find((client) => client.id === rate.clientId)?.name.slice(0, 1).toUpperCase() ?? 'C'}</span>
+                    <strong>{clients.find((client) => client.id === rate.clientId)?.name ?? 'Cliente removido'}</strong>
+                    <select value={rate.currency} onChange={(event) => setCompensationOverrides((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, currency: event.target.value as BillingCurrency } : item))}><option value="BRL">BRL</option><option value="USD">USD</option></select>
+                    <input inputMode="decimal" value={rate.amount} onChange={(event) => setCompensationOverrides((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, amount: event.target.value } : item))} aria-label={`Valor para ${clients.find((client) => client.id === rate.clientId)?.name ?? 'cliente'}`} />
+                    <button type="button" onClick={() => setCompensationOverrides((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label="Remover valor personalizado"><Trash2 size={14} /></button>
+                  </article>)}
+                  {!compensationOverrides.length ? <p>Nenhuma exceção por cliente.</p> : null}
+                </div>
+              </section>
+              <div className="editor-compensation-info"><CheckCircle2 size={15} /><span>Ao concluir uma tarefa atribuída a este editor, o custo será registrado automaticamente. Alterações futuras não mudam valores já contabilizados.</span></div>
+            </div>
+            {error ? <div className="panel-error editor-compensation-error">{error}</div> : null}
+            <footer><button className="secondary-button" disabled={saving} onClick={() => setCompensationEditor(null)}>Cancelar</button><button className="primary-button" disabled={saving} onClick={() => void saveEditorCompensation()}>{saving ? <LoaderCircle className="spinner" size={15} /> : <Save size={15} />}Salvar pagamento</button></footer>
+          </section>
+        </div>
+      ) : null}
       {appDialog.host}
     </div>
   );
@@ -1222,6 +1387,11 @@ function translateTeamError(message: string) {
 
 function isValidInviteEmail(value: string) {
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value.trim());
+}
+
+function parsePositiveMoney(value: string) {
+  const parsed = Number(value.trim().replace(',', '.'));
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= 1_000_000 ? parsed : null;
 }
 
 async function edgeFunctionErrorMessage(error: unknown) {

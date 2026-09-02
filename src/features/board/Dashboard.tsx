@@ -1247,8 +1247,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           />
         ) : null}
         {view === 'clients' && canManagePlanning ? <ClientsView workspace={workspace} clients={clients} tasks={tasks} onChanged={() => loadBoard(true)} /> : null}
-        {view === 'team' ? <TeamView userId={user.id} workspace={workspace} members={liveMembers} tasks={tasks} onChanged={() => loadBoard(true)} onMemberProfile={setProfileMemberId} onMemberTasks={(member) => { setSearch(member.display_name); setView('board'); }} /> : null}
-        {view === 'finance' && workspace.role === 'owner' ? <FinanceView workspace={workspace} clients={clients} tasks={tasks} /> : null}
+        {view === 'team' ? <TeamView userId={user.id} workspace={workspace} members={liveMembers} clients={clients} tasks={tasks} onChanged={() => loadBoard(true)} onMemberProfile={setProfileMemberId} onMemberTasks={(member) => { setSearch(member.display_name); setView('board'); }} /> : null}
+        {view === 'finance' && workspace.role === 'owner' ? <FinanceView workspace={workspace} clients={clients} members={liveMembers} tasks={tasks} /> : null}
         {view === 'settings' ? <SettingsView user={user} workspace={workspace} tasks={tasks} currentAvailability={currentUserMember?.availability ?? 'offline'} requestedTab={settingsNavigation.tab} requestedTabToken={settingsNavigation.token} onDirtyChange={setSettingsDirty} onWorkspacesChanged={onWorkspacesChanged} onProfileChanged={async (profile) => {
           if (profile) setMembers((current) => current.map((member) => member.user_id === user.id ? {
             ...member,

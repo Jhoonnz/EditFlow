@@ -22,6 +22,7 @@ import {
   TrendingUp,
   Trash2,
   Video,
+  UsersRound,
   WalletCards,
   X,
 } from 'lucide-react';
@@ -46,14 +47,17 @@ import type {
   Earning,
   EarningEvent,
   EarningPayment,
+  EditorCostEntry,
   PaymentMethod,
   Task,
+  WorkspaceMember,
   WorkspaceSummary,
 } from '../workspace/types';
 
 type Props = {
   workspace: WorkspaceSummary;
   clients: Client[];
+  members: WorkspaceMember[];
   tasks: Task[];
 };
 
@@ -88,11 +92,12 @@ type BatchReceiveDraft = {
 type EarningHistoryStatus = 'all' | 'pending' | 'received';
 type EarningHistoryKind = 'all' | 'individual' | 'batch';
 
-export function FinanceView({ workspace, clients, tasks }: Props) {
+export function FinanceView({ workspace, clients, members, tasks }: Props) {
   const [settings, setSettings] = useState<ClientBillingSetting[]>([]);
   const [earnings, setEarnings] = useState<Earning[]>([]);
   const [events, setEvents] = useState<EarningEvent[]>([]);
   const [payments, setPayments] = useState<EarningPayment[]>([]);
+  const [editorCosts, setEditorCosts] = useState<EditorCostEntry[]>([]);
   const [rate, setRate] = useState<EditFlowUsdBrlRate | null>(null);
   const [cycleMonth, setCycleMonth] = useState(currentMonth());
   const [cycleStartDay, setCycleStartDay] = useState(1);
@@ -143,14 +148,15 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     const requestId = beginFinanceRequest();
     if (!quiet) setLoading(true);
     setError(null);
-    const [settingsResult, earningsResult, eventsResult, paymentsResult, workspaceCycleResult] = await Promise.all([
+    const [settingsResult, earningsResult, eventsResult, paymentsResult, editorCostsResult, workspaceCycleResult] = await Promise.all([
       fetchAllRows<ClientBillingSetting>(async (from, to) => await client.from('client_billing_settings').select('client_id, workspace_id, currency, pricing_model, amount_usd, bundle_size, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, created_at, updated_at').eq('workspace_id', workspace.id).order('created_at').range(from, to)),
       fetchAllRows<Earning>(async (from, to) => await client.from('earnings').select('id, workspace_id, client_id, source_type, description, item_count, currency, amount_usd, net_amount_usd, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, status, earned_at, received_at, exchange_rate_brl, amount_brl, payment_id, created_at, updated_at').eq('workspace_id', workspace.id).order('earned_at', { ascending: false }).range(from, to)),
       fetchAllRows<EarningEvent>(async (from, to) => await client.from('earning_events').select('id, workspace_id, client_id, task_id, task_title, completed_at, pricing_model, currency, amount_usd, bundle_size, payment_method, fee_percent, fee_fixed_usd, conversion_spread_percent, earning_id, created_at').eq('workspace_id', workspace.id).order('completed_at', { ascending: false }).range(from, to)),
       fetchAllRows<EarningPayment>(async (from, to) => await client.from('earning_payments').select('id, workspace_id, client_id, currency, payment_method, entry_count, item_count, gross_amount, estimated_net_amount, fee_percent, fee_fixed, conversion_spread_percent, received_amount_brl, effective_exchange_rate, period_start, period_end, received_at, created_by, created_at').eq('workspace_id', workspace.id).order('received_at', { ascending: false }).range(from, to)),
+      fetchAllRows<EditorCostEntry>(async (from, to) => await client.from('editor_cost_entries').select('id, workspace_id, task_id, editor_user_id, editor_name, client_id, task_title, currency, amount, rate_source, completed_at, created_at, updated_at').eq('workspace_id', workspace.id).order('completed_at', { ascending: false }).range(from, to)),
       client.from('workspaces').select('financial_cycle_start_day').eq('id', workspace.id).single(),
     ]);
-    const loadError = settingsResult.error ?? earningsResult.error ?? eventsResult.error ?? paymentsResult.error ?? workspaceCycleResult.error;
+    const loadError = settingsResult.error ?? earningsResult.error ?? eventsResult.error ?? paymentsResult.error ?? editorCostsResult.error ?? workspaceCycleResult.error;
     if (!isLatestFinanceRequest(requestId)) return;
     if (loadError) {
       setMigrationMissing(isMissingFinanceSchema(loadError.message));
@@ -164,6 +170,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     setEarnings((earningsResult.data ?? []).map(normalizeEarning));
     setEvents((eventsResult.data ?? []).map(normalizeEarningEvent));
     setPayments((paymentsResult.data ?? []).map(normalizeEarningPayment));
+    setEditorCosts((editorCostsResult.data ?? []).map(normalizeEditorCost));
     const loadedCycleDay = normalizeCycleStartDay(workspaceCycleResult.data?.financial_cycle_start_day);
     setCycleStartDay(loadedCycleDay);
     if (cycleWorkspaceRef.current !== workspace.id) {
@@ -192,6 +199,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'earnings', filter: `workspace_id=eq.${workspace.id}` }, scheduleReload)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'earning_events', filter: `workspace_id=eq.${workspace.id}` }, scheduleReload)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'earning_payments', filter: `workspace_id=eq.${workspace.id}` }, scheduleReload)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'editor_cost_entries', filter: `workspace_id=eq.${workspace.id}` }, scheduleReload)
       .subscribe();
     return () => {
       if (timer) clearTimeout(timer);
@@ -202,16 +210,10 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
   const cycleRange = useMemo(() => financialCycleRange(cycleMonth, cycleStartDay), [cycleMonth, cycleStartDay]);
   const cycleLabel = formatFinancialCycle(cycleRange);
   const cycleEarnings = useMemo(() => earnings.filter((earning) => isDateInRange(earning.earned_at, cycleRange)), [cycleRange, earnings]);
-  const usdEarnings = cycleEarnings.filter((earning) => earning.currency === 'USD');
-  const brlEarnings = cycleEarnings.filter((earning) => earning.currency === 'BRL');
-  const grossUsd = sum(usdEarnings.map((earning) => earning.amount_usd));
+  const cycleEditorCosts = useMemo(() => editorCosts.filter((cost) => isDateInRange(cost.completed_at, cycleRange)), [cycleRange, editorCosts]);
   const pendingEarnings = cycleEarnings.filter((earning) => earning.status === 'pending');
   const receivedEarnings = cycleEarnings.filter((earning) => earning.status === 'received');
   const pendingPaymentGroups = buildPendingPaymentGroups(pendingEarnings);
-  const netUsd = sum(receivedEarnings.filter((earning) => earning.currency === 'USD').map((earning) => earning.net_amount_usd))
-    + sum(pendingPaymentGroups.filter((group) => group.currency === 'USD').map((group) => group.net));
-  const netNativeBrl = sum(receivedEarnings.filter((earning) => earning.currency === 'BRL').map((earning) => earning.net_amount_usd))
-    + sum(pendingPaymentGroups.filter((group) => group.currency === 'BRL').map((group) => group.net));
   const receivedPaymentCount = new Set(receivedEarnings.flatMap((earning) => earning.payment_id ? [earning.payment_id] : [earning.id])).size;
   const receivedBrl = sum(receivedEarnings.map((earning) => earning.amount_brl ?? 0));
   const pendingNetBrl = totalPendingGroupsBrl(pendingPaymentGroups, (group) => group.net, rate);
@@ -220,7 +222,8 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
   const pendingFeeBrl = totalPendingGroupsBrl(pendingPaymentGroups, (group) => group.gross - group.net, rate);
   const feeBrl = receivedFeeBrl === null || pendingFeeBrl === null ? null : receivedFeeBrl + pendingFeeBrl;
   const expectedNetBrl = pendingNetBrl === null ? null : receivedBrl + pendingNetBrl;
-  const nativeNetSummary = [grossUsd ? formatUsd(netUsd) : '', netNativeBrl ? formatBrl(netNativeBrl) : ''].filter(Boolean).join(' + ');
+  const editorCostsBrl = totalEditorCostsBrl(cycleEditorCosts, rate);
+  const estimatedProfitBrl = expectedNetBrl === null || editorCostsBrl === null ? null : expectedNetBrl - editorCostsBrl;
   const clientSummaries = useMemo(() => clients.map((client) => {
     const clientEarnings = cycleEarnings.filter((earning) => earning.client_id === client.id);
     const setting = settings.find((item) => item.client_id === client.id);
@@ -235,11 +238,24 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
       setting,
       grossBrl: totalEarningsBrl(clientEarnings, (earning) => earning.amount_usd, rate),
       netBrl: totalNetEarningsBrl(clientEarnings, rate),
+      editorCostBrl: totalEditorCostsBrl(cycleEditorCosts.filter((cost) => cost.client_id === client.id), rate),
       itemCount: sum(clientEarnings.map((earning) => earning.item_count)),
       pendingItems: unallocated.length,
       pendingCurrencies,
     };
-  }).filter((summary) => summary.setting || summary.grossBrl || summary.pendingCurrencies.length), [clients, cycleEarnings, earnings, events, rate, settings]);
+  }).filter((summary) => summary.setting || summary.grossBrl || summary.editorCostBrl || summary.pendingCurrencies.length), [clients, cycleEarnings, cycleEditorCosts, earnings, events, rate, settings]);
+  const editorSummaries = useMemo(() => {
+    const identities = new Map<string, { userId: string | null; name: string; avatarUrl: string | null }>();
+    cycleEditorCosts.forEach((cost) => {
+      const key = cost.editor_user_id ?? `removed:${cost.editor_name}`;
+      const member = cost.editor_user_id ? members.find((item) => item.user_id === cost.editor_user_id) : null;
+      identities.set(key, { userId: cost.editor_user_id, name: member?.display_name ?? cost.editor_name, avatarUrl: member?.avatar_url ?? null });
+    });
+    return Array.from(identities.entries()).map(([key, identity]) => {
+      const costs = cycleEditorCosts.filter((cost) => (cost.editor_user_id ?? `removed:${cost.editor_name}`) === key);
+      return { ...identity, key, videos: costs.length, totalBrl: totalEditorCostsBrl(costs, rate), costs };
+    }).sort((left, right) => (right.totalBrl ?? 0) - (left.totalBrl ?? 0));
+  }, [cycleEditorCosts, members, rate]);
   const completedCycleTasks = useMemo(() => tasks.filter((task) => task.completed_at && isDateInRange(task.completed_at, cycleRange)), [cycleRange, tasks]);
   const deliveryIssues = useMemo(() => completedCycleTasks.flatMap((task) => {
     const event = events.find((item) => item.task_id === task.id);
@@ -451,11 +467,19 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
     setSyncing(true);
     setError(null);
     setSuccess(null);
-    const { data, error: syncError } = await supabase.rpc('sync_workspace_earnings', { target_workspace: workspace.id });
+    const [earningsSync, editorCostsSync] = await Promise.all([
+      supabase.rpc('sync_workspace_earnings', { target_workspace: workspace.id }),
+      supabase.rpc('sync_workspace_editor_costs', { target_workspace: workspace.id }),
+    ]);
     setSyncing(false);
+    const syncError = earningsSync.error ?? editorCostsSync.error;
     if (syncError) return setError(financeErrorMessage(syncError.message));
     await loadFinance(true);
-    setSuccess(Number(data) > 0 ? `${data} novo(s) lançamento(s) gerado(s).` : 'Tudo certo. Nenhum lançamento novo foi necessário.');
+    const earningCount = Number(earningsSync.data) || 0;
+    const costCount = Number(editorCostsSync.data) || 0;
+    setSuccess(earningCount + costCount > 0
+      ? `${earningCount} ganho(s) e ${costCount} custo(s) de edição foram sincronizados.`
+      : 'Tudo certo. Nenhum lançamento ou custo novo foi necessário.');
   };
 
   const batchDraftFor = (clientId: string, currency: BillingCurrency): BatchReceiveDraft | null => {
@@ -672,6 +696,8 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
           grossBrl,
           feesBrl: feeBrl,
           netBrl: expectedNetBrl,
+          editorCostsBrl,
+          profitBrl: estimatedProfitBrl,
           receivedBrl,
           pendingBrl: pendingNetBrl,
           entries: cycleEarnings.length,
@@ -725,7 +751,7 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
       <div className="finance-view finance-empty-state">
         <span><WalletCards size={25} /></span>
         <h2>Ative o módulo financeiro</h2>
-        <p>Execute as migrations financeiras pendentes, incluindo <strong>027_batch_earning_payments.sql</strong>, no SQL Editor do Supabase. Depois, volte aqui e tente novamente.</p>
+        <p>Execute as migrations financeiras pendentes, incluindo <strong>028_editor_compensation.sql</strong>, no SQL Editor do Supabase. Depois, volte aqui e tente novamente.</p>
         <button className="secondary-button" onClick={() => void loadFinance()}><RefreshCw size={15} />Tentar novamente</button>
       </div>
     );
@@ -736,8 +762,8 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
       <section className="finance-hero">
         <div className="finance-hero-copy">
           <p>VISÃO FINANCEIRA</p>
-          <h2>{expectedNetBrl === null ? 'Cotação indisponível' : formatBrl(expectedNetBrl)}</h2>
-          <span>Líquido estimado no ciclo de {cycleLabel}{nativeNetSummary ? ` · ${nativeNetSummary} nas moedas originais` : ''}</span>
+          <h2>{estimatedProfitBrl === null ? 'Cotação indisponível' : formatBrl(estimatedProfitBrl)}</h2>
+          <span>Lucro estimado após taxas e custos de edição · ciclo de {cycleLabel}</span>
         </div>
         <div
           className="finance-rate-card"
@@ -765,22 +791,35 @@ export function FinanceView({ workspace, clients, tasks }: Props) {
       <section className="finance-metrics">
         <article><span className="purple"><BadgeDollarSign size={18} /></span><div><small>Faturamento bruto</small><strong>{grossBrl === null ? '—' : formatBrl(grossBrl)}</strong><em>{cycleEarnings.length} lançamentos</em></div></article>
         <article><span className="orange"><ReceiptText size={18} /></span><div><small>Taxas estimadas</small><strong>{feeBrl === null ? '—' : `-${formatBrl(feeBrl)}`}</strong><em>USD e BRL consolidados</em></div></article>
-        <article><span className="blue"><CircleDollarSign size={18} /></span><div><small>Líquido estimado</small><strong>{expectedNetBrl === null ? '—' : formatBrl(expectedNetBrl)}</strong><em>{nativeNetSummary || 'Sem lançamentos'}</em></div></article>
+        <article><span className="red"><UsersRound size={18} /></span><div><small>Custos de edição</small><strong>{editorCostsBrl === null ? '—' : `-${formatBrl(editorCostsBrl)}`}</strong><em>{cycleEditorCosts.length} vídeos contabilizados</em></div></article>
+        <article><span className="blue"><CircleDollarSign size={18} /></span><div><small>Lucro estimado</small><strong>{estimatedProfitBrl === null ? '—' : formatBrl(estimatedProfitBrl)}</strong><em>líquido menos editores</em></div></article>
         <article><span className="green"><Banknote size={18} /></span><div><small>Recebido</small><strong>{formatBrl(receivedBrl)}</strong><em>{receivedPaymentCount} pagamentos</em></div></article>
       </section>
 
       <section className="finance-card client-earnings-card finance-client-summary">
           <header><span><WalletCards size={18} /></span><div><h3>Resumo por cliente</h3><p>Valores gerados no ciclo selecionado. Configure o pagamento ao criar ou editar um cliente.</p></div></header>
           <div className="client-earning-list">
-            {clientSummaries.map(({ client, setting, grossBrl: clientGrossBrl, netBrl: clientNetBrl, itemCount, pendingItems }) => (
+            {clientSummaries.map(({ client, setting, grossBrl: clientGrossBrl, netBrl: clientNetBrl, editorCostBrl: clientEditorCostBrl, itemCount, pendingItems }) => (
               <article key={client.id}>
                 <span className="finance-client-avatar">{client.youtube_thumbnail_url ? <img src={client.youtube_thumbnail_url} alt={`Canal de ${client.name}`} /> : client.name.slice(0,1).toUpperCase()}</span>
                 <div><strong>{client.name}</strong><small>{setting ? billingDescription(setting) : 'Sem configuração atual'}{setting?.pricing_model === 'bundle' && pendingItems ? ` · ${pendingItems}/${setting.bundle_size} no próximo pacote` : ''}</small></div>
-                <em>{clientNetBrl === null ? '—' : formatBrl(clientNetBrl)}<small>líquido · bruto {clientGrossBrl === null ? '—' : formatBrl(clientGrossBrl)} · {itemCount} vídeos</small></em>
+                <em>{clientNetBrl === null || clientEditorCostBrl === null ? '—' : formatBrl(clientNetBrl - clientEditorCostBrl)}<small>margem · líquido {clientNetBrl === null ? '—' : formatBrl(clientNetBrl)} · edição {clientEditorCostBrl === null ? '—' : formatBrl(clientEditorCostBrl)} · {itemCount} vídeos</small></em>
               </article>
             ))}
             {!clientSummaries.length ? <div className="finance-list-empty">Configure o primeiro cliente para começar a contabilizar as entregas.</div> : null}
           </div>
+      </section>
+
+      <section className="finance-card editor-cost-summary-card">
+        <header><span><UsersRound size={18} /></span><div><h3>Custos por editor</h3><p>Valores gerados automaticamente quando cada tarefa é concluída.</p></div></header>
+        <div className="editor-cost-summary-list">
+          {editorSummaries.map((summary) => <article key={summary.key}>
+            <span className="finance-editor-avatar">{summary.avatarUrl ? <img src={summary.avatarUrl} alt="" /> : summary.name.slice(0, 1).toUpperCase()}</span>
+            <div><strong>{summary.name}</strong><small>{summary.videos} {summary.videos === 1 ? 'vídeo concluído' : 'vídeos concluídos'} · valores preservados por entrega</small></div>
+            <em>{summary.totalBrl === null ? '—' : formatBrl(summary.totalBrl)}<small>{summarizeNativeEditorCosts(summary.costs)}</small></em>
+          </article>)}
+          {!editorSummaries.length ? <div className="finance-list-empty">Nenhum custo de edição neste ciclo. Configure os valores na página Equipe.</div> : null}
+        </div>
       </section>
 
       {(deliveryIssues.length || bundleProgress.length) ? <section className="finance-card finance-pending-card">
@@ -952,6 +991,15 @@ function normalizeEarningPayment(row: Record<string, unknown>) {
   } as EarningPayment;
 }
 
+function normalizeEditorCost(row: Record<string, unknown>) {
+  return {
+    ...row,
+    currency: (row.currency === 'BRL' ? 'BRL' : 'USD') as BillingCurrency,
+    amount: Number(row.amount),
+    rate_source: (row.rate_source === 'client' ? 'client' : 'default') as EditorCostEntry['rate_source'],
+  } as EditorCostEntry;
+}
+
 function normalizeEarningEvent(row: Record<string, unknown>) {
   return {
     ...row,
@@ -993,6 +1041,9 @@ function earningSourceLabel(source: Earning['source_type']) {
 
 function financeErrorMessage(message: string) {
   const normalized = message.toLowerCase();
+  if (normalized.includes('sync_workspace_editor_costs') || normalized.includes('editor_cost_entries') || normalized.includes('editor_compensation')) {
+    return 'Execute a migration 028_editor_compensation.sql no Supabase para ativar os custos automáticos dos editores.';
+  }
   if (normalized.includes('update_workspace_financial_cycle') || normalized.includes('financial_cycle_start_day')) {
     return 'Execute a migration 026_financial_cycles.sql no Supabase para configurar ciclos financeiros.';
   }
@@ -1010,7 +1061,7 @@ function financeErrorMessage(message: string) {
 
 function isMissingFinanceSchema(message: string) {
   const normalized = message.toLowerCase();
-  return normalized.includes('client_billing_settings') || normalized.includes('earning_events') || normalized.includes('earning_payments') || normalized.includes('payment_id') || normalized.includes('net_amount_usd') || normalized.includes('currency') || normalized.includes('payment_method') || normalized.includes('financial_cycle_start_day') || normalized.includes('schema cache');
+  return normalized.includes('client_billing_settings') || normalized.includes('earning_events') || normalized.includes('earning_payments') || normalized.includes('editor_cost_entries') || normalized.includes('editor_compensation') || normalized.includes('payment_id') || normalized.includes('net_amount_usd') || normalized.includes('currency') || normalized.includes('payment_method') || normalized.includes('financial_cycle_start_day') || normalized.includes('schema cache');
 }
 
 function currentMonth() {
@@ -1075,6 +1126,22 @@ function totalNetEarningsBrl(earnings: Earning[], rate: EditFlowUsdBrlRate | nul
     total += converted;
   }
   return total;
+}
+
+function totalEditorCostsBrl(costs: EditorCostEntry[], rate: EditFlowUsdBrlRate | null) {
+  let total = 0;
+  for (const cost of costs) {
+    if (cost.currency === 'BRL') total += cost.amount;
+    else if (rate) total += cost.amount * rate.rate;
+    else return null;
+  }
+  return total;
+}
+
+function summarizeNativeEditorCosts(costs: EditorCostEntry[]) {
+  const brl = sum(costs.filter((cost) => cost.currency === 'BRL').map((cost) => cost.amount));
+  const usd = sum(costs.filter((cost) => cost.currency === 'USD').map((cost) => cost.amount));
+  return [brl ? formatBrl(brl) : '', usd ? formatUsd(usd) : ''].filter(Boolean).join(' + ') || 'Sem custos';
 }
 
 type PendingPaymentGroup = {

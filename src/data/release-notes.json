@@ -1,5 +1,39 @@
 [
   {
+    "version": "0.1.57",
+    "date": "2026-09-02",
+    "title": "Custos de edição automatizados",
+    "summary": "O EditFlow agora contabiliza quanto cada editor recebe por vídeo e mostra o lucro realista de cada ciclo.",
+    "sections": [
+      {
+        "kind": "new",
+        "title": "Pagamento por editor",
+        "items": [
+          "O proprietário pode definir um valor padrão por vídeo para cada editor, em real ou dólar.",
+          "Clientes específicos podem ter valores personalizados que substituem o padrão do editor.",
+          "Ao concluir uma tarefa, o custo de edição é registrado automaticamente e preserva o valor vigente daquela entrega."
+        ]
+      },
+      {
+        "kind": "improved",
+        "title": "Ganhos e margem mais completos",
+        "items": [
+          "A visão financeira separa faturamento, taxas, custos de edição e lucro estimado.",
+          "O resumo por cliente mostra a margem após descontar o trabalho dos editores.",
+          "O relatório em PDF inclui custos de edição e lucro estimado do ciclo."
+        ]
+      },
+      {
+        "kind": "fixed",
+        "title": "Histórico financeiro seguro",
+        "items": [
+          "Alterar um valor futuro não reescreve custos que já foram contabilizados.",
+          "Reabrir uma tarefa remove o custo automático, e uma nova conclusão usa a configuração atual sem duplicar registros."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.1.56",
     "date": "2026-08-28",
     "title": "Recebimentos mais simples",

@@ -198,6 +198,8 @@ const isFinancialReport = (value: unknown): value is EditFlowFinancialReport => 
   if (!validReportNumber(totals.grossBrl, true)
     || !validReportNumber(totals.feesBrl, true)
     || !validReportNumber(totals.netBrl, true)
+    || !validReportNumber(totals.editorCostsBrl, true)
+    || !validReportNumber(totals.profitBrl, true)
     || !validReportNumber(totals.receivedBrl)
     || !validReportNumber(totals.pendingBrl, true)
     || !validReportNumber(totals.entries)) return false;
@@ -236,12 +238,15 @@ const financialReportHtml = (report: EditFlowFinancialReport) => {
     header p, header small { margin: 0; color: #807c8d; }
     .period { text-align: right; }
     .period strong { display: block; margin-bottom: 3px; color: #5e52bd; font-size: 13px; text-transform: capitalize; }
-    .summary { display: grid; grid-template-columns: repeat(5,1fr); gap: 8px; margin: 15px 0; }
+    .summary { display: grid; grid-template-columns: repeat(6,1fr); gap: 8px; margin: 15px 0; }
     .summary article { min-height: 62px; padding: 10px; border: 1px solid #e7e3ef; border-radius: 10px; background: linear-gradient(145deg,#faf9ff,#f5f4fa); }
     .summary span { display: block; margin-bottom: 7px; color: #8b8796; font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
     .summary strong { color: #35323f; font-size: 13px; }
     .summary article.net { border-color: #d8d1ff; background: linear-gradient(145deg,#f2efff,#eae7ff); }
     .summary article.net strong { color: #5546b6; }
+    .summary article.cost strong { color: #b34f5e; }
+    .summary article.profit { border-color: #cfe7d9; background: linear-gradient(145deg,#f0faf4,#e8f6ee); }
+    .summary article.profit strong { color: #347654; }
     table { width: 100%; border-collapse: separate; border-spacing: 0; overflow: hidden; border: 1px solid #e4e1e9; border-radius: 10px; }
     thead { display: table-header-group; }
     th { padding: 8px 9px; background: #f1eff5; color: #777280; font-size: 7.5px; text-align: left; text-transform: uppercase; letter-spacing: .45px; }
@@ -261,9 +266,10 @@ const financialReportHtml = (report: EditFlowFinancialReport) => {
     <section class="summary">
       <article><span>Faturamento bruto</span><strong>${escapeReportHtml(reportBrl(report.totals.grossBrl))}</strong></article>
       <article><span>Taxas estimadas</span><strong>${escapeReportHtml(reportBrl(report.totals.feesBrl))}</strong></article>
-      <article class="net"><span>Líquido do ciclo</span><strong>${escapeReportHtml(reportBrl(report.totals.netBrl))}</strong></article>
+      <article class="net"><span>Líquido dos clientes</span><strong>${escapeReportHtml(reportBrl(report.totals.netBrl))}</strong></article>
+      <article class="cost"><span>Custos de edição</span><strong>${escapeReportHtml(reportBrl(report.totals.editorCostsBrl))}</strong></article>
+      <article class="profit"><span>Lucro estimado</span><strong>${escapeReportHtml(reportBrl(report.totals.profitBrl))}</strong></article>
       <article><span>Já recebido</span><strong>${escapeReportHtml(reportBrl(report.totals.receivedBrl))}</strong></article>
-      <article><span>Pendente</span><strong>${escapeReportHtml(reportBrl(report.totals.pendingBrl))}</strong></article>
     </section>
     ${report.rows.length ? `<table><thead><tr><th>Cliente / lançamento</th><th>Data</th><th>Bruto original</th><th>Taxas</th><th>Líquido</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="empty">Nenhum lançamento registrado no período.</div>'}
     <footer><span>${report.totals.entries} lançamento(s) no período</span><span>${report.usdBrlRate ? `Cotação de referência: USD 1 = ${reportBrl(report.usdBrlRate)}` : 'Sem conversão USD/BRL disponível'} · Valores recebidos usam o valor real registrado.</span></footer>

@@ -75,6 +75,8 @@ type EditFlowFinancialReport = {
     grossBrl: number | null;
     feesBrl: number | null;
     netBrl: number | null;
+    editorCostsBrl: number | null;
+    profitBrl: number | null;
     receivedBrl: number;
     pendingBrl: number | null;
     entries: number;

@@ -136,6 +136,41 @@ export type ClientBillingSetting = {
   updated_at: string;
 };
 
+export type EditorCompensationSetting = {
+  workspace_id: string;
+  editor_user_id: string;
+  currency: BillingCurrency;
+  amount_per_video: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type EditorClientCompensationRate = {
+  workspace_id: string;
+  editor_user_id: string;
+  client_id: string;
+  currency: BillingCurrency;
+  amount_per_video: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type EditorCostEntry = {
+  id: string;
+  workspace_id: string;
+  task_id: string;
+  editor_user_id: string | null;
+  editor_name: string;
+  client_id: string | null;
+  task_title: string;
+  currency: BillingCurrency;
+  amount: number;
+  rate_source: 'default' | 'client';
+  completed_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type EarningStatus = 'pending' | 'received';
 
 export type Earning = {
