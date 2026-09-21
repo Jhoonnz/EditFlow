@@ -40,6 +40,7 @@ import {
   shiftMonthKey,
 } from '../../lib/financialCycle';
 import { estimateNetUsd, paymentFeeRule, paymentMethodLabel } from './paymentFees';
+import { receivableTotal, splitReceivables } from './receivables';
 import type {
   Client,
   ClientBillingSetting,
@@ -111,6 +112,7 @@ export function FinanceView({ workspace, clients, members, tasks }: Props) {
   const [actualReceivedBrl, setActualReceivedBrl] = useState('');
   const [individualReceivedDate, setIndividualReceivedDate] = useState(() => localDateInputValue(new Date()));
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyScope, setHistoryScope] = useState<'cycle' | 'previous'>('cycle');
   const [historyStatus, setHistoryStatus] = useState<EarningHistoryStatus>('all');
   const [historyClientId, setHistoryClientId] = useState('all');
   const [historyKind, setHistoryKind] = useState<EarningHistoryKind>('all');
@@ -211,7 +213,10 @@ export function FinanceView({ workspace, clients, members, tasks }: Props) {
   const cycleLabel = formatFinancialCycle(cycleRange);
   const cycleEarnings = useMemo(() => earnings.filter((earning) => isDateInRange(earning.earned_at, cycleRange)), [cycleRange, earnings]);
   const cycleEditorCosts = useMemo(() => editorCosts.filter((cost) => isDateInRange(cost.completed_at, cycleRange)), [cycleRange, editorCosts]);
-  const pendingEarnings = cycleEarnings.filter((earning) => earning.status === 'pending');
+  const receivables = useMemo(() => splitReceivables(earnings, cycleRange), [earnings, cycleRange]);
+  const pendingEarnings = receivables.cycle;
+  const cycleReceivable = receivableTotal(pendingEarnings, rate?.rate ?? null);
+  const previousReceivable = receivableTotal(receivables.previous, rate?.rate ?? null);
   const receivedEarnings = cycleEarnings.filter((earning) => earning.status === 'received');
   const pendingPaymentGroups = buildPendingPaymentGroups(pendingEarnings);
   const receivedPaymentCount = new Set(receivedEarnings.flatMap((earning) => earning.payment_id ? [earning.payment_id] : [earning.id])).size;
@@ -238,12 +243,14 @@ export function FinanceView({ workspace, clients, members, tasks }: Props) {
       setting,
       grossBrl: totalEarningsBrl(clientEarnings, (earning) => earning.amount_usd, rate),
       netBrl: totalNetEarningsBrl(clientEarnings, rate),
+      receivable: receivableTotal(clientEarnings, rate?.rate ?? null),
+      previousReceivable: receivableTotal(receivables.previous.filter((entry) => entry.client_id === client.id), rate?.rate ?? null),
       editorCostBrl: totalEditorCostsBrl(cycleEditorCosts.filter((cost) => cost.client_id === client.id), rate),
       itemCount: sum(clientEarnings.map((earning) => earning.item_count)),
       pendingItems: unallocated.length,
       pendingCurrencies,
     };
-  }).filter((summary) => summary.setting || summary.grossBrl || summary.editorCostBrl || summary.pendingCurrencies.length), [clients, cycleEarnings, cycleEditorCosts, earnings, events, rate, settings]);
+  }).filter((summary) => summary.setting || summary.grossBrl || summary.editorCostBrl || summary.pendingCurrencies.length), [clients, cycleEarnings, cycleEditorCosts, earnings, events, rate, settings, receivables.previous]);
   const editorSummaries = useMemo(() => {
     const identities = new Map<string, { userId: string | null; name: string; avatarUrl: string | null }>();
     cycleEditorCosts.forEach((cost) => {
@@ -304,7 +311,8 @@ export function FinanceView({ workspace, clients, members, tasks }: Props) {
     });
     return Array.from(groups.values()).filter((group) => group.earnings.length >= 2);
   }, [cycleEarnings]);
-  const historyEarnings = useMemo(() => cycleEarnings.filter((earning) => {
+  const historySource = historyScope === 'previous' ? receivables.previous : cycleEarnings;
+  const historyEarnings = useMemo(() => historySource.filter((earning) => {
     if (historyStatus !== 'all' && earning.status !== historyStatus) return false;
     if (historyClientId === 'unassigned' && earning.client_id !== null) return false;
     if (historyClientId !== 'all' && historyClientId !== 'unassigned' && earning.client_id !== historyClientId) return false;
@@ -313,7 +321,15 @@ export function FinanceView({ workspace, clients, members, tasks }: Props) {
     if (historyKind === 'individual' && (earning.status !== 'received' || isBatch)) return false;
     if (historyKind === 'batch' && (earning.status !== 'received' || !isBatch)) return false;
     return true;
-  }), [cycleEarnings, historyClientId, historyKind, historyStatus, paymentById]);
+  }), [historySource, historyClientId, historyKind, historyStatus, paymentById]);
+
+  const openEarningHistory = (scope: 'cycle' | 'previous' = 'cycle', status: EarningHistoryStatus = 'all', clientId = 'all') => {
+    setHistoryScope(scope);
+    setHistoryStatus(scope === 'previous' ? 'pending' : status);
+    setHistoryClientId(clientId);
+    setHistoryKind('all');
+    setHistoryOpen(true);
+  };
 
   const configureFinancialCycle = async () => {
     if (!supabase) return;
@@ -728,7 +744,9 @@ export function FinanceView({ workspace, clients, members, tasks }: Props) {
 
   const renderEarningRow = (earning: Earning) => {
     const client = clients.find((item) => item.id === earning.client_id);
-    const displayBrl = earningNetBrl(earning, rate);
+    const displayBrl = earning.status === 'pending'
+      ? receivableTotal([earning], rate?.rate ?? null).totalBrl
+      : earningNetBrl(earning, rate);
     const earningFee = earning.amount_usd - earning.net_amount_usd;
     const payment = earning.payment_id ? paymentById.get(earning.payment_id) : null;
     const isBatchPayment = Boolean(payment && payment.entry_count > 1);
@@ -736,7 +754,7 @@ export function FinanceView({ workspace, clients, members, tasks }: Props) {
       <article key={earning.id}>
         <div><strong>{client?.name || (earning.source_type === 'manual' ? 'Lançamento avulso' : 'Cliente removido')}<i className={`earning-source ${earning.source_type}`}>{earningSourceLabel(earning.source_type)}</i></strong><small>{earning.description} · {paymentMethodLabel(earning.payment_method)}{earning.source_type !== 'manual' ? ` · ${earning.item_count} ${earning.item_count === 1 ? 'vídeo' : 'vídeos'}` : ''}{isBatchPayment && payment ? ` · lote com ${payment.entry_count}` : ''}</small></div>
         <span>{formatCompactDate(earning.earned_at)}</span>
-        <div className="earning-value"><strong>{displayBrl === null ? '—' : formatBrl(displayBrl)}</strong><small>{earning.currency} · líquido {formatMoney(earning.net_amount_usd, earning.currency)} · bruto {formatMoney(earning.amount_usd, earning.currency)} · taxas {formatMoney(earningFee, earning.currency)}{earning.currency === 'USD' && earning.exchange_rate_brl ? ` · câmbio efetivo ${formatRate(earning.exchange_rate_brl)}` : ''}</small></div>
+        <div className="earning-value"><strong>{displayBrl === null ? formatMoney(earning.amount_usd, earning.currency) : formatBrl(displayBrl)}</strong><small>{earning.status === 'pending' ? 'A receber (bruto)' : 'Recebido (líquido)'} · {earning.currency} · líquido {formatMoney(earning.net_amount_usd, earning.currency)} · bruto {formatMoney(earning.amount_usd, earning.currency)} · taxas {formatMoney(earningFee, earning.currency)}{earning.currency === 'USD' && earning.exchange_rate_brl ? ` · câmbio efetivo ${formatRate(earning.exchange_rate_brl)}` : ''}</small></div>
         <div className="earning-row-actions">{earning.status === 'received'
           ? <button className="earning-status received" disabled={saving} onClick={() => void reopenEarning(earning)}><CheckCircle2 size={13} />{isBatchPayment ? 'Recebido em lote' : 'Recebido'}</button>
           : <button className="earning-status pending" disabled={saving} onClick={() => openIndividualReceive(earning)}><Clock3 size={13} />Marcar recebido</button>}{earning.source_type === 'manual' && !earning.payment_id ? <><button className="earning-icon-action" onClick={() => openManualEditor(earning)} aria-label="Editar lançamento"><Pencil size={13} /></button><button className="earning-icon-action danger" onClick={() => void deleteManualEarning(earning)} aria-label="Excluir lançamento"><Trash2 size={13} /></button></> : null}</div>
@@ -761,9 +779,13 @@ export function FinanceView({ workspace, clients, members, tasks }: Props) {
     <div className="finance-view">
       <section className="finance-hero">
         <div className="finance-hero-copy">
-          <p>VISÃO FINANCEIRA</p>
-          <h2>{estimatedProfitBrl === null ? 'Cotação indisponível' : formatBrl(estimatedProfitBrl)}</h2>
-          <span>Lucro estimado após taxas e custos de edição · ciclo de {cycleLabel}</span>
+          <p>A RECEBER NO CICLO</p>
+          <h2>{cycleReceivable.totalBrl === null ? 'Cotação indisponível' : formatBrl(cycleReceivable.totalBrl)}</h2>
+          <span>{cycleReceivable.count ? `${cycleReceivable.count} lançamento(s) ainda não pago(s)` : 'Nenhum pagamento pendente neste ciclo'} · {cycleLabel}</span>
+          <div className="finance-receivable-detail">
+            <small>Valor devido pelos clientes, antes das taxas e dos custos de edição.{cycleReceivable.usd > 0 ? ` ${formatNativeReceivable(cycleReceivable)} · conversão estimada.` : ''}</small>
+            <button type="button" onClick={() => openEarningHistory('cycle', 'pending')}><ListFilter size={14} />Ver valores a receber</button>
+          </div>
         </div>
         <div
           className="finance-rate-card"
@@ -788,22 +810,33 @@ export function FinanceView({ workspace, clients, members, tasks }: Props) {
       {error ? <div className="panel-error finance-error">{error}</div> : null}
       {success ? <div className="panel-success finance-success"><CheckCircle2 size={15} />{success}</div> : null}
 
+      {previousReceivable.count > 0 ? <section className="finance-previous-receivable" aria-label="Pendências de ciclos anteriores">
+        <Clock3 size={20} />
+        <div><strong>Também há valores a receber de ciclos anteriores</strong><span>{previousReceivable.count} lançamento(s) ainda pendente(s), fora do total do ciclo selecionado.</span></div>
+        <div className="previous-receivable-value"><strong>{previousReceivable.totalBrl === null ? formatNativeReceivable(previousReceivable) : formatBrl(previousReceivable.totalBrl)}</strong><small>{previousReceivable.usd > 0 ? 'Conversão estimada · antes das taxas' : 'Antes das taxas'}</small></div>
+        <button type="button" onClick={() => openEarningHistory('previous')}>Ver pendências<ChevronRight size={14} /></button>
+      </section> : null}
+
       <section className="finance-metrics">
-        <article><span className="purple"><BadgeDollarSign size={18} /></span><div><small>Faturamento bruto</small><strong>{grossBrl === null ? '—' : formatBrl(grossBrl)}</strong><em>{cycleEarnings.length} lançamentos</em></div></article>
+        <article><span className="purple"><BadgeDollarSign size={18} /></span><div><small>Gerado no ciclo</small><strong>{grossBrl === null ? '—' : formatBrl(grossBrl)}</strong><em>bruto · {cycleEarnings.length} lançamentos</em></div></article>
         <article><span className="orange"><ReceiptText size={18} /></span><div><small>Taxas estimadas</small><strong>{feeBrl === null ? '—' : `-${formatBrl(feeBrl)}`}</strong><em>USD e BRL consolidados</em></div></article>
         <article><span className="red"><UsersRound size={18} /></span><div><small>Custos de edição</small><strong>{editorCostsBrl === null ? '—' : `-${formatBrl(editorCostsBrl)}`}</strong><em>{cycleEditorCosts.length} vídeos contabilizados</em></div></article>
         <article><span className="blue"><CircleDollarSign size={18} /></span><div><small>Lucro estimado</small><strong>{estimatedProfitBrl === null ? '—' : formatBrl(estimatedProfitBrl)}</strong><em>líquido menos editores</em></div></article>
-        <article><span className="green"><Banknote size={18} /></span><div><small>Recebido</small><strong>{formatBrl(receivedBrl)}</strong><em>{receivedPaymentCount} pagamentos</em></div></article>
+        <article><span className="green"><Banknote size={18} /></span><div><small>Já recebido</small><strong>{formatBrl(receivedBrl)}</strong><em>líquido · {receivedPaymentCount} pagamentos</em></div></article>
       </section>
 
       <section className="finance-card client-earnings-card finance-client-summary">
-          <header><span><WalletCards size={18} /></span><div><h3>Resumo por cliente</h3><p>Valores gerados no ciclo selecionado. Configure o pagamento ao criar ou editar um cliente.</p></div></header>
+          <header><span><WalletCards size={18} /></span><div><h3>Resumo por cliente</h3><p>A receber mostra o saldo antes das taxas. A margem já desconta taxas e edição.</p></div></header>
           <div className="client-earning-list">
-            {clientSummaries.map(({ client, setting, grossBrl: clientGrossBrl, netBrl: clientNetBrl, editorCostBrl: clientEditorCostBrl, itemCount, pendingItems }) => (
-              <article key={client.id}>
+            {clientSummaries.map(({ client, setting, netBrl: clientNetBrl, editorCostBrl: clientEditorCostBrl, itemCount, pendingItems, receivable, previousReceivable: clientPrevious }) => (
+              <article key={client.id} className="client-receivable-row">
                 <span className="finance-client-avatar">{client.youtube_thumbnail_url ? <img src={client.youtube_thumbnail_url} alt={`Canal de ${client.name}`} /> : client.name.slice(0,1).toUpperCase()}</span>
                 <div><strong>{client.name}</strong><small>{setting ? billingDescription(setting) : 'Sem configuração atual'}{setting?.pricing_model === 'bundle' && pendingItems ? ` · ${pendingItems}/${setting.bundle_size} no próximo pacote` : ''}</small></div>
-                <em>{clientNetBrl === null || clientEditorCostBrl === null ? '—' : formatBrl(clientNetBrl - clientEditorCostBrl)}<small>margem · líquido {clientNetBrl === null ? '—' : formatBrl(clientNetBrl)} · edição {clientEditorCostBrl === null ? '—' : formatBrl(clientEditorCostBrl)} · {itemCount} vídeos</small></em>
+                <div className="client-receivable-values">
+                  <button type="button" className="client-receivable-button" onClick={() => openEarningHistory('cycle', 'pending', client.id)}><span>A receber no ciclo</span><strong>{receivable.totalBrl === null ? formatNativeReceivable(receivable) : formatBrl(receivable.totalBrl)}</strong><small>{receivable.count ? `${receivable.count} pendente(s) · ver` : 'Sem pendências no ciclo'}</small></button>
+                  <em>{clientNetBrl === null || clientEditorCostBrl === null ? '—' : formatBrl(clientNetBrl - clientEditorCostBrl)}<small>margem · {itemCount} vídeos</small></em>
+                </div>
+                {clientPrevious.count > 0 ? <div className="client-previous-receivable"><button type="button" onClick={() => openEarningHistory('previous', 'pending', client.id)}><Clock3 size={13} />Anteriores: {clientPrevious.totalBrl === null ? formatNativeReceivable(clientPrevious) : formatBrl(clientPrevious.totalBrl)}<ChevronRight size={13} /></button></div> : null}
               </article>
             ))}
             {!clientSummaries.length ? <div className="finance-list-empty">Configure o primeiro cliente para começar a contabilizar as entregas.</div> : null}
@@ -831,13 +864,13 @@ export function FinanceView({ workspace, clients, members, tasks }: Props) {
       </section> : null}
 
       <section className="finance-card earnings-history-card">
-        <header><span><CheckCircle2 size={18} /></span><div><h3>Lançamentos do ciclo</h3><p>Os seis lançamentos mais recentes. Abra a lista completa para consultar e filtrar.</p></div><div className="finance-entry-actions"><button className="finance-view-all" onClick={() => setHistoryOpen(true)}><ListFilter size={14} />Ver tudo</button><button className="finance-batch-entry" disabled={!batchEligibleGroups.length} title={!batchEligibleGroups.length ? 'São necessários dois lançamentos pendentes do mesmo cliente e moeda' : undefined} onClick={openBatchReceive}><Banknote size={14} />Receber em lote</button><button className="finance-add-entry" onClick={() => openManualEditor()}><Plus size={14} />Adicionar</button></div></header>
+        <header><span><CheckCircle2 size={18} /></span><div><h3>Lançamentos do ciclo</h3><p>Os seis lançamentos mais recentes. Abra a lista completa para consultar e filtrar.</p></div><div className="finance-entry-actions"><button className="finance-view-all" onClick={() => openEarningHistory()}><ListFilter size={14} />Ver tudo</button><button className="finance-batch-entry" disabled={!batchEligibleGroups.length} title={!batchEligibleGroups.length ? 'São necessários dois lançamentos pendentes do mesmo cliente e moeda' : undefined} onClick={openBatchReceive}><Banknote size={14} />Receber em lote</button><button className="finance-add-entry" onClick={() => openManualEditor()}><Plus size={14} />Adicionar</button></div></header>
         <div className="earnings-table">
           <div className="earnings-table-head"><span>Cliente / lançamento</span><span>Data</span><span>Valor</span><span>Status / ações</span></div>
           {recentCycleEarnings.map(renderEarningRow)}
           {!cycleEarnings.length ? <div className="finance-list-empty">Nenhum ganho foi gerado neste ciclo.</div> : null}
         </div>
-        {cycleEarnings.length > recentCycleEarnings.length ? <button className="finance-list-more" onClick={() => setHistoryOpen(true)}>Ver todos os {cycleEarnings.length} lançamentos</button> : null}
+        {cycleEarnings.length > recentCycleEarnings.length ? <button className="finance-list-more" onClick={() => openEarningHistory()}>Ver todos os {cycleEarnings.length} lançamentos</button> : null}
       </section>
 
       {manualEditor ? (
@@ -866,20 +899,20 @@ export function FinanceView({ workspace, clients, members, tasks }: Props) {
       {historyOpen ? (
         <div className="earning-history-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryOpen(false); }}>
           <section className="earning-history-dialog" role="dialog" aria-modal="true" aria-labelledby="earning-history-title">
-            <header><span><ReceiptText size={18} /></span><div><h3 id="earning-history-title">Todos os lançamentos</h3><p>{cycleLabel} · consulte pendências e pagamentos já recebidos.</p></div><button onClick={() => setHistoryOpen(false)} aria-label="Fechar"><X size={17} /></button></header>
+            <header><span><ReceiptText size={18} /></span><div><h3 id="earning-history-title">{historyScope === 'previous' ? 'Pendências de ciclos anteriores' : 'Lançamentos do ciclo'}</h3><p>{historyScope === 'previous' ? `Ainda não pagos · gerados antes de ${cycleRange.start.toLocaleDateString('pt-BR')}` : `${cycleLabel} · consulte pendências e pagamentos já recebidos.`}</p></div><button onClick={() => setHistoryOpen(false)} aria-label="Fechar"><X size={17} /></button></header>
             <div className="earning-history-filters">
-              <div className="earning-status-filter" aria-label="Filtrar por status">
+              {historyScope === 'cycle' ? <div className="earning-status-filter" aria-label="Filtrar por status">
                 {(['all', 'pending', 'received'] as EarningHistoryStatus[]).map((status) => <button key={status} className={historyStatus === status ? 'active' : ''} onClick={() => setHistoryStatus(status)}>{status === 'all' ? 'Todos' : status === 'pending' ? 'Pendentes' : 'Recebidos'}</button>)}
-              </div>
+              </div> : <span className="history-pending-label"><Clock3 size={14} />Somente pendentes</span>}
               <label><span>Cliente</span><select value={historyClientId} onChange={(event) => setHistoryClientId(event.target.value)}><option value="all">Todos os clientes</option><option value="unassigned">Lançamentos avulsos</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label>
-              <label><span>Recebimento</span><select value={historyKind} onChange={(event) => { const kind = event.target.value as EarningHistoryKind; setHistoryKind(kind); if (kind !== 'all') setHistoryStatus('received'); }}><option value="all">Individual e em lote</option><option value="individual">Somente individuais</option><option value="batch">Somente lotes</option></select></label>
+              {historyScope === 'cycle' ? <label><span>Recebimento</span><select value={historyKind} onChange={(event) => { const kind = event.target.value as EarningHistoryKind; setHistoryKind(kind); if (kind !== 'all') setHistoryStatus('received'); }}><option value="all">Individual e em lote</option><option value="individual">Somente individuais</option><option value="batch">Somente lotes</option></select></label> : null}
             </div>
             <div className="earnings-table earning-history-table">
               <div className="earnings-table-head"><span>Cliente / lançamento</span><span>Data</span><span>Valor</span><span>Status / ações</span></div>
               {historyEarnings.map(renderEarningRow)}
               {!historyEarnings.length ? <div className="finance-list-empty">Nenhum lançamento corresponde aos filtros selecionados.</div> : null}
             </div>
-            <footer><span>{historyEarnings.length} de {cycleEarnings.length} lançamentos</span><button className="secondary-button" onClick={() => setHistoryOpen(false)}>Fechar</button></footer>
+            <footer><span>{historyEarnings.length} de {historySource.length} lançamentos{historyStatus === 'pending' ? ` · a receber: ${formatReceivableTotal(historyEarnings, rate?.rate ?? null)} (antes das taxas)` : ''}</span><button className="secondary-button" onClick={() => setHistoryOpen(false)}>Fechar</button></footer>
           </section>
         </div>
       ) : null}
@@ -1092,6 +1125,15 @@ function formatBrl(value: number) {
 
 function formatMoney(value: number, currency: BillingCurrency) {
   return currency === 'BRL' ? formatBrl(value) : formatUsd(value);
+}
+
+function formatNativeReceivable(value: ReturnType<typeof receivableTotal>) {
+  return [value.brl ? formatBrl(value.brl) : '', value.usd ? formatUsd(value.usd) : ''].filter(Boolean).join(' + ') || formatBrl(0);
+}
+
+function formatReceivableTotal(entries: Earning[], usdRate: number | null) {
+  const total = receivableTotal(entries, usdRate);
+  return total.totalBrl === null ? formatNativeReceivable(total) : formatBrl(total.totalBrl);
 }
 
 function earningRateToBrl(earning: Earning, rate: EditFlowUsdBrlRate | null) {

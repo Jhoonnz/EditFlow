@@ -2989,6 +2989,51 @@ body { font-size: var(--text-body); line-height: 1.45; }
   }
 }
 
+/* Receivables keep client debt separate from production costs and profit. */
+.finance-receivable-detail { display: grid; justify-items: start; gap: 10px; margin-top: 10px; max-width: 620px; }
+.finance-receivable-detail small { color: #77717f; font-size: var(--text-caption); line-height: 1.5; }
+.finance-receivable-detail button,.finance-previous-receivable > button,.client-previous-receivable button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 0; border: 0; background: transparent; color: #6253ad; font: inherit; font-size: var(--text-caption); font-weight: 750; cursor: pointer; }
+.finance-receivable-detail button:hover,.finance-previous-receivable > button:hover,.client-previous-receivable button:hover { text-decoration: underline; }
+.finance-previous-receivable { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-bottom: 14px; padding: 14px 16px; border: 1px solid #e5d8b9; border-radius: 14px; background: #fffbf1; color: #976e28; }
+.finance-previous-receivable > svg { flex: 0 0 auto; }
+.finance-previous-receivable > div { display: grid; min-width: 0; gap: 4px; flex: 1 1 260px; }
+.finance-previous-receivable strong { font-size: var(--text-caption); }
+.finance-previous-receivable span,.finance-previous-receivable small { color: #88785d; font-size: var(--text-micro); line-height: 1.5; }
+.finance-previous-receivable > .previous-receivable-value { flex: 0 1 auto; text-align: right; }
+.previous-receivable-value strong { font-size: var(--text-body); }
+.finance-client-summary .client-receivable-values { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 16px; }
+.client-receivable-button { display: grid; gap: 4px; min-width: 125px; padding: 8px 10px; border: 1px solid #e4def4; border-radius: 10px; background: #f6f3fc; text-align: right; font: inherit; cursor: pointer; }
+.client-receivable-button:hover { border-color: #aea0d9; background: #efeafa; }
+.client-receivable-button > span { color: #6855a2; font-size: var(--text-caption); font-weight: 650; }
+.client-earning-list .client-receivable-button strong { color: #514080; white-space: normal; overflow-wrap: anywhere; }
+.client-earning-list .client-receivable-button small { color: #84759f; white-space: normal; }
+.client-previous-receivable { grid-column: 2 / -1; }
+.client-previous-receivable button { flex-wrap: wrap; text-align: left; font-size: var(--text-micro); }
+.history-pending-label { display: inline-flex; align-items: center; gap: 6px; padding-bottom: 10px; color: #8c672e; font-size: var(--text-caption); }
+.earning-history-dialog > footer > span { min-width: 0; line-height: 1.5; }
+:root[data-theme="dark"] .finance-receivable-detail small { color: #ada5b8; }
+:root[data-theme="dark"] .finance-receivable-detail button,
+:root[data-theme="dark"] .finance-previous-receivable > button,
+:root[data-theme="dark"] .client-previous-receivable button { color: #c3b6f9; }
+:root[data-theme="dark"] .finance-previous-receivable { border-color: #554833; background: #332f28; color: #e3bb7a; }
+:root[data-theme="dark"] .finance-previous-receivable span,
+:root[data-theme="dark"] .finance-previous-receivable small { color: #bcae97; }
+:root[data-theme="dark"] .client-receivable-button { border-color: #514560; background: #373042; }
+:root[data-theme="dark"] .client-receivable-button:hover { border-color: #8b78ab; background: #42374f; }
+:root[data-theme="dark"] .client-receivable-button > span,
+:root[data-theme="dark"] .client-earning-list .client-receivable-button strong { color: #d0c3f6; }
+:root[data-theme="dark"] .client-earning-list .client-receivable-button small { color: #afa2c1; }
+:root[data-theme="dark"] .history-pending-label { color: #d8b078; }
+@media (max-width: 1050px) {
+  .finance-client-summary .client-receivable-row { grid-template-columns: 36px minmax(0,1fr); }
+  .finance-client-summary .client-receivable-values { grid-column: 2 / -1; justify-content: space-between; }
+}
+@media (max-width: 520px) {
+  .finance-previous-receivable > .previous-receivable-value { text-align: left; }
+  .finance-client-summary .client-receivable-values { grid-column: 1 / -1; }
+  .finance-client-summary .client-receivable-values > em { white-space: normal; }
+}
+
 /* Batch payments — one transfer can settle several client deliveries. */
 .client-earning-list article {
   grid-template-columns: 36px minmax(0,1fr) auto;

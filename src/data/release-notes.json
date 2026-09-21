@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.1.58",
+    "date": "2026-09-21",
+    "title": "Valores a receber em destaque",
+    "summary": "A aba Ganhos destaca quanto ainda falta receber dos clientes, sem confundir esse saldo com o total gerado no ciclo.",
+    "sections": [
+      {
+        "kind": "new",
+        "title": "A receber por ciclo e cliente",
+        "items": [
+          "O destaque A receber no ciclo soma apenas os lançamentos pendentes e diminui ao registrar recebimentos individuais ou em lote.",
+          "O resumo de cada cliente mostra seu saldo pendente e permite consultar os lançamentos correspondentes.",
+          "Pendências de ciclos anteriores aparecem separadamente e continuam acessíveis para registrar o recebimento."
+        ]
+      },
+      {
+        "kind": "improved",
+        "title": "Totais mais claros",
+        "items": [
+          "Gerado no ciclo, Já recebido e A receber têm identificações distintas.",
+          "O saldo a receber representa o valor bruto devido pelo cliente: taxas e custos de edição continuam separados no cálculo do lucro.",
+          "Valores pendentes em dólar usam a cotação disponível como estimativa em reais; sem cotação, os valores são apresentados na moeda original."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.1.57",
     "date": "2026-09-02",
     "title": "Custos de edição automatizados",
