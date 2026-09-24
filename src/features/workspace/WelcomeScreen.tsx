@@ -104,9 +104,9 @@ export function WelcomeScreen({
       }
       const tasks = taskResult.data ?? [];
       const activeTasks = tasks.filter(isActiveTask);
-      const overdueTasks = activeTasks.filter((task) => task.due_at && new Date(task.due_at) < now);
+      const overdueTasks = activeTasks.filter((task) => !task.first_sent_at && task.due_at && new Date(task.due_at) < now);
       const dueSoonTasks = activeTasks.filter((task) => {
-        if (!task.due_at) return false;
+        if (!task.due_at || task.first_sent_at) return false;
         const dueDate = new Date(task.due_at);
         return dueDate >= now && dueDate <= soonLimit;
       });

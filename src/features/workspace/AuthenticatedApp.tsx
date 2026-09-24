@@ -291,6 +291,7 @@ export function AuthenticatedApp({ user }: Props) {
 
   return <>
     <Dashboard
+      key={`${user.id}:${activeWorkspace.id}`}
       user={user}
       workspace={activeWorkspace}
       workspaces={workspaces}

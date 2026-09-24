@@ -916,9 +916,9 @@ export function SettingsView({
   const userTasks = tasks.filter((task) => task.assignee_id === user.id);
   const activeUserTasks = userTasks.filter((task) => !task.completed_at);
   const completedUserTasks = userTasks.filter((task) => Boolean(task.completed_at));
-  const overdueUserTasks = activeUserTasks.filter((task) => task.due_at && new Date(task.due_at).getTime() < Date.now());
+  const overdueUserTasks = activeUserTasks.filter((task) => !task.first_sent_at && task.due_at && new Date(task.due_at).getTime() < Date.now());
   const nextDeadline = activeUserTasks
-    .filter((task) => Boolean(task.due_at))
+    .filter((task) => !task.first_sent_at && Boolean(task.due_at))
     .sort((left, right) => new Date(left.due_at!).getTime() - new Date(right.due_at!).getTime())[0];
   const availableReleaseNotes = releaseNotesUpTo(appVersion);
 

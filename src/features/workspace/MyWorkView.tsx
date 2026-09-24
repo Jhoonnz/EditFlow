@@ -15,6 +15,7 @@ import {
   Users,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { deliveryLabel } from '../../lib/taskStatus';
 import type {
   AppNotification,
   BoardColumn,
@@ -255,6 +256,7 @@ export function MyWorkView({
 }
 
 function taskDueTime(task: Task) {
+  if (task.first_sent_at) return Number.POSITIVE_INFINITY;
   return task.due_at ? startOfDay(new Date(task.due_at)).getTime() : Number.POSITIVE_INFINITY;
 }
 
@@ -266,6 +268,8 @@ function taskFocusScore(task: Task, todayStart: number) {
 }
 
 function dueLabel(task: Task, now: Date) {
+  const sentLabel = deliveryLabel(task);
+  if (sentLabel) return sentLabel;
   if (!task.due_at) return 'Sem prazo';
   const distance = Math.round((taskDueTime(task) - startOfDay(now).getTime()) / 86_400_000);
   if (distance < 0) return `${Math.abs(distance)}d atrasada`;

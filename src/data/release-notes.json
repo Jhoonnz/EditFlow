@@ -1,5 +1,45 @@
 [
   {
+    "version": "0.1.59",
+    "date": "2026-09-24",
+    "title": "Kanban mais seguro e prazo pelo primeiro envio",
+    "summary": "Acompanhe a entrega ao cliente sem acumular atraso durante revisões, com novas ferramentas e mais segurança nas alterações do quadro.",
+    "sections": [
+      {
+        "kind": "new",
+        "title": "Envio para revisão do cliente",
+        "items": [
+          "O proprietário pode ativar Envio para revisão do cliente nas automações de uma coluna não final.",
+          "A primeira entrada registra o envio, o prazo original e se foi entregue no prazo, considerando o dia no horário de Brasília.",
+          "O card mostra Aguardando cliente. Retornos para alterações e reenvios preservam o primeiro envio, sem pedir nova data nem acumular atraso.",
+          "Reenvios ficam no histórico. Ganhos e custos de edição continuam vinculados à conclusão, não ao envio para revisão.",
+          "A regra vale para novas entradas na coluna: não altera retroativamente tarefas que já estavam nela."
+        ]
+      },
+      {
+        "kind": "new",
+        "title": "Mais controle da produção",
+        "items": [
+          "Filtros rápidos de atrasadas, entrega hoje, sem responsável, urgentes e bloqueadas.",
+          "Duplicação de tarefas com links opcionais e indicação de impedimento.",
+          "Limite sugerido de tarefas por coluna e opção de desfazer movimentações recentes.",
+          "Histórico carregado sob demanda e exibição progressiva para colunas com muitos cards."
+        ]
+      },
+      {
+        "kind": "fixed",
+        "title": "Sincronização e histórico protegidos",
+        "items": [
+          "Movimentações e edições verificam a versão da tarefa para evitar sobrescrever mudanças feitas em outra sessão.",
+          "Novas colunas entram antes da etapa final, preservando conclusões e tarefas arquivadas.",
+          "Correções no registro dos custos de edição e proteção contra exclusão de tarefas com lançamentos financeiros.",
+          "Tarefas enviadas ao cliente deixam de aparecer nos alertas de atraso ativo; a pontualidade do primeiro envio permanece no histórico.",
+          "Melhorias de legibilidade, foco dos modais e proteção de rascunhos."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.1.58",
     "date": "2026-09-21",
     "title": "Valores a receber em destaque",

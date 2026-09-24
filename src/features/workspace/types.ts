@@ -56,9 +56,11 @@ export type BoardColumn = {
   color: string | null;
   is_completion: boolean;
   automation_register_start: boolean;
+  automation_client_review: boolean;
   automation_required_link_category: TaskLinkCategory | null;
   automation_notify_admins: boolean;
   automation_inactivity_days: number | null;
+  wip_limit: number | null;
 };
 
 export type Client = {
@@ -110,8 +112,12 @@ export type Task = {
   completed_at: string | null;
   started_at: string | null;
   started_by: string | null;
+  first_sent_at: string | null;
+  first_sent_due_at: string | null;
+  first_sent_late: boolean | null;
   archived_at: string | null;
   archived_by: string | null;
+  blocked_reason: string | null;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -252,6 +258,7 @@ export type TaskLink = {
 };
 
 export type TaskDraft = {
+  blocked_reason: string;
   title: string;
   description: string;
   priority: TaskPriority;
@@ -283,7 +290,7 @@ export type TaskActivity = {
   workspace_id: string;
   actor_id: string | null;
   action: TaskActivityAction;
-  details: Record<string, string | null>;
+  details: Record<string, string | number | boolean | null>;
   created_at: string;
 };
 

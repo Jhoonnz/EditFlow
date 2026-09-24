@@ -44,8 +44,9 @@ import { useLatestRequest } from '../../lib/asyncRequest';
 import { fetchAllRows } from '../../lib/paginatedQuery';
 import { useDialogFocus } from '../../lib/useDialogFocus';
 import { useAppDialog } from '../../components/AppDialog';
-import { isVisibleDeadline, taskDeadlineDistance } from '../../lib/taskStatus';
+import { deliveryLabel, isVisibleDeadline, taskDeadlineDistance } from '../../lib/taskStatus';
 import { calculateDueDate, calendarDayOffset } from '../../lib/taskTemplate';
+import { matchesTaskFilter, normalizeTaskUrl, taskDraftChanges, type QuickTaskFilter } from '../../lib/kanban';
 import { ChatPanel, type ChatOpenRequest } from '../chat/ChatPanel';
 import { FinanceView } from '../finance/FinanceView';
 import { ClientsView, SettingsView, TeamView, type SettingsTab } from '../workspace/WorkspaceViews';
@@ -90,6 +91,7 @@ type ClientTaskTemplateDraft = Pick<ClientTaskTemplate,
 >;
 
 const emptyDraft: TaskDraft = {
+  blocked_reason: '',
   title: '',
   description: '',
   priority: 'normal',
@@ -132,6 +134,11 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [quickFilter, setQuickFilter] = useState<QuickTaskFilter>('all');
+  const [columnDisplayLimits, setColumnDisplayLimits] = useState<Record<string, number>>({});
+  const movementBusy = useRef(false);
+  const [movingTask, setMovingTask] = useState(false);
+  const [undoMove, setUndoMove] = useState<{ task: Task; columnId: string; beforeId: string | null } | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(navigator.onLine ? 'connecting' : 'offline');
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [settingsNavigation, setSettingsNavigation] = useState<{ tab: SettingsTab; token: number }>({ tab: 'general', token: 0 });
@@ -154,6 +161,9 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [workspaceDialogError, setWorkspaceDialogError] = useState<string | null>(null);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showCompletedTasks, setShowCompletedTasks] = useState(false);
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [archiveRetry, setArchiveRetry] = useState(0);
   const [archivingCompletedTasks, setArchivingCompletedTasks] = useState(false);
   const [restoringTaskId, setRestoringTaskId] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
@@ -317,7 +327,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     const currentBoard = boardRow as Board;
     const [columnResult, taskResult, clientResult, membershipResult, notificationResult] = await Promise.all([
       fetchAllRows<BoardColumn>(async (from, to) => await client.from('columns').select('*').eq('board_id', currentBoard.id).order('position').range(from, to)),
-      fetchAllRows<Task>(async (from, to) => await client.from('tasks').select('*').eq('board_id', currentBoard.id).order('position').range(from, to)),
+      fetchAllRows<Task>(async (from, to) => await client.from('tasks').select('*').eq('board_id', currentBoard.id).is('archived_at', null).order('position').order('id').range(from, to)),
       fetchAllRows<Client>(async (from, to) => await client.from('clients').select('*').eq('workspace_id', workspace.id).order('name').range(from, to)),
       supabase.from('workspace_members').select('user_id, role').eq('workspace_id', workspace.id),
       supabase.from('notifications').select('*').eq('workspace_id', workspace.id).eq('user_id', user.id).order('created_at', { ascending: false }).limit(notificationLimitRef.current + 1),
@@ -378,7 +388,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     }));
     let nextLinks: TaskLink[] = [];
     if (nextTasks.length) {
-      const taskIds = nextTasks.map((task) => task.id);
+      // Archived attachments are loaded only when their task is opened.
+      const taskIds = nextTasks.filter((task) => !task.archived_at).map((task) => task.id);
       for (let start = 0; start < taskIds.length; start += 100) {
         const taskIdBatch = taskIds.slice(start, start + 100);
         const linkResult = await fetchAllRows<TaskLink>(async (from, to) => await client
@@ -401,7 +412,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 
     setBoard(currentBoard);
     setColumns(columnResult.data ?? []);
-    setTasks(nextTasks);
+    setTasks((current) => [...nextTasks, ...current.filter((task) => task.archived_at && task.board_id === currentBoard.id && !nextTasks.some((active) => active.id === task.id))]);
     setClients(clientResult.data ?? []);
     setMembers(nextMembers);
     setLinks(nextLinks);
@@ -422,11 +433,12 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 
   const assignTask = useCallback(async (taskId: string, assigneeId: string | null) => {
     if (!supabase || !canManagePlanning) return false;
-    setTasks((current) => current.map((task) => task.id === taskId ? { ...task, assignee_id: assigneeId } : task));
-    const { error: assignmentError } = await supabase.from('tasks').update({ assignee_id: assigneeId }).eq('id', taskId);
-    if (assignmentError) {
-      setError(assignmentError.message);
+    const original = tasksRef.current.find((task) => task.id === taskId);
+    if (!original) return false;
+    const { data, error: assignmentError } = await supabase.from('tasks').update({ assignee_id: assigneeId }).eq('id', taskId).eq('updated_at', original.updated_at).select('id').maybeSingle();
+    if (assignmentError || !data) {
       await loadBoard(true);
+      setError(assignmentError?.message ?? 'A tarefa mudou em outra sessão. Confira o responsável e tente novamente.');
       return false;
     }
     await loadBoard(true);
@@ -437,6 +449,24 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     void loadBoard();
     return cancelBoardRequests;
   }, [cancelBoardRequests, loadBoard]);
+
+  // History is fetched only when requested or when a summary screen needs it.
+  useEffect(() => {
+    if (!supabase || !board || (!showCompletedTasks && view === 'board')) return;
+    const client = supabase;
+    let cancelled = false;
+    setArchiveLoading(true);
+    setArchiveError(null);
+    void fetchAllRows<Task>(async (from, to) => await client.from('tasks').select('*').eq('board_id', board.id)
+      .not('archived_at', 'is', null).order('archived_at', { ascending: false }).order('id').range(from, to))
+      .then((result) => {
+        if (cancelled) return;
+        if (result.error) setArchiveError(result.error.message);
+        else setTasks((current) => [...current.filter((task) => !task.archived_at), ...(result.data ?? [])]);
+      }).catch(() => { if (!cancelled) setArchiveError('Não foi possível carregar o histórico.'); })
+      .finally(() => { if (!cancelled) setArchiveLoading(false); });
+    return () => { cancelled = true; };
+  }, [board?.id, showCompletedTasks, view, archiveRetry]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -718,15 +748,15 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const completionColumn = columns.find((column) => column.is_completion) ?? columns.at(-1) ?? null;
 
   const filteredTasks = useMemo(() => {
-    const term = search.trim().toLocaleLowerCase('pt-BR');
-    const activeTasks = tasks.filter((task) => !task.archived_at);
+    const term = normalizeText(search.trim());
+    const activeTasks = tasks.filter((task) => !task.archived_at && matchesTaskFilter(task, quickFilter));
     if (!term) return activeTasks;
     return activeTasks.filter((task) => {
       const client = clients.find((item) => item.id === task.client_id);
       const assignee = liveMembers.find((item) => item.user_id === task.assignee_id);
-      return `${task.title} ${task.description} ${client?.name ?? ''} ${assignee?.display_name ?? ''}`.toLocaleLowerCase('pt-BR').includes(term);
+      return normalizeText(`${task.title} ${task.description} ${client?.name ?? ''} ${assignee?.display_name ?? ''}`).includes(term);
     });
-  }, [clients, liveMembers, search, tasks]);
+  }, [clients, liveMembers, search, tasks, quickFilter]);
 
   const tasksByColumn = useMemo(() => {
     const grouped = new Map<string, Task[]>();
@@ -739,53 +769,54 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   }, [columns, filteredTasks]);
 
   const moveTask = async (taskId: string, targetColumnId: string, beforeTaskId: string | null) => {
-    if (!supabase || !board) return;
-    const storedTasks = tasks;
-    const archivedTasks = storedTasks.filter((task) => task.archived_at);
-    const originalTasks = storedTasks.filter((task) => !task.archived_at);
-    const movingTask = originalTasks.find((item) => item.id === taskId);
-    if (!movingTask || beforeTaskId === taskId) return;
-
-    const grouped = new Map<string, Task[]>();
-    columns.forEach((column) => grouped.set(column.id, []));
-    originalTasks
-      .filter((item) => item.id !== taskId)
-      .slice()
-      .sort((first, second) => Number(first.position) - Number(second.position))
-      .forEach((item) => grouped.get(item.column_id)?.push(item));
-
-    const targetTasks = grouped.get(targetColumnId);
-    if (!targetTasks) return;
-    const insertionIndex = beforeTaskId
-      ? targetTasks.findIndex((item) => item.id === beforeTaskId)
-      : targetTasks.length;
-    targetTasks.splice(insertionIndex < 0 ? targetTasks.length : insertionIndex, 0, { ...movingTask, column_id: targetColumnId });
-
-    const orderedById = new Map<string, Task>();
-    grouped.forEach((columnTasks, columnId) => {
-      columnTasks.forEach((item, index) => {
-        orderedById.set(item.id, { ...item, column_id: columnId, position: (index + 1) * 1000 });
-      });
-    });
-    const nextTasks = originalTasks.map((item) => orderedById.get(item.id) ?? item);
-    const orderChanged = nextTasks.some((item, index) => (
-      item.column_id !== originalTasks[index].column_id
-      || Number(item.position) !== Number(originalTasks[index].position)
-    ));
-    if (!orderChanged) return;
-
-    setTasks([...nextTasks, ...archivedTasks]);
+    if (!supabase || !board || movementBusy.current) return;
+    const moving = tasksRef.current.find((item) => item.id === taskId);
+    if (!moving || moving.archived_at || beforeTaskId === taskId) return;
+    const siblings = tasksRef.current.filter((item) => !item.archived_at && item.column_id === moving.column_id)
+      .sort((a, b) => Number(a.position) - Number(b.position) || a.id.localeCompare(b.id));
+    const previousNext = siblings[siblings.findIndex((item) => item.id === taskId) + 1]?.id ?? null;
+    movementBusy.current = true;
+    setMovingTask(true);
     setError(null);
-    const { error: reorderError } = await supabase.rpc('reorder_tasks', {
-      target_board: board.id,
-      ordered_items: nextTasks.map((item) => ({ id: item.id, column_id: item.column_id, position: item.position })),
-    });
-    if (reorderError) {
-      setTasks(storedTasks);
-      setError(reorderError.message);
+    try {
+      const { data, error: moveError } = await supabase.rpc('move_task_safely', {
+        target_task: taskId, target_column: targetColumnId, before_task: beforeTaskId, expected_updated_at: moving.updated_at,
+      });
+      if (moveError) throw moveError;
+      const saved = data as Task;
+      tasksRef.current = tasksRef.current.map((item) => item.id === taskId ? saved : item);
+      setTasks(tasksRef.current);
+      setUndoMove({ task: saved, columnId: moving.column_id, beforeId: previousNext });
+    } catch (moveError) {
       await loadBoard(true);
+      setError(readErrorMessage(moveError, 'Não foi possível mover a tarefa.'));
+    } finally {
+      movementBusy.current = false;
+      setMovingTask(false);
     }
   };
+
+  const undoTaskMove = async () => {
+    if (!supabase || !undoMove || movementBusy.current) return;
+    movementBusy.current = true;
+    setMovingTask(true);
+    try {
+      const { error: undoError } = await supabase.rpc('move_task_safely', {
+        target_task: undoMove.task.id, target_column: undoMove.columnId,
+        before_task: undoMove.beforeId, expected_updated_at: undoMove.task.updated_at,
+      });
+      if (undoError) throw undoError;
+      await loadBoard(true);
+      setUndoMove(null);
+    } catch (undoError) { setError(readErrorMessage(undoError, 'Não foi possível desfazer.')); }
+    finally { movementBusy.current = false; setMovingTask(false); }
+  };
+
+  useEffect(() => {
+    if (!undoMove) return;
+    const timer = window.setTimeout(() => setUndoMove(null), 15_000);
+    return () => window.clearTimeout(timer);
+  }, [undoMove]);
 
   const archiveCompletedTasks = async () => {
     if (!supabase || !board || !completionColumn || !canManagePlanning || archivingCompletedTasks) return;
@@ -856,6 +887,10 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     const targetIndex = nextColumns.findIndex((column) => column.id === targetColumnId);
     if (targetIndex < 0) return;
     nextColumns.splice(targetIndex + (edge === 'after' ? 1 : 0), 0, movingColumn);
+    if (nextColumns.at(-1)?.id !== completionColumn?.id) {
+      setError('Mantenha Finalizados na última posição para preservar o histórico.');
+      return;
+    }
     const positionedColumns = nextColumns.map((column, index) => ({ ...column, position: (index + 1) * 1000 }));
     setColumns(positionedColumns);
     setError(null);
@@ -882,6 +917,16 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
 
   const unreadNotifications = inboxNotifications.filter((notification) => !notification.read_at);
 
+  const openTaskById = useCallback(async (taskId: string) => {
+    if (!supabase) return;
+    const { data, error: taskError } = await supabase.from('tasks').select('*').eq('id', taskId).eq('workspace_id', workspace.id).maybeSingle();
+    if (taskError || !data) { setError(taskError?.message ?? 'Tarefa removida ou sem acesso.'); return; }
+    const found = data as Task;
+    setTasks((current) => [...current.filter((task) => task.id !== found.id), found]);
+    setView('board');
+    setEditor({ mode: 'edit', task: found });
+  }, [workspace.id]);
+
   const openInboxNotification = async (notification: AppNotification) => {
     if (notification.conversation_id) {
       setChatRequest({ token: Date.now(), conversationId: notification.conversation_id });
@@ -889,11 +934,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
     if (notification.type === 'invite_accepted') {
       setView('team');
     }
-    const notificationTask = tasks.find((task) => task.id === notification.task_id);
-    if (notificationTask) {
-      setView('board');
-      setEditor({ mode: 'edit', task: notificationTask });
-    }
+    if (notification.task_id) await openTaskById(notification.task_id);
     setShowNotifications(false);
     if (!supabase || notification.read_at) return;
     const readAt = new Date().toISOString();
@@ -940,12 +981,8 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
       return;
     }
 
-    const notificationTask = tasks.find((task) => task.id === target.taskId);
-    if (notificationTask) {
-      setView('board');
-      setEditor({ mode: 'edit', task: notificationTask });
-    }
-  }), [inboxNotifications, onWorkspaceChange, tasks, workspace.id]);
+    if (target.taskId) void openTaskById(target.taskId);
+  }), [inboxNotifications, onWorkspaceChange, openTaskById, workspace.id]);
 
   useEffect(() => {
     const storedTarget = window.sessionStorage.getItem('editflow:pending-notification');
@@ -959,15 +996,13 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         setChatRequest({ token: Date.now(), conversationId: target.conversationId });
         return;
       }
-      const notificationTask = tasks.find((task) => task.id === target.taskId);
-      if (!notificationTask) return;
+      if (loading) return;
       window.sessionStorage.removeItem('editflow:pending-notification');
-      setView('board');
-      setEditor({ mode: 'edit', task: notificationTask });
+      if (target.taskId) void openTaskById(target.taskId);
     } catch {
       window.sessionStorage.removeItem('editflow:pending-notification');
     }
-  }, [tasks, workspace.id]);
+  }, [loading, openTaskById, workspace.id]);
 
   useEffect(() => {
     if (!startupAction || loading) return;
@@ -987,13 +1022,10 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
       return;
     }
     if (startupAction.kind === 'task') {
-      const targetTask = tasks.find((task) => task.id === startupAction.taskId);
-      if (!targetTask) return;
-      setView('board');
-      setEditor({ mode: 'edit', task: targetTask });
+      void openTaskById(startupAction.taskId);
     }
     onStartupActionHandled();
-  }, [loading, onStartupActionHandled, startupAction, tasks]);
+  }, [loading, onStartupActionHandled, openTaskById, startupAction]);
 
   if (loading) {
     return <main className="app-loading"><LoaderCircle className="spinner" size={26} /></main>;
@@ -1080,6 +1112,11 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           </div>
         </div> : null}
 
+        {view === 'board' ? <nav className="board-quick-filters" aria-label="Filtros de tarefas">
+          {([['all','Todas'],['overdue','Atrasadas'],['today','Entrega hoje'],['unassigned','Sem responsável'],['urgent','Urgentes'],['blocked','Bloqueadas']] as const).map(([value,label]) => <button type="button" key={value} aria-pressed={quickFilter === value} className={quickFilter === value ? 'active' : ''} onClick={() => setQuickFilter(value)}>{label}</button>)}
+          {movingTask ? <span role="status"><LoaderCircle size={14} className="spin" />Salvando movimento…</span> : null}
+        </nav> : null}
+        {undoMove ? <div className="board-undo" role="status"><span>Tarefa movida: {undoMove.task.title}</span><button type="button" disabled={movingTask} onClick={() => void undoTaskMove()}>Desfazer</button><button type="button" aria-label="Dispensar aviso" onClick={() => setUndoMove(null)}><X size={14} /></button></div> : null}
         {error ? <div className="board-error"><span>{error}</span><button onClick={() => void loadBoard()}>Tentar novamente</button></div> : null}
 
         {view === 'home' ? <MyWorkView
@@ -1104,12 +1141,13 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           {columns.map((column) => {
             const columnTasks = tasksByColumn.get(column.id) ?? [];
             const isCompletionColumn = column.id === completionColumn?.id;
+            const workInColumn = tasks.filter((task) => !task.archived_at && !task.completed_at && task.column_id === column.id).length;
             const activeCompletedCount = isCompletionColumn
               ? tasks.filter((task) => task.column_id === column.id && task.completed_at && !task.archived_at).length
               : 0;
             const visibleColumnTasks = isCompletionColumn
               ? columnTasks.slice().sort((first, second) => completedTaskTime(second) - completedTaskTime(first)).slice(0, 10)
-              : columnTasks;
+              : columnTasks.slice(0, columnDisplayLimits[column.id] ?? 50);
             return (
               <section
                 className={`kanban-column ${dropColumnId === column.id ? 'drop-active' : ''} ${columnDropTarget?.columnId === column.id ? `column-drop-${columnDropTarget.edge}` : ''}`}
@@ -1144,7 +1182,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                 }}
               >
                 <header className="column-header">
-                  {canManagePlanning ? <button
+                  {canManagePlanning && !column.is_completion ? <button
                     className="column-drag-handle"
                     draggable
                     title="Arrastar coluna"
@@ -1159,6 +1197,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                   <span className="column-dot" style={{ background: column.color ?? '#8b8fa3' }} />
                   <h2>{column.name}</h2>
                   <span className="column-count">{columnTasks.length}</span>
+                  {column.wip_limit ? <span className={`column-wip ${workInColumn > column.wip_limit ? 'exceeded' : ''}`} title="Total ativo / limite sugerido; não bloqueia movimentações">{workInColumn}/{column.wip_limit}</span> : null}
                   {canManagePlanning ? <button aria-label={`Opções de ${column.name}`} onClick={() => setColumnMenuId((current) => current === column.id ? null : column.id)}><MoreHorizontal size={17} /></button> : null}
                   {canManagePlanning && columnMenuId === column.id ? (
                     <div className="column-menu">
@@ -1168,6 +1207,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                 </header>
 
                 <div className="column-cards">
+                  {isCompletionColumn && columnTasks.length > 10 ? <small className="completed-visible-note">Mostrando os 10 mais recentes de {columnTasks.length}</small> : null}
                   {visibleColumnTasks.map((task) => (
                     <TaskCard
                       key={task.id}
@@ -1202,13 +1242,14 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
                       }}
                       dragging={draggedTaskId === task.id}
                       dropEdge={taskDropTarget?.taskId === task.id ? taskDropTarget.edge : null}
-                      dragEnabled={!search.trim()}
+                      dragEnabled={!movingTask}
                     />
                   ))}
                   {!columnTasks.length ? <div className="empty-column">Arraste uma tarefa para cá</div> : null}
+                  {!isCompletionColumn && visibleColumnTasks.length < columnTasks.length ? <button className="column-add" type="button" onClick={() => setColumnDisplayLimits((current) => ({ ...current, [column.id]: (current[column.id] ?? 50) + 50 }))}>Mostrar mais ({columnTasks.length - visibleColumnTasks.length})</button> : null}
                 </div>
 
-                {isCompletionColumn && (activeCompletedCount || tasks.some((task) => task.column_id === column.id && task.archived_at)) ? (
+                {isCompletionColumn ? (
                   <div className="completed-column-actions">
                     <button className="column-add" type="button" onClick={() => setShowCompletedTasks(true)}>Ver histórico de finalizados</button>
                     {canManagePlanning && activeCompletedCount ? (
@@ -1248,7 +1289,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         ) : null}
         {view === 'clients' && canManagePlanning ? <ClientsView workspace={workspace} clients={clients} tasks={tasks} onChanged={() => loadBoard(true)} /> : null}
         {view === 'team' ? <TeamView userId={user.id} workspace={workspace} members={liveMembers} clients={clients} tasks={tasks} onChanged={() => loadBoard(true)} onMemberProfile={setProfileMemberId} onMemberTasks={(member) => { setSearch(member.display_name); setView('board'); }} /> : null}
-        {view === 'finance' && workspace.role === 'owner' ? <FinanceView workspace={workspace} clients={clients} members={liveMembers} tasks={tasks} /> : null}
+        {view === 'finance' && workspace.role === 'owner' ? archiveLoading ? <p role="status">Carregando histórico de produção…</p> : archiveError ? <div className="board-error"><span>{archiveError}</span><button onClick={() => setArchiveRetry((current) => current + 1)}>Recarregar histórico</button></div> : <FinanceView workspace={workspace} clients={clients} members={liveMembers} tasks={tasks} /> : null}
         {view === 'settings' ? <SettingsView user={user} workspace={workspace} tasks={tasks} currentAvailability={currentUserMember?.availability ?? 'offline'} requestedTab={settingsNavigation.tab} requestedTabToken={settingsNavigation.token} onDirtyChange={setSettingsDirty} onWorkspacesChanged={onWorkspacesChanged} onProfileChanged={async (profile) => {
           if (profile) setMembers((current) => current.map((member) => member.user_id === user.id ? {
             ...member,
@@ -1264,6 +1305,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           key={`${editor.mode}:${editor.task?.id ?? editor.columnId ?? 'new'}`}
           mode={editor.mode}
           task={editor.task}
+          latestTask={editor.task ? tasks.find((task) => task.id === editor.task?.id) ?? null : null}
           board={board}
           firstColumn={columns.find((column) => column.id === editor.columnId) ?? columns[0]}
           workspace={workspace}
@@ -1278,9 +1320,12 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
           onLinksChanged={async () => { await loadBoard(true); }}
         />
       ) : null}
-      {showCompletedTasks && completionColumn ? (
+        {showCompletedTasks && completionColumn ? (
         <CompletedTasksModal
-          tasks={tasks.filter((task) => task.column_id === completionColumn.id)}
+          loading={archiveLoading}
+          error={archiveError}
+          onRetry={() => setArchiveRetry((current) => current + 1)}
+          tasks={tasks.filter((task) => task.completed_at || task.archived_at)}
           clients={clients}
           canRestore={canManagePlanning}
           restoringTaskId={restoringTaskId}
@@ -1390,9 +1435,11 @@ function ColumnEditor({
   const [name, setName] = useState(column?.name ?? 'Nova etapa');
   const [color, setColor] = useState(column?.color ?? '#8b8fa3');
   const [registerWorkStart, setRegisterWorkStart] = useState(column?.automation_register_start ?? false);
+  const [clientReview, setClientReview] = useState(column?.automation_client_review ?? false);
   const [requiredLinkCategory, setRequiredLinkCategory] = useState<TaskLinkCategory | ''>(column?.automation_required_link_category ?? '');
   const [notifyAdmins, setNotifyAdmins] = useState(column?.automation_notify_admins ?? false);
   const [inactivityDays, setInactivityDays] = useState<number | ''>(column?.automation_inactivity_days ?? '');
+  const [wipLimit, setWipLimit] = useState<number | ''>(column?.wip_limit ?? '');
   const [saving, setSaving] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1404,7 +1451,7 @@ function ColumnEditor({
     setSaving(true);
     setError(null);
     const result = column
-      ? await supabase.rpc('update_column_configuration', {
+      ? await supabase.rpc('update_column_configuration_v3', {
           target_column: column.id,
           column_name: name.trim(),
           column_color: color,
@@ -1412,6 +1459,8 @@ function ColumnEditor({
           required_link_category: requiredLinkCategory || null,
           notify_admins_on_entry: notifyAdmins,
           inactivity_days: inactivityDays === '' ? null : inactivityDays,
+          task_limit: wipLimit === '' ? null : wipLimit,
+          client_review: clientReview,
         })
       : await supabase.from('columns').insert({ board_id: boardId, name: name.trim(), color, position: initialPosition });
     setSaving(false);
@@ -1442,10 +1491,15 @@ function ColumnEditor({
           {column && canConfigureAutomations ? (
             <section className="column-automation-panel">
               <header><span><Sparkles size={16} /></span><div><strong>Automações desta etapa</strong><small>Estas regras valem somente para este quadro.</small></div></header>
+              {!column.is_completion ? <label className="column-automation-field"><span>Limite sugerido de tarefas</span><input type="number" min="1" max="1000" value={wipLimit} onChange={(event) => setWipLimit(event.target.value ? Number(event.target.value) : '')} placeholder="Sem limite" /><small>Mostra um aviso ao ultrapassar; não bloqueia o trabalho.</small></label> : null}
               <label className="column-automation-toggle">
                 <input type="checkbox" checked={registerWorkStart} onChange={(event) => setRegisterWorkStart(event.target.checked)} />
                 <span><b>Registrar início do trabalho</b><small>Grava a primeira entrada nesta etapa, sem alterar prazo ou responsável.</small></span>
               </label>
+              {!column.is_completion ? <label className="column-automation-toggle">
+                <input type="checkbox" checked={clientReview} onChange={(event) => setClientReview(event.target.checked)} />
+                <span><b>Envio para revisão do cliente</b><small>Registra o primeiro envio e se ocorreu no prazo. Alterações e reenvios não reiniciam o atraso nem alteram o prazo. Não conclui a tarefa nem gera ganhos. Vale para as próximas entradas nesta etapa; datas avaliadas no horário de Brasília.</small></span>
+              </label> : null}
               <label className="column-automation-field">
                 <span><Link2 size={14} />Exigir link antes de entrar</span>
                 <select value={requiredLinkCategory} onChange={(event) => setRequiredLinkCategory(event.target.value as TaskLinkCategory | '')}>
@@ -1522,7 +1576,7 @@ function ProductionList({
             {columnTasks.map((task) => {
               const client = clients.find((item) => item.id === task.client_id);
               const assignee = members.find((item) => item.user_id === task.assignee_id);
-              const countdown = taskCountdown(task.due_at, Boolean(task.completed_at));
+              const countdown = taskCountdown(task, Boolean(task.completed_at), column?.automation_client_review);
               return (
                 <article
                   className={`production-list-row ${task.completed_at ? 'completed' : ''}`}
@@ -1533,7 +1587,7 @@ function ProductionList({
                     <span className="production-list-client-avatar">{client?.youtube_thumbnail_url ? <img src={client.youtube_thumbnail_url} alt="" /> : (client?.name ?? task.title).slice(0,1).toUpperCase()}</span>
                     <span className="production-list-copy"><strong>{task.title}</strong><small>{client?.name ?? 'Sem cliente'}</small></span>
                     <span className={`production-list-priority ${task.priority}`}>{priorityLabel(task.priority)}</span>
-                    <span className={`production-list-due ${countdown.state}`}>{task.due_at ? formatCardDate(task.due_at) : countdown.label}</span>
+                    <span className={`production-list-due ${countdown.state}`} title={deliveryLabel(task) ?? undefined}>{task.first_sent_at ? countdown.label : task.due_at ? formatCardDate(task.due_at) : countdown.label}</span>
                   </button>
                   {assignee ? <button type="button" className="production-list-assignee" onClick={() => onOpenProfile(assignee.user_id)} title={`Abrir perfil de ${assignee.display_name}`}>{assignee.avatar_url ? <img src={assignee.avatar_url} alt="" /> : <i>{memberInitials(assignee.display_name)}</i>}<span>{assignee.display_name}</span></button> : <span className="production-list-assignee empty"><i>?</i><span>Sem responsável</span></span>}
                   <label className="production-list-stage"><span className="sr-only">Etapa de {task.title}</span><select value={task.column_id} onChange={(event) => void onMoveTask(task, event.target.value)}>{columns.map((option) => <option value={option.id} key={option.id}>{option.name}</option>)}</select></label>
@@ -1664,10 +1718,10 @@ function TaskCard({
   const [assigning, setAssigning] = useState(false);
   const assigneePickerRef = useRef<HTMLDivElement>(null);
   const assigneeButtonRef = useRef<HTMLButtonElement>(null);
-  const assigneePopoverRef = useRef<HTMLElement>(null);
+  const assigneePopoverRef = useDialogFocus<HTMLElement>(showAssignees, () => setShowAssignees(false), !assigning);
   const [assigneePopoverStyle, setAssigneePopoverStyle] = useState<CSSProperties | null>(null);
   const taskFinished = completedVariant || Boolean(task.completed_at);
-  const countdown = taskCountdown(task.due_at, taskFinished);
+  const countdown = taskCountdown(task, taskFinished, column.automation_client_review);
   const subtitle = client?.name || task.description || priorityLabel(task.priority);
   const downloadLinks = taskLinks.filter((link) => link.category === 'download');
   const cardStyle = {
@@ -1778,10 +1832,12 @@ function TaskCard({
             <span className="task-card-date">{task.due_at ? formatCardDate(task.due_at) : 'SEM PRAZO'}</span>
           </span>
           <span className="task-card-title-block">
-            <strong>{task.title}</strong>
+            <strong title={task.title}>{task.title}</strong>
             <small>{subtitle}</small>
           </span>
-          <span className="task-progress-copy"><strong>Progresso</strong><small>{progressPercent}%</small></span>
+          <span className="task-progress-copy"><strong>Etapa do fluxo</strong><small>{column.name}</small></span>
+          {task.priority === 'urgent' || task.priority === 'high' ? <span className={`card-priority ${task.priority}`}>{priorityLabel(task.priority)}</span> : null}
+          {task.blocked_reason ? <span className="card-blocked" title={task.blocked_reason}><AlertTriangle size={12} />{task.blocked_reason}</span> : null}
           <span className="task-progress-track"><i /></span>
         </span>
       </button>
@@ -1809,7 +1865,7 @@ function TaskCard({
             <button ref={assigneeButtonRef} type="button" className={`task-card-add-person ${showAssignees ? 'active' : ''}`} title={assignee ? 'Trocar responsável' : 'Definir responsável'} aria-label={assignee ? 'Trocar responsável' : 'Definir responsável'} onClick={() => { setShowLinks(false); setShowAssignees((show) => !show); }}><Plus size={11} /></button>
           </div> : null}
         </span>
-        <span className={`task-card-countdown ${countdown.state}`}>{taskFinished ? <CheckCircle2 size={11} /> : null}{countdown.label}</span>
+        <span className={`task-card-countdown ${countdown.state}`} title={deliveryLabel(task) ?? undefined}>{taskFinished ? <CheckCircle2 size={11} /> : null}{countdown.label}</span>
       </span>
     </div>
     {showLinks && taskLinks.length > 1 ? createPortal(
@@ -1817,7 +1873,7 @@ function TaskCard({
       document.body,
     ) : null}
     {showAssignees && assigneePopoverStyle ? createPortal(
-      <aside ref={assigneePopoverRef} className="task-assignee-popover task-assignee-popover-portal" style={assigneePopoverStyle} aria-label="Escolher responsável">
+      <aside ref={assigneePopoverRef} tabIndex={-1} role="dialog" aria-modal="true" className="task-assignee-popover task-assignee-popover-portal" style={assigneePopoverStyle} aria-label="Escolher responsável">
         <strong>RESPONSÁVEL</strong>
         <button type="button" className={!task.assignee_id ? 'selected' : ''} disabled={assigning} onClick={() => void chooseAssignee(null)}><span className="task-assignee-avatar empty">?</span><span><b>Sem responsável</b><small>Deixar a tarefa livre</small></span></button>
         {members.map((member) => <button type="button" className={task.assignee_id === member.user_id ? 'selected' : ''} disabled={assigning} key={member.user_id} onClick={() => void chooseAssignee(member.user_id)}><span className="task-assignee-avatar">{member.avatar_url ? <img src={member.avatar_url} alt="" /> : memberInitials(member.display_name)}</span><span><b>{member.display_name}</b><small>{availabilityLabel(member.availability)}</small></span></button>)}
@@ -1864,6 +1920,9 @@ function TaskLinksModal({ taskTitle, links, onClose }: { taskTitle: string; link
 }
 
 function CompletedTasksModal({
+  loading,
+  error,
+  onRetry,
   tasks,
   clients,
   canRestore,
@@ -1872,6 +1931,9 @@ function CompletedTasksModal({
   onOpenTask,
   onRestore,
 }: {
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
   tasks: Task[];
   clients: Client[];
   canRestore: boolean;
@@ -1884,6 +1946,8 @@ function CompletedTasksModal({
   const [clientId, setClientId] = useState('');
   const [month, setMonth] = useState('');
   const [archiveFilter, setArchiveFilter] = useState<'all' | 'board' | 'archived'>('all');
+  const [visibleLimit, setVisibleLimit] = useState(60);
+  useEffect(() => { setVisibleLimit(60); }, [archiveFilter, searchTerm, clientId, month]);
   const dialogRef = useDialogFocus<HTMLElement>(true, onClose);
   const archivedCount = tasks.filter((task) => task.archived_at).length;
   const boardCount = tasks.length - archivedCount;
@@ -1908,12 +1972,12 @@ function CompletedTasksModal({
   }, [archiveFilter, clientById, clientId, month, searchTerm, tasks]);
   const groupedTasks = useMemo(() => {
     const groups = new Map<string, Task[]>();
-    filteredCompletedTasks.forEach((task) => {
+    filteredCompletedTasks.slice(0, visibleLimit).forEach((task) => {
       const key = completedTaskMonth(task);
       groups.set(key, [...(groups.get(key) ?? []), task]);
     });
     return Array.from(groups.entries());
-  }, [filteredCompletedTasks]);
+  }, [filteredCompletedTasks, visibleLimit]);
 
   return createPortal(
     <div className="completed-tasks-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -1934,6 +1998,8 @@ function CompletedTasksModal({
           <label><span>Mês</span><select value={month} onChange={(event) => setMonth(event.target.value)}><option value="">Todos os meses</option>{availableMonths.map((option) => <option key={option} value={option}>{formatCompletedMonth(option)}</option>)}</select></label>
         </div>
         <div className="completed-tasks-results">
+          {loading ? <p role="status">Carregando histórico…</p> : null}
+          {error ? <div className="editor-error" role="alert">{error}<button type="button" onClick={onRetry}>Tentar novamente</button></div> : null}
           {groupedTasks.map(([monthKey, monthTasks]) => (
             <section className="completed-month-group" key={monthKey}>
               <header><h3>{formatCompletedMonth(monthKey)}</h3><span>{monthTasks.length}</span></header>
@@ -1959,7 +2025,8 @@ function CompletedTasksModal({
               </div>
             </section>
           ))}
-          {!filteredCompletedTasks.length ? <div className="completed-tasks-empty"><Search size={22} /><strong>Nenhum finalizado encontrado</strong><small>Altere os filtros para visualizar outros trabalhos.</small></div> : null}
+          {!loading && !error && !filteredCompletedTasks.length ? <div className="completed-tasks-empty"><Search size={22} /><strong>Nenhum finalizado encontrado</strong><small>Altere os filtros para visualizar outros trabalhos.</small></div> : null}
+          {filteredCompletedTasks.length > visibleLimit ? <button type="button" className="column-add" onClick={() => setVisibleLimit((current) => current + 60)}>Mostrar mais finalizados ({filteredCompletedTasks.length - visibleLimit})</button> : null}
         </div>
       </section>
     </div>,
@@ -2003,8 +2070,8 @@ function MemberProfilePanel({
     .filter((task) => task.assignee_id === member.user_id)
     .sort((first, second) => taskSortValue(first) - taskSortValue(second)), [member.user_id, tasks]);
   const activeTasks = assignedTasks.filter((task) => !task.completed_at);
-  const overdueTasks = activeTasks.filter((task) => task.due_at && isOverdue(task.due_at));
-  const nextDeadline = activeTasks.find((task) => task.due_at && !isOverdue(task.due_at));
+  const overdueTasks = activeTasks.filter((task) => !task.first_sent_at && task.due_at && isOverdue(task.due_at));
+  const nextDeadline = activeTasks.find((task) => !task.first_sent_at && task.due_at && !isOverdue(task.due_at));
   const visibleTasks = activeTasks.slice(0, 6);
 
   const updateRole = async (role: Exclude<WorkspaceMember['role'], 'owner'>) => {
@@ -2081,7 +2148,7 @@ function MemberProfilePanel({
             {visibleTasks.map((task) => {
               const column = columns.find((item) => item.id === task.column_id);
               const client = clients.find((item) => item.id === task.client_id);
-              const countdown = taskCountdown(task.due_at);
+              const countdown = taskCountdown(task);
               return (
                 <button type="button" key={task.id} onClick={() => onOpenTask(task)}>
                   <i style={{ background: column?.color ?? '#8b8fa3' }} />
@@ -2113,13 +2180,14 @@ function MemberProfilePanel({
 function TaskEditor({
   mode,
   task,
+  latestTask,
   board,
   firstColumn,
   workspace,
   clients,
   members,
   columns,
-  links,
+  links: suppliedLinks,
   userId,
   canManagePlanning,
   onClose,
@@ -2128,6 +2196,7 @@ function TaskEditor({
 }: {
   mode: 'new' | 'edit';
   task: Task | null;
+  latestTask: Task | null;
   board: Board;
   firstColumn: BoardColumn;
   workspace: WorkspaceSummary;
@@ -2143,6 +2212,13 @@ function TaskEditor({
 }) {
   const initialDraft = useMemo<TaskDraft>(() => task ? taskToDraft(task) : emptyDraft, [task]);
   const [draft, setDraft] = useState<TaskDraft>(initialDraft);
+  const draftRef = useRef(draft);
+  useEffect(() => { draftRef.current = draft; }, [draft]);
+  const [archivedLinks, setArchivedLinks] = useState<TaskLink[]>([]);
+  const links = task?.archived_at ? archivedLinks : suppliedLinks;
+  const [copyDuplicateLinks, setCopyDuplicateLinks] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
+  const templateInitialRef = useRef('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [linkLabel, setLinkLabel] = useState('Arquivos para download');
@@ -2171,8 +2247,10 @@ function TaskEditor({
   const [activityError, setActivityError] = useState<string | null>(null);
   const appDialog = useAppDialog();
   const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(initialDraft)
-    || (mode === 'new' && Boolean(linkUrl.trim())), [draft, initialDraft, linkUrl, mode]);
-  const busy = saving || linkSaving || commentSaving || templateSaving || resolvingCommentId !== null || deleting;
+    || Boolean(linkUrl.trim()) || Boolean(commentBody.trim())
+    || (showTemplatePanel && JSON.stringify(templateDraft) !== templateInitialRef.current), [draft, initialDraft, linkUrl, commentBody, showTemplatePanel, templateDraft]);
+  const busy = saving || linkSaving || commentSaving || templateSaving || resolvingCommentId !== null || deleting || duplicating;
+  const hasConflict = mode === 'edit' && (!latestTask || latestTask.updated_at !== task?.updated_at);
 
   const requestClose = async () => {
     if (busy) return;
@@ -2187,15 +2265,23 @@ function TaskEditor({
     }
     onClose();
   };
+  const closeTemplatePanel = async () => {
+    if (templateSaving) return;
+    if (JSON.stringify(templateDraft) !== templateInitialRef.current && !await appDialog.confirm({
+      title: 'Descartar alterações do modelo?', description: 'O modelo ainda não foi salvo.', confirmLabel: 'Descartar', tone: 'danger',
+    })) return;
+    setShowTemplatePanel(false);
+  };
   const dialogRef = useDialogFocus<HTMLElement>(!appDialog.open, () => void requestClose(), !busy);
 
   const loadReviewData = useCallback(async () => {
     if (!supabase || !task) return;
-    const [activityResult, commentResult] = await Promise.all([
+    const [activityResult, commentResult, archivedLinkResult] = await Promise.all([
       supabase.from('task_activities').select('*').eq('task_id', task.id).order('created_at', { ascending: false }).limit(activityLimit + 1),
       supabase.from('task_comments').select('*').eq('task_id', task.id).order('created_at', { ascending: true }),
+      task.archived_at ? supabase.from('task_links').select('*').eq('task_id', task.id).order('created_at') : Promise.resolve({ data: [], error: null }),
     ]);
-    const loadError = activityResult.error ?? commentResult.error;
+    const loadError = activityResult.error ?? commentResult.error ?? archivedLinkResult.error;
     if (loadError) {
       setActivityError(loadError.message);
       return;
@@ -2205,6 +2291,7 @@ function TaskEditor({
     setHasMoreActivities(nextActivities.length > activityLimit);
     setActivities(nextActivities.slice(0, activityLimit));
     setComments((commentResult.data ?? []) as TaskComment[]);
+    if (task.archived_at) setArchivedLinks((archivedLinkResult.data ?? []) as TaskLink[]);
   }, [activityLimit, task]);
 
   useEffect(() => { void loadReviewData(); }, [loadReviewData]);
@@ -2264,7 +2351,10 @@ function TaskEditor({
       const template = await fetchClientTemplate(clientId);
       if (requestId !== templateRequestRef.current) return;
       setClientTemplate(template);
-      if (template && mode === 'new') applyClientTemplate(template, nextDraft);
+      if (template && mode === 'new') {
+        if (JSON.stringify(draftRef.current) === JSON.stringify(nextDraft)) applyClientTemplate(template, nextDraft);
+        else setTemplateNotice('Modelo disponível. Como você continuou digitando, seus dados foram mantidos. Use Modelo para revisar e aplicar.');
+      }
       else if (!template) setTemplateNotice('Este cliente ainda não possui um modelo padrão.');
     } catch (templateError) {
       if (requestId !== templateRequestRef.current) return;
@@ -2283,7 +2373,7 @@ function TaskEditor({
         ? clientTemplate
         : await fetchClientTemplate(draft.client_id);
       setClientTemplate(template);
-      setTemplateDraft(template ? {
+      const nextTemplateDraft = template ? {
         title_template: template.title_template,
         description_template: template.description_template,
         priority: template.priority,
@@ -2299,7 +2389,9 @@ function TaskEditor({
         due_offset_days: calendarDayOffset(draft.due_at),
         due_business_days: false,
         link_label: linkLabel.trim() || 'Arquivos para download',
-      });
+      };
+      setTemplateDraft(nextTemplateDraft);
+      templateInitialRef.current = JSON.stringify(nextTemplateDraft);
       setShowTemplatePanel(true);
     } catch (templateError) {
       setError(readErrorMessage(templateError, 'Não foi possível abrir o modelo do cliente.'));
@@ -2378,6 +2470,16 @@ function TaskEditor({
       setError('Digite um título para a tarefa.');
       return;
     }
+    if (hasConflict) return setError('Esta tarefa mudou em outra sessão. Feche e abra os detalhes novamente antes de salvar. Seu rascunho foi mantido.');
+    if (mode === 'edit' && !Object.keys(taskDraftChanges(initialDraft, draft, canManagePlanning)).length) {
+      await requestClose();
+      return;
+    }
+    if ((commentBody.trim() || (mode === 'edit' && linkUrl.trim()) || (showTemplatePanel && JSON.stringify(templateDraft) !== templateInitialRef.current))
+      && !await appDialog.confirm({ title: 'Salvar apenas os dados da tarefa?', description: 'Existe um feedback, link ou modelo ainda não salvo. Salvar a tarefa fecha este painel e descarta esses rascunhos.', confirmLabel: 'Salvar e fechar' })) return;
+    let normalizedUrl: string;
+    try { normalizedUrl = mode === 'new' ? normalizeTaskUrl(linkUrl) : ''; }
+    catch { return setError('Digite um link válido HTTP ou HTTPS, sem usuário ou senha.'); }
     setSaving(true);
     setError(null);
 
@@ -2390,9 +2492,6 @@ function TaskEditor({
       assignee_id: draft.assignee_id || null,
       revision_round: Math.max(1, Math.min(99, draft.revision_round || 1)),
     };
-
-    let normalizedUrl = linkUrl.trim();
-    if (normalizedUrl && !normalizedUrl.startsWith('https://')) normalizedUrl = `https://${normalizedUrl}`;
 
     if (mode === 'new' && !canManagePlanning) {
       setSaving(false);
@@ -2416,10 +2515,10 @@ function TaskEditor({
           download_label: normalizedUrl ? linkLabel.trim() || 'Arquivos para download' : null,
           download_url: normalizedUrl || null,
         })
-      : await supabase.from('tasks').update(canManagePlanning ? payload : { revision_round: payload.revision_round }).eq('id', task!.id);
+      : await supabase.from('tasks').update(taskDraftChanges(initialDraft, draft, canManagePlanning)).eq('id', task!.id).eq('updated_at', task!.updated_at).select('id').maybeSingle();
 
-    if (result.error) {
-      setError(result.error.message);
+    if (result.error || (mode === 'edit' && !result.data)) {
+      setError(result.error?.message ?? 'A tarefa mudou em outra sessão. Feche e abra novamente antes de salvar.');
       setSaving(false);
       return;
     }
@@ -2428,9 +2527,10 @@ function TaskEditor({
 
   const addLink = async () => {
     if (!supabase || !task || !linkLabel.trim() || !linkUrl.trim() || linkSaving) return;
+    let normalizedUrl: string;
+    try { normalizedUrl = normalizeTaskUrl(linkUrl); }
+    catch { return setError('Digite um link válido HTTP ou HTTPS, sem usuário ou senha.'); }
     setLinkSaving(true);
-    let normalizedUrl = linkUrl.trim();
-    if (!normalizedUrl.startsWith('https://')) normalizedUrl = `https://${normalizedUrl}`;
     const { error: linkError } = await supabase.from('task_links').insert({
       task_id: task.id,
       label: linkLabel.trim(),
@@ -2447,6 +2547,7 @@ function TaskEditor({
 
   const removeLink = async (linkId: string) => {
     if (!supabase) return;
+    if (!await appDialog.confirm({ title: 'Remover este link?', description: 'O arquivo original não será excluído. Apenas o link será removido da tarefa.', confirmLabel: 'Remover link', tone: 'danger' })) return;
     const { error: removeError } = await supabase.from('task_links').delete().eq('id', linkId);
     if (removeError) setError(removeError.message);
     else {
@@ -2505,6 +2606,18 @@ function TaskEditor({
     else await onChanged();
   };
 
+  const duplicateTask = async () => {
+    if (!supabase || !task || busy) return;
+    if (!await appDialog.confirm({ title: 'Duplicar esta tarefa?', description: 'A cópia usa os dados salvos e vai para a primeira etapa, sem prazo, conclusão, ganhos ou histórico. Alterações ainda não salvas não serão copiadas.', confirmLabel: 'Criar cópia' })) return;
+    setDuplicating(true);
+    try {
+      const { error: duplicateError } = await supabase.rpc('duplicate_task', { target_task: task.id, copy_links: copyDuplicateLinks });
+      if (duplicateError) throw duplicateError;
+      await onChanged();
+    } catch (duplicateError) { setError(readErrorMessage(duplicateError, 'Não foi possível duplicar.')); }
+    finally { setDuplicating(false); }
+  };
+
   return (
     <div className="editor-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) void requestClose(); }}>
       <aside ref={dialogRef} tabIndex={-1} className="task-editor" aria-modal="true" role="dialog" aria-label={mode === 'new' ? 'Nova tarefa' : 'Editar tarefa'}>
@@ -2514,14 +2627,19 @@ function TaskEditor({
         </header>
 
         <form className="editor-form" onSubmit={saveTask}>
+          {hasConflict ? <div className="editor-error" role="alert">Esta tarefa foi alterada ou removida em outra sessão. Seu rascunho foi preservado. Feche e abra novamente para consultar a versão atual.</div> : null}
+          {task?.archived_at ? <div className="editor-permission-note">Tarefa arquivada. Restaure pelo histórico para retomar o trabalho.</div> : null}
           {!canManagePlanning ? <div className="editor-permission-note">Como editor, você pode mover esta tarefa, atualizar a versão, adicionar links e responder aos ajustes. O planejamento é controlado pelos administradores.</div> : null}
+          {mode === 'edit' && task?.first_sent_at ? (
+            <div className="task-started-note"><span><CheckCircle2 size={17} /></span><div><small>PRIMEIRO ENVIO AO CLIENTE</small><strong>{deliveryLabel(task)} · {formatActivityDate(task.first_sent_at)}</strong><em>{task.first_sent_due_at ? `Prazo original: ${formatDate(task.first_sent_due_at)}. ` : ''}Preservado durante alterações e reenvios.</em></div></div>
+          ) : null}
           {mode === 'edit' && task?.started_at ? (
             <div className="task-started-note">
               <span><CalendarClock size={16} /></span>
               <div><small>TRABALHO INICIADO</small><strong>{formatActivityDate(task.started_at)}</strong><em>por {members.find((member) => member.user_id === task.started_by)?.display_name ?? 'um membro'}</em></div>
             </div>
           ) : null}
-          <label><span>Título</span><input value={draft.title} disabled={!canManagePlanning} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="Ex.: Vídeo da campanha de inverno" autoFocus /></label>
+          <label><span>Título</span><input maxLength={180} value={draft.title} disabled={!canManagePlanning} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="Ex.: Vídeo da campanha de inverno" autoFocus /></label>
           <label><span>Descrição</span><textarea value={draft.description} disabled={!canManagePlanning} onChange={(event) => setDraft({ ...draft, description: event.target.value })} placeholder="Briefing rápido, formato e observações..." rows={4} /></label>
 
           <div className="editor-grid">
@@ -2551,7 +2669,7 @@ function TaskEditor({
 
           {showTemplatePanel && templateDraft && draft.client_id ? (
             <section className="task-template-panel">
-              <header><div><p>MODELO DO CLIENTE</p><h3>{clientTemplate ? 'Editar modelo padrão' : 'Criar modelo padrão'}</h3></div><button type="button" disabled={templateSaving} onClick={() => setShowTemplatePanel(false)} aria-label="Fechar modelo"><X size={16} /></button></header>
+              <header><div><p>MODELO DO CLIENTE</p><h3>{clientTemplate ? 'Editar modelo padrão' : 'Criar modelo padrão'}</h3></div><button type="button" disabled={templateSaving} onClick={() => void closeTemplatePanel()} aria-label="Fechar modelo"><X size={16} /></button></header>
               <label><span>Título padrão <small>Opcional</small></span><input maxLength={180} value={templateDraft.title_template} onChange={(event) => setTemplateDraft({ ...templateDraft, title_template: event.target.value })} placeholder="Deixe vazio para não preencher o título" /></label>
               <label><span>Descrição padrão</span><textarea maxLength={4000} rows={3} value={templateDraft.description_template} onChange={(event) => setTemplateDraft({ ...templateDraft, description_template: event.target.value })} placeholder="Briefing que se repete neste cliente" /></label>
               <div className="task-template-grid">
@@ -2589,7 +2707,8 @@ function TaskEditor({
 
           {error ? <div className="editor-error" role="alert">{error}</div> : null}
 
-          <button className="editor-save" type="submit" disabled={saving}>{saving ? <LoaderCircle className="spinner" size={18} /> : mode === 'new' ? 'Criar tarefa' : canManagePlanning ? 'Salvar alterações' : 'Salvar versão'}</button>
+          {mode === 'edit' && !task?.archived_at ? <label><span>Impedimento <small>Opcional</small></span><input maxLength={300} value={draft.blocked_reason} onChange={(event) => setDraft({ ...draft, blocked_reason: event.target.value })} placeholder="Ex.: Aguardando material do cliente" /><small>Deixe vazio quando o trabalho puder continuar.</small></label> : null}
+          <button className="editor-save" type="submit" disabled={busy || templateLoading || hasConflict || Boolean(task?.archived_at)}>{saving ? <LoaderCircle className="spinner" size={18} /> : mode === 'new' ? 'Criar tarefa' : canManagePlanning ? 'Salvar alterações' : 'Salvar versão e impedimento'}</button>
         </form>
 
         {mode === 'edit' && task ? (
@@ -2670,7 +2789,8 @@ function TaskEditor({
           </section>
         ) : null}
 
-        {mode === 'edit' && canManagePlanning ? <button type="button" className="delete-task" disabled={deleting} onClick={() => void deleteTask()}>{deleting ? <LoaderCircle className="spinner" size={16} /> : <Trash2 size={16} />}Excluir tarefa</button> : null}
+        {mode === 'edit' && canManagePlanning ? <section className="task-duplicate"><label><input type="checkbox" checked={copyDuplicateLinks} onChange={(event) => setCopyDuplicateLinks(event.target.checked)} />Copiar também os links</label><button type="button" disabled={busy} onClick={() => void duplicateTask()}>{duplicating ? <LoaderCircle className="spin" size={15} /> : <Plus size={15} />}Duplicar tarefa</button></section> : null}
+        {mode === 'edit' && canManagePlanning ? <button type="button" className="delete-task" disabled={busy} onClick={() => void deleteTask()}>{deleting ? <LoaderCircle className="spinner" size={16} /> : <Trash2 size={16} />}Excluir tarefa</button> : null}
       </aside>
       {appDialog.host}
     </div>
@@ -2679,6 +2799,7 @@ function TaskEditor({
 
 function taskToDraft(task: Task): TaskDraft {
   return {
+    blocked_reason: task.blocked_reason ?? '',
     title: task.title,
     description: task.description,
     priority: task.priority,
@@ -2699,6 +2820,12 @@ function linkCategoryLabel(category: TaskLinkCategory) {
 
 function activityDescription(activity: TaskActivity, columns: BoardColumn[], members: WorkspaceMember[]) {
   if (activity.action === 'created') return 'criou esta tarefa.';
+  if (activity.action === 'updated' && activity.details.block_changed) return activity.details.blocked_reason ? `sinalizou impedimento: ${activity.details.blocked_reason}` : 'removeu o impedimento da tarefa.';
+  if (activity.action === 'updated' && activity.details.client_submission) {
+    if (!activity.details.first_submission) return 'reenviou o vídeo para revisão do cliente.';
+    const result = activity.details.first_sent_late === true ? 'com atraso' : activity.details.first_sent_late === false ? 'no prazo' : 'sem prazo definido';
+    return `enviou o vídeo ao cliente pela primeira vez, ${result}.`;
+  }
   if (activity.action === 'updated') return 'atualizou os detalhes da tarefa.';
   if (activity.action === 'moved') {
     const from = columns.find((column) => column.id === activity.details.from_column_id)?.name ?? 'outra coluna';
@@ -2725,6 +2852,7 @@ function activityDescription(activity: TaskActivity, columns: BoardColumn[], mem
 
 function hasColumnAutomations(column: BoardColumn) {
   return column.automation_register_start
+    || column.automation_client_review
     || Boolean(column.automation_required_link_category)
     || column.automation_notify_admins
     || Boolean(column.automation_inactivity_days)
@@ -2820,8 +2948,11 @@ function formatTaskDueDate(date: string) {
   }).format(new Date(year, month - 1, day));
 }
 
-function taskCountdown(date: string | null, completed = false): { label: string; state: 'neutral' | 'soon' | 'overdue' | 'completed' } {
+function taskCountdown(task: Task, completed = false, awaitingClient = false): { label: string; state: 'neutral' | 'soon' | 'overdue' | 'completed' } {
   if (completed) return { label: 'Finalizado', state: 'completed' };
+  const sentLabel = deliveryLabel(task);
+  if (sentLabel) return { label: awaitingClient ? 'Aguardando cliente' : sentLabel, state: 'neutral' };
+  const date = task.due_at;
   if (!date) return { label: 'Sem prazo', state: 'neutral' };
   const today = new Date();
   today.setHours(0, 0, 0, 0);

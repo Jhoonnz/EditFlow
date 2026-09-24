@@ -34,6 +34,9 @@ export function useDialogFocus<T extends HTMLElement>(
     });
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || !dialogRef.current?.isConnected) return;
+      const focusedDialog = document.activeElement?.closest('[role="dialog"], [role="alertdialog"]');
+      if (focusedDialog && focusedDialog !== dialogRef.current) return;
       if (event.key === 'Escape' && canDismissRef.current) {
         event.preventDefault();
         dismissRef.current();

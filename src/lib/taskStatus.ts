@@ -6,12 +6,21 @@ export function isActiveTask(task: Pick<Task, 'completed_at'>) {
   return !task.completed_at;
 }
 
-export function taskDeadlineDistance(task: Pick<Task, 'due_at'>, now = Date.now()) {
+type DeliverySnapshot = Partial<Pick<Task, 'first_sent_at' | 'first_sent_late'>>;
+
+export function deliveryLabel(task: DeliverySnapshot) {
+  if (!task.first_sent_at) return null;
+  if (task.first_sent_late === null || task.first_sent_late === undefined) return 'Enviado sem prazo';
+  return task.first_sent_late ? 'Enviado com atraso' : 'Enviado no prazo';
+}
+
+export function taskDeadlineDistance(task: Pick<Task, 'due_at'> & DeliverySnapshot, now = Date.now()) {
+  if (task.first_sent_at) return null;
   return task.due_at ? new Date(task.due_at).getTime() - now : null;
 }
 
 export function isVisibleDeadline(
-  task: Pick<Task, 'completed_at' | 'due_at'>,
+  task: Pick<Task, 'completed_at' | 'due_at'> & DeliverySnapshot,
   now = Date.now(),
   overdueHistoryDays = 30,
   upcomingDays = 7,

@@ -2784,6 +2784,34 @@ button { color: inherit; }
 }
 @media (prefers-reduced-motion: reduce) { .production-view-enter { animation: none; } }
 
+/* Kanban: compact cards with readable titles and comfortable hit targets. */
+.board-quick-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 0 28px 12px; }
+.board-quick-filters button,.board-undo button,.task-duplicate button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; border: 1px solid var(--border-subtle,#dedce7); border-radius: 9px; padding: 5px 10px; background: transparent; color: var(--text-muted,#6e6b78); font: inherit; font-size: 12px; cursor: pointer; }
+.board-quick-filters button.active { background: #eeeafb; border-color: #c6bde9; color: #6552a6; }
+.board-quick-filters > span { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12px; }
+.board-undo { display: flex; align-items: center; gap: 12px; margin: 0 28px 10px; padding: 8px 12px; border-radius: 10px; background: #eeeafb; color: #6552a6; font-size: 12px; }
+.board-undo > span { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.column-wip { flex: 0 0 auto; color: var(--text-muted); font-size: 11px; }
+.column-wip.exceeded { color: #b06b19; font-weight: 800; }
+.completed-visible-note { color: var(--text-muted); padding: 3px 6px 7px; font-size: 11px; }
+.task-card.compact .task-card-title-block strong { font-size: 13px; line-height: 1.35; }
+.task-card.compact .task-card-title-block small { font-size: 11px; }
+.task-card.compact .task-card-avatar,.task-card.compact .task-card-add-person,.task-card.compact .task-card-download { width: 28px; min-width: 28px; height: 28px; }
+.task-progress-copy small { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-priority { display: inline-flex; align-self: flex-start; margin: 4px 0; padding: 2px 6px; border-radius: 6px; background: #fff1dd; color: #95601b; font-size: 11px; font-weight: 750; }
+.card-priority.urgent { background: #ffe5e9; color: #a83a4e; }
+.card-blocked { display: flex; align-items: center; gap: 5px; min-width: 0; margin: 4px 0 6px; color: #a16b21; font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.card-blocked svg { flex-shrink: 0; }
+.task-duplicate { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 20px 24px; padding-top: 16px; border-top: 1px solid #dedce7; }
+.task-duplicate label { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 12px; }
+.task-duplicate input { accent-color: #7568dc; }
+:root[data-theme="dark"] .board-quick-filters button,:root[data-theme="dark"] .board-undo button,:root[data-theme="dark"] .task-duplicate button { border-color: #494550; color: #c2bdce; }
+:root[data-theme="dark"] .board-quick-filters button.active,:root[data-theme="dark"] .board-undo { background: #352e49; color: #d5c7ff; }
+:root[data-theme="dark"] .card-priority { background: #3a2e1f; color: #ffd295; }
+:root[data-theme="dark"] .card-priority.urgent { background: #3e242d; color: #ffb0bf; }
+:root[data-theme="dark"] .card-blocked,:root[data-theme="dark"] .column-wip.exceeded { color: #edbf77; }
+:root[data-theme="dark"] .task-duplicate { border-color: #494550; }
+
 /* Unified visual scale — keep dense desktop layouts readable and consistent. */
 body { font-size: var(--text-body); line-height: 1.45; }
 
