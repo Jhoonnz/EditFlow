@@ -1,5 +1,22 @@
 [
   {
+    "version": "0.1.60",
+    "date": "2026-09-25",
+    "title": "Fechar sem aviso repetitivo",
+    "summary": "Ao clicar no X, o EditFlow continua na bandeja do Windows sem repetir o aviso de que permanece aberto.",
+    "sections": [
+      {
+        "kind": "fixed",
+        "title": "Bandeja mais discreta",
+        "items": [
+          "O aviso 'EditFlow continua ativo' não aparece mais ao fechar a janela.",
+          "A preferência Manter ativo ao clicar no X continua controlando se o aplicativo fica na bandeja.",
+          "Notificações de mensagens e tarefas continuam seguindo a preferência de notificações do app."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.1.59",
     "date": "2026-09-24",
     "title": "Kanban mais seguro e prazo pelo primeiro envio",

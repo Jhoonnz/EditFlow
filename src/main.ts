@@ -20,7 +20,6 @@ let updateSplashWindow: BrowserWindow | null = null;
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
-let trayExplanationShown = false;
 let pendingAuthCallback: string | null = null;
 const activeNativeNotifications = new Set<ElectronNotification>();
 const authProtocol = 'editflow';
@@ -699,17 +698,6 @@ const createWindow = () => {
     event.preventDefault();
     createdWindow.hide();
     createTray();
-    if (!trayExplanationShown && ElectronNotification.isSupported()) {
-      trayExplanationShown = true;
-      const explanation = new ElectronNotification({
-        title: 'EditFlow continua ativo',
-        body: 'O app foi minimizado para os ícones ocultos e continuará recebendo notificações.',
-      });
-      activeNativeNotifications.add(explanation);
-      explanation.on('click', showMainWindow);
-      explanation.on('close', () => activeNativeNotifications.delete(explanation));
-      explanation.show();
-    }
   });
   createdWindow.on('closed', () => {
     if (mainWindow === createdWindow) mainWindow = null;
