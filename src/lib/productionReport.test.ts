@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { financialCycleRange } from './financialCycle';
-import { buildProductionReport } from './productionReport';
+import { buildProductionReport, latestCompletionMoves } from './productionReport';
 import { shortProductionPeriodRange } from './productionPeriod';
 import type { Client, Task, WorkspaceMember } from '../features/workspace/types';
 
@@ -59,5 +59,23 @@ describe('production report', () => {
     expect(buildProductionReport(rows, [client], [editor], shortProductionPeriodRange('2026-09-16', 'week'), filters).total).toBe(3);
     expect(buildProductionReport(rows, [client], [editor], shortProductionPeriodRange('2026-09-15', 'fortnight'), filters).total).toBe(2);
     expect(buildProductionReport(rows, [client], [editor], shortProductionPeriodRange('2026-09-16', 'fortnight'), filters).total).toBe(2);
+  });
+
+  it('uses the latest real move into the final column instead of a later backfilled timestamp', () => {
+    const moves = latestCompletionMoves([
+      { task_id: 'a', created_at: '2026-08-12T14:00:00Z', details: { to_column_id: 'final' } },
+      { task_id: 'a', created_at: '2026-08-12T15:00:00Z', details: { to_column_id: 'editing' } },
+      { task_id: 'a', created_at: '2026-08-15T13:26:00Z', details: { to_column_id: 'final' } },
+      { task_id: 'b', created_at: '2026-09-10T10:00:00Z', details: { to_column_id: 'other' } },
+    ], 'final');
+    const rows = [
+      task('a', '2026-09-10T12:00:00Z'),
+      task('b', '2026-09-10T12:00:00Z'),
+    ];
+    const august = buildProductionReport(rows, [client], [editor], financialCycleRange('2026-08', 1), filters, moves);
+    const september = buildProductionReport(rows, [client], [editor], financialCycleRange('2026-09', 1), filters, moves);
+    expect(august.rows.map((row) => row.taskId)).toEqual(['a']);
+    expect(august.rows[0].completedAt).toBe('2026-08-15T13:26:00Z');
+    expect(september.rows.map((row) => row.taskId)).toEqual(['b']);
   });
 });

@@ -1,5 +1,22 @@
 [
   {
+    "version": "0.1.62",
+    "date": "2026-09-28",
+    "title": "Datas corretas nos relatórios",
+    "summary": "Os relatórios de produção passam a considerar a última entrada registrada na coluna final, evitando que entregas antigas apareçam em outro mês.",
+    "sections": [
+      {
+        "kind": "fixed",
+        "title": "Histórico de conclusão mais fiel",
+        "items": [
+          "A data do vídeo no relatório usa a última movimentação registrada para a coluna final; quando não há esse histórico, mantém a data de conclusão salva.",
+          "Totais por período, lista de vídeos e PDF seguem a mesma data corrigida, inclusive para tarefas arquivadas.",
+          "Ganhos e pagamentos já registrados não são modificados por essa correção."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.1.61",
     "date": "2026-09-28",
     "title": "Gestão e relatórios de produção",

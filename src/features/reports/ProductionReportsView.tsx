@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Archive, CalendarDays, ChevronLeft, ChevronRight, FileDown, LoaderCircle, Search, UsersRound, Video } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { fetchAllRows } from '../../lib/paginatedQuery';
 import { currentFinancialCycle, financialCycleRange, formatFinancialCycle, normalizeCycleStartDay, shiftMonthKey } from '../../lib/financialCycle';
-import { buildProductionReport } from '../../lib/productionReport';
+import { buildProductionReport, latestCompletionMoves, type TaskMoveForReport } from '../../lib/productionReport';
 import { formatShortProductionPeriod, shiftShortProductionPeriod, shortProductionPeriodRange, toLocalDateKey } from '../../lib/productionPeriod';
 import type { Client, Task, WorkspaceMember, WorkspaceSummary } from '../workspace/types';
 
@@ -12,10 +13,11 @@ type Props = {
   tasks: Task[];
   clients: Client[];
   members: WorkspaceMember[];
+  completionColumnId: string | null;
   onOpenTask: (task: Task) => void;
 };
 
-export function ProductionReportsView({ workspace, currentUserId, tasks, clients, members, onOpenTask }: Props) {
+export function ProductionReportsView({ workspace, currentUserId, tasks, clients, members, completionColumnId, onOpenTask }: Props) {
   const canSeeTeam = workspace.role !== 'editor';
   const [cycleStartDay, setCycleStartDay] = useState(1);
   const [cycleUnavailable, setCycleUnavailable] = useState(false);
@@ -29,6 +31,45 @@ export function ProductionReportsView({ workspace, currentUserId, tasks, clients
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
+  const [completionHistory, setCompletionHistory] = useState<{ key: string; dates: Map<string, string>; error: string | null } | null>(null);
+  const [historyRetry, setHistoryRetry] = useState(0);
+
+  const completionCandidates = useMemo(() => tasks.filter((task) => task.completed_at && (canSeeTeam || task.assignee_id === currentUserId)), [tasks, canSeeTeam, currentUserId]);
+  const historyKey = `${workspace.id}:${completionColumnId ?? ''}:${completionCandidates.map((task) => `${task.id}@${task.completed_at}`).sort().join('|')}`;
+
+  useEffect(() => {
+    const client = supabase;
+    if (!client || !completionColumnId || !completionCandidates.length) {
+      setCompletionHistory({ key: historyKey, dates: new Map(), error: null });
+      return;
+    }
+
+    let cancelled = false;
+    const loadCompletionHistory = async () => {
+      const moves: TaskMoveForReport[] = [];
+      const ids = completionCandidates.map((task) => task.id);
+      for (let start = 0; start < ids.length; start += 80) {
+        const batch = ids.slice(start, start + 80);
+        const result = await fetchAllRows<TaskMoveForReport>(async (from, to) => await client
+          .from('task_activities')
+          .select('id, task_id, created_at, details')
+          .eq('workspace_id', workspace.id)
+          .eq('action', 'moved')
+          .in('task_id', batch)
+          .order('created_at')
+          .order('id')
+          .range(from, to));
+        if (cancelled) return;
+        if (result.error) throw new Error(result.error.message);
+        moves.push(...(result.data ?? []));
+      }
+      if (!cancelled) setCompletionHistory({ key: historyKey, dates: latestCompletionMoves(moves, completionColumnId), error: null });
+    };
+    void loadCompletionHistory().catch((error: unknown) => {
+      if (!cancelled) setCompletionHistory({ key: historyKey, dates: new Map(), error: error instanceof Error ? error.message : 'Não foi possível carregar o histórico das tarefas.' });
+    });
+    return () => { cancelled = true; };
+  }, [historyKey, historyRetry]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -55,8 +96,9 @@ export function ProductionReportsView({ workspace, currentUserId, tasks, clients
     ? shortProductionPeriodRange(dateKey, periodKind === 'week' ? 'week' : 'fortnight')
     : financialCycleRange(monthKey, periodKind === 'cycle' ? cycleStartDay : 1),
   [monthKey, dateKey, periodKind, cycleStartDay, shortPeriod]);
-  const report = useMemo(() => buildProductionReport(tasks, clients, members, range, { clientId, editorId, currentUserId, canSeeTeam, search }),
-    [tasks, clients, members, range, clientId, editorId, currentUserId, canSeeTeam, search]);
+  const completionDates = completionHistory?.key === historyKey ? completionHistory.dates : null;
+  const report = useMemo(() => buildProductionReport(tasks, clients, members, range, { clientId, editorId, currentUserId, canSeeTeam, search }, completionDates ?? undefined),
+    [tasks, clients, members, range, clientId, editorId, currentUserId, canSeeTeam, search, completionDates]);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const periodLabel = shortPeriod ? formatShortProductionPeriod(range) : periodKind === 'cycle'
     ? formatFinancialCycle(range)
@@ -105,10 +147,15 @@ export function ProductionReportsView({ workspace, currentUserId, tasks, clients
     }
   };
 
+  if (completionHistory?.key === historyKey && completionHistory.error) {
+    return <div className="board-error" role="alert"><span>Não foi possível conferir as datas pelo histórico: {completionHistory.error}</span><button type="button" onClick={() => { setCompletionHistory(null); setHistoryRetry((current) => current + 1); }}>Tentar novamente</button></div>;
+  }
+  if (!completionDates) return <p className="production-report-loading" role="status">Conferindo as datas de conclusão no histórico…</p>;
+
   return (
     <div className="production-report-view">
       <section className="production-report-hero">
-        <div><span className="report-eyebrow">{canSeeTeam ? 'PRODUÇÃO DA EQUIPE' : 'MINHA PRODUÇÃO'}</span><h2>Relatório de vídeos</h2><p>Vídeos contabilizados pela data em que chegaram à etapa final. Arquivados continuam no histórico.</p></div>
+        <div><span className="report-eyebrow">{canSeeTeam ? 'PRODUÇÃO DA EQUIPE' : 'MINHA PRODUÇÃO'}</span><h2>Relatório de vídeos</h2><p>Vídeos contabilizados pela última entrada registrada na etapa final. Arquivados continuam no histórico.</p></div>
         <button className="secondary-button" type="button" disabled={exporting} onClick={() => void exportPdf()}>{exporting ? <LoaderCircle size={16} className="spinner" /> : <FileDown size={16} />}Exportar PDF</button>
       </section>
 

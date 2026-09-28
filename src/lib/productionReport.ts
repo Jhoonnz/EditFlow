@@ -20,18 +20,35 @@ export type ProductionReportRow = {
   archived: boolean;
 };
 
+export type TaskMoveForReport = {
+  task_id: string;
+  created_at: string;
+  details: { to_column_id?: unknown };
+};
+
+export function latestCompletionMoves(moves: TaskMoveForReport[], completionColumnId: string) {
+  const latest = new Map<string, string>();
+  for (const move of moves) {
+    if (move.details?.to_column_id !== completionColumnId || !Number.isFinite(Date.parse(move.created_at))) continue;
+    const previous = latest.get(move.task_id);
+    if (!previous || Date.parse(move.created_at) > Date.parse(previous)) latest.set(move.task_id, move.created_at);
+  }
+  return latest;
+}
+
 export function buildProductionReport(
   tasks: Task[],
   clients: Client[],
   members: WorkspaceMember[],
   range: FinancialCycleRange,
   filters: ProductionReportFilters,
+  completionMoves: ReadonlyMap<string, string> = new Map(),
 ) {
   const clientNames = new Map(clients.map((client) => [client.id, client.name]));
   const editorNames = new Map(members.map((member) => [member.user_id, member.display_name]));
   const normalizedSearch = normalizeSearch(filters.search ?? '');
   const rows: ProductionReportRow[] = tasks
-    .filter((task) => task.completed_at && isDateInRange(task.completed_at, range))
+    .filter((task) => task.completed_at && isDateInRange(completionMoves.get(task.id) ?? task.completed_at, range))
     .filter((task) => filters.canSeeTeam || task.assignee_id === filters.currentUserId)
     .filter((task) => filters.clientId === 'all' || (filters.clientId === 'none' ? !task.client_id : task.client_id === filters.clientId))
     .filter((task) => filters.editorId === 'all' || (filters.editorId === 'none' ? !task.assignee_id : task.assignee_id === filters.editorId))
@@ -42,7 +59,7 @@ export function buildProductionReport(
       clientName: task.client_id ? clientNames.get(task.client_id) ?? 'Cliente removido' : 'Sem cliente',
       editorId: task.assignee_id,
       editorName: task.assignee_id ? editorNames.get(task.assignee_id) ?? 'Membro removido' : 'Sem responsável',
-      completedAt: task.completed_at!,
+      completedAt: completionMoves.get(task.id) ?? task.completed_at!,
       archived: Boolean(task.archived_at),
     }))
     .filter((row) => !normalizedSearch || normalizeSearch(`${row.title} ${row.clientName} ${row.editorName}`).includes(normalizedSearch))

@@ -58,7 +58,7 @@ export function productionReportHtml(report: EditFlowProductionReport) {
     <p class="filters">Cliente: ${escapeHtml(report.clientFilter)} · Responsável: ${escapeHtml(report.editorFilter)}${report.searchFilter ? ` · Busca: ${escapeHtml(report.searchFilter)}` : ''}</p>
     <h2>Produção por cliente</h2>${report.byClient.length ? `<div class="clients">${clientRows}</div>` : '<div class="empty">Nenhum vídeo concluído no período.</div>'}
     <h2>Vídeos concluídos</h2>${report.rows.length ? `<table><thead><tr><th>Vídeo</th><th>Cliente</th><th>Responsável</th><th>Conclusão</th></tr></thead><tbody>${videoRows}</tbody></table>` : '<div class="empty">Nenhum vídeo para listar.</div>'}
-    <footer>Contagem baseada nas tarefas atualmente concluídas, inclusive arquivadas. O responsável reflete a atribuição atual da tarefa.</footer>
+    <footer>Datas baseadas na última entrada registrada na etapa final; sem histórico, usa-se a data de conclusão salva. Tarefas arquivadas continuam incluídas. O responsável reflete a atribuição atual.</footer>
   </body></html>`;
 }
 
