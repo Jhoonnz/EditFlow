@@ -233,7 +233,7 @@ export function MyWorkView({
         </section>
 
         {canManage ? <section className="my-work-card my-work-team-card">
-          <header><div><span><Users size={16} /></span><div><h3>Pulso da equipe</h3><p>Uma leitura rápida da produção atual.</p></div></div><button type="button" onClick={onOpenTeam}>Ver equipe<ArrowRight size={14} /></button></header>
+          <header><div><span><Users size={16} /></span><div><h3>Pulso da equipe</h3><p>Uma leitura rápida da produção atual.</p></div></div><button type="button" onClick={onOpenTeam}>Ver membros<ArrowRight size={14} /></button></header>
           <div className="my-work-team-stats">
             <button type="button" onClick={onOpenTeam}><strong>{onlineMembers.length}</strong><span>online agora</span></button>
             <button type="button" onClick={onOpenBoard}><strong>{unassignedTasks.length}</strong><span>sem responsável</span></button>

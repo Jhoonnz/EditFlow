@@ -89,6 +89,22 @@ type EditFlowFinancialReportResult = {
   filePath?: string;
 };
 
+type EditFlowProductionReport = {
+  workspaceName: string;
+  periodKey: string;
+  periodLabel: string;
+  periodKind: 'week' | 'fortnight' | 'month' | 'cycle';
+  generatedAt: string;
+  clientFilter: string;
+  editorFilter: string;
+  searchFilter: string;
+  total: number;
+  clientCount: number;
+  editorCount: number;
+  byClient: Array<{ name: string; count: number }>;
+  rows: Array<{ title: string; client: string; editor: string; completedAt: string; archived: boolean }>;
+};
+
 interface Window {
   editflow: {
     platform: string;
@@ -96,6 +112,7 @@ interface Window {
     getVersion: () => Promise<string>;
     getUsdBrlRate: () => Promise<EditFlowUsdBrlRate>;
     exportFinancialReport: (report: EditFlowFinancialReport) => Promise<EditFlowFinancialReportResult>;
+    exportProductionReport: (report: EditFlowProductionReport) => Promise<EditFlowFinancialReportResult>;
     getUserActivity: () => Promise<'active' | 'away'>;
     checkForUpdates: () => Promise<boolean>;
     installUpdate: () => Promise<void>;

@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('editflow', {
   getVersion: () => ipcRenderer.invoke('system:get-version'),
   getUsdBrlRate: () => ipcRenderer.invoke('system:get-usd-brl-rate'),
   exportFinancialReport: (report: EditFlowFinancialReport) => ipcRenderer.invoke('finance:export-pdf', report),
+  exportProductionReport: (report: EditFlowProductionReport) => ipcRenderer.invoke('production:export-pdf', report),
   getUserActivity: () => ipcRenderer.invoke('system:get-user-activity'),
   checkForUpdates: () => ipcRenderer.invoke('updater:check'),
   installUpdate: () => ipcRenderer.invoke('updater:install'),

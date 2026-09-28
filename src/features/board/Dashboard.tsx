@@ -20,6 +20,7 @@ import {
   GripVertical,
   History,
   LayoutDashboard,
+  FileBarChart2,
   Link2,
   List as ListIcon,
   LoaderCircle,
@@ -49,6 +50,7 @@ import { calculateDueDate, calendarDayOffset } from '../../lib/taskTemplate';
 import { matchesTaskFilter, normalizeTaskUrl, taskDraftChanges, type QuickTaskFilter } from '../../lib/kanban';
 import { ChatPanel, type ChatOpenRequest } from '../chat/ChatPanel';
 import { FinanceView } from '../finance/FinanceView';
+import { ProductionReportsView } from '../reports/ProductionReportsView';
 import { ClientsView, SettingsView, TeamView, type SettingsTab } from '../workspace/WorkspaceViews';
 import { MyWorkView } from '../workspace/MyWorkView';
 import { NotificationsMenu } from './NotificationsMenu';
@@ -84,7 +86,7 @@ type Props = {
 };
 
 type SyncStatus = 'connecting' | 'connected' | 'offline' | 'error';
-type DashboardView = 'home' | 'board' | 'clients' | 'team' | 'finance' | 'settings';
+type DashboardView = 'home' | 'board' | 'clients' | 'team' | 'finance' | 'reports' | 'settings';
 type ProductionView = 'kanban' | 'list' | 'calendar';
 type ClientTaskTemplateDraft = Pick<ClientTaskTemplate,
   'title_template' | 'description_template' | 'priority' | 'assignee_id' | 'due_offset_days' | 'due_business_days' | 'link_label'
@@ -149,6 +151,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [columnDropTarget, setColumnDropTarget] = useState<{ columnId: string; edge: 'before' | 'after' } | null>(null);
   const [editor, setEditor] = useState<{ mode: 'new' | 'edit'; task: Task | null; columnId?: string } | null>(null);
   const [view, setView] = useState<DashboardView>(initialView);
+  const [managementOpen, setManagementOpen] = useState(false);
   const [productionView, setProductionView] = useState<ProductionView>('kanban');
   const [columnMenuId, setColumnMenuId] = useState<string | null>(null);
   const [editingColumn, setEditingColumn] = useState<BoardColumn | null>(null);
@@ -162,6 +165,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showCompletedTasks, setShowCompletedTasks] = useState(false);
   const [archiveLoading, setArchiveLoading] = useState(false);
+  const [archiveLoadedBoardId, setArchiveLoadedBoardId] = useState<string | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const [archiveRetry, setArchiveRetry] = useState(0);
   const [archivingCompletedTasks, setArchivingCompletedTasks] = useState(false);
@@ -195,6 +199,9 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
   useEffect(() => { tasksRef.current = tasks; }, [tasks]);
   useEffect(() => { membersRef.current = members; }, [members]);
   useEffect(() => { notificationsRef.current = inboxNotifications; }, [inboxNotifications]);
+  useEffect(() => {
+    if (view === 'team' || view === 'clients' || view === 'finance' || view === 'reports') setManagementOpen(true);
+  }, [view]);
   useEffect(() => {
     if (!board) return;
     try {
@@ -462,7 +469,10 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
       .then((result) => {
         if (cancelled) return;
         if (result.error) setArchiveError(result.error.message);
-        else setTasks((current) => [...current.filter((task) => !task.archived_at), ...(result.data ?? [])]);
+        else {
+          setTasks((current) => [...current.filter((task) => !task.archived_at), ...(result.data ?? [])]);
+          setArchiveLoadedBoardId(board.id);
+        }
       }).catch(() => { if (!cancelled) setArchiveError('Não foi possível carregar o histórico.'); })
       .finally(() => { if (!cancelled) setArchiveLoading(false); });
     return () => { cancelled = true; };
@@ -1052,9 +1062,13 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         <nav className="sidebar-nav" aria-label="Navegação principal">
           <button className={`nav-item ${view === 'home' ? 'active' : ''}`} onClick={() => void navigateTo('home')}><BriefcaseBusiness size={18} /><span>Meu trabalho</span></button>
           <button className={`nav-item ${view === 'board' ? 'active' : ''}`} onClick={() => void navigateTo('board')}><LayoutDashboard size={18} /><span>Produção</span></button>
-          {canManagePlanning ? <button className={`nav-item ${view === 'clients' ? 'active' : ''}`} onClick={() => void navigateTo('clients')}><Users size={18} /><span>Clientes</span><small>{clients.length}</small></button> : null}
-          <button className={`nav-item ${view === 'team' ? 'active' : ''}`} onClick={() => void navigateTo('team')}><Users size={18} /><span>Equipe</span><small>{liveMembers.length}</small></button>
-          {workspace.role === 'owner' ? <button className={`nav-item ${view === 'finance' ? 'active' : ''}`} onClick={() => void navigateTo('finance')}><WalletCards size={18} /><span>Ganhos</span></button> : null}
+          <button className={`nav-item management-toggle ${managementOpen || ['clients','team','finance','reports'].includes(view) ? 'active' : ''}`} type="button" aria-expanded={managementOpen} aria-controls="management-nav" onClick={() => setManagementOpen((open) => !open)} title="Gestão"><Users size={18} /><span>Gestão</span><ChevronDown className={managementOpen ? 'open' : ''} size={15} /></button>
+          {managementOpen ? <div id="management-nav" className="management-nav">
+            <button className={`nav-item management-child ${view === 'team' ? 'active' : ''}`} onClick={() => void navigateTo('team')} title="Membros"><Users size={17} /><span>Membros</span><small>{liveMembers.length}</small></button>
+            {canManagePlanning ? <button className={`nav-item management-child ${view === 'clients' ? 'active' : ''}`} onClick={() => void navigateTo('clients')} title="Clientes"><Users size={17} /><span>Clientes</span><small>{clients.length}</small></button> : null}
+            {workspace.role === 'owner' ? <button className={`nav-item management-child ${view === 'finance' ? 'active' : ''}`} onClick={() => void navigateTo('finance')} title="Ganhos"><WalletCards size={17} /><span>Ganhos</span></button> : null}
+            <button className={`nav-item management-child ${view === 'reports' ? 'active' : ''}`} onClick={() => void navigateTo('reports')} title="Relatórios"><FileBarChart2 size={17} /><span>Relatórios</span></button>
+          </div> : null}
         </nav>
 
         <div className="sidebar-spacer" />
@@ -1076,7 +1090,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         <header className="dashboard-header">
           <div>
             <p>ESPAÇO DE TRABALHO</p>
-            <h1>{view === 'home' ? 'Meu trabalho' : view === 'board' ? board?.name ?? 'Produção' : view === 'clients' ? 'Clientes' : view === 'team' ? 'Equipe' : view === 'finance' ? 'Ganhos' : 'Configurações'}</h1>
+            <h1>{view === 'home' ? 'Meu trabalho' : view === 'board' ? board?.name ?? 'Produção' : view === 'clients' ? 'Clientes' : view === 'team' ? 'Membros' : view === 'finance' ? 'Ganhos' : view === 'reports' ? 'Relatórios' : 'Configurações'}</h1>
           </div>
           <div className="header-actions">
             <div className="notification-wrap" ref={notificationRef}>
@@ -1289,6 +1303,7 @@ export function Dashboard({ user, workspace, workspaces, onWorkspaceChange, onWo
         ) : null}
         {view === 'clients' && canManagePlanning ? <ClientsView workspace={workspace} clients={clients} tasks={tasks} onChanged={() => loadBoard(true)} /> : null}
         {view === 'team' ? <TeamView userId={user.id} workspace={workspace} members={liveMembers} clients={clients} tasks={tasks} onChanged={() => loadBoard(true)} onMemberProfile={setProfileMemberId} onMemberTasks={(member) => { setSearch(member.display_name); setView('board'); }} /> : null}
+        {view === 'reports' ? archiveError ? <div className="board-error"><span>{archiveError}</span><button onClick={() => setArchiveRetry((current) => current + 1)}>Recarregar histórico</button></div> : archiveLoading || archiveLoadedBoardId !== board?.id ? <p className="production-report-loading" role="status">Carregando histórico de produção…</p> : <ProductionReportsView workspace={workspace} currentUserId={user.id} tasks={tasks} clients={clients} members={liveMembers} onOpenTask={(task) => setEditor({ mode: 'edit', task })} /> : null}
         {view === 'finance' && workspace.role === 'owner' ? archiveLoading ? <p role="status">Carregando histórico de produção…</p> : archiveError ? <div className="board-error"><span>{archiveError}</span><button onClick={() => setArchiveRetry((current) => current + 1)}>Recarregar histórico</button></div> : <FinanceView workspace={workspace} clients={clients} members={liveMembers} tasks={tasks} /> : null}
         {view === 'settings' ? <SettingsView user={user} workspace={workspace} tasks={tasks} currentAvailability={currentUserMember?.availability ?? 'offline'} requestedTab={settingsNavigation.tab} requestedTabToken={settingsNavigation.token} onDirtyChange={setSettingsDirty} onWorkspacesChanged={onWorkspacesChanged} onProfileChanged={async (profile) => {
           if (profile) setMembers((current) => current.map((member) => member.user_id === user.id ? {

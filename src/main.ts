@@ -3,6 +3,7 @@ import { autoUpdater, type NsisUpdater } from 'electron-updater';
 import { spawn } from 'node:child_process';
 import { access, appendFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isProductionReport, productionReportHtml } from './lib/productionReportPdf';
 
 type UpdateStatus =
   | { state: 'checking' }
@@ -767,6 +768,42 @@ ipcMain.handle('finance:export-pdf', async (_event, value: unknown) => {
   try {
     const html = financialReportHtml(value);
     await reportWindow.loadURL(`data:text/html;charset=UTF-8,${encodeURIComponent(html)}`);
+    const pdf = await reportWindow.webContents.printToPDF({
+      pageSize: 'A4',
+      landscape: true,
+      printBackground: true,
+      preferCSSPageSize: true,
+    });
+    await writeFile(selection.filePath, pdf);
+    return { cancelled: false, filePath: selection.filePath };
+  } finally {
+    if (!reportWindow.isDestroyed()) reportWindow.destroy();
+  }
+});
+ipcMain.handle('production:export-pdf', async (_event, value: unknown) => {
+  if (!isProductionReport(value)) throw new Error('Os dados do relatório de produção são inválidos.');
+
+  const defaultName = `EditFlow-Producao-${value.periodKey}-${value.periodKind}.pdf`;
+  const saveOptions = {
+    title: 'Exportar relatório de produção',
+    defaultPath: path.join(app.getPath('documents'), defaultName),
+    filters: [{ name: 'Documento PDF', extensions: ['pdf'] }],
+    properties: ['createDirectory', 'showOverwriteConfirmation'] as Array<'createDirectory' | 'showOverwriteConfirmation'>,
+  };
+  const selection = mainWindow && !mainWindow.isDestroyed()
+    ? await dialog.showSaveDialog(mainWindow, saveOptions)
+    : await dialog.showSaveDialog(saveOptions);
+  if (selection.canceled || !selection.filePath) return { cancelled: true };
+
+  const reportWindow = new BrowserWindow({
+    show: false,
+    icon: appIconPath(),
+    width: 1200,
+    height: 800,
+    webPreferences: { sandbox: true },
+  });
+  try {
+    await reportWindow.loadURL(`data:text/html;charset=UTF-8,${encodeURIComponent(productionReportHtml(value))}`);
     const pdf = await reportWindow.webContents.printToPDF({
       pageSize: 'A4',
       landscape: true,

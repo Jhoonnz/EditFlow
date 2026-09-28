@@ -1,5 +1,30 @@
 [
   {
+    "version": "0.1.61",
+    "date": "2026-09-28",
+    "title": "Gestão e relatórios de produção",
+    "summary": "Acompanhe os vídeos concluídos por período e cliente em uma nova área de relatórios, com exportação em PDF.",
+    "sections": [
+      {
+        "kind": "new",
+        "title": "Gestão e relatórios",
+        "items": [
+          "O menu Gestão reúne Membros, Clientes, Ganhos e Relatórios em um único lugar.",
+          "O relatório mostra a quantidade de vídeos concluídos, os clientes atendidos, os responsáveis e a lista de títulos, inclusive das tarefas arquivadas.",
+          "Filtros por cliente, responsável e nome do vídeo atualizam os totais, a lista e a exportação em PDF. Editores visualizam apenas a própria produção."
+        ]
+      },
+      {
+        "kind": "new",
+        "title": "Períodos para acompanhar a produção",
+        "items": [
+          "Escolha semana (segunda a domingo), quinzena (dias 1 a 15 ou 16 até o fim do mês), mês calendário ou ciclo configurado da equipe.",
+          "Navegue entre períodos ou selecione uma data; o intervalo exato aparece no relatório e no PDF."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.1.60",
     "date": "2026-09-25",
     "title": "Fechar sem aviso repetitivo",
