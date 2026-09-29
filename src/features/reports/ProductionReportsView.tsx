@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase';
 import { fetchAllRows } from '../../lib/paginatedQuery';
 import { currentFinancialCycle, financialCycleRange, formatFinancialCycle, normalizeCycleStartDay, shiftMonthKey } from '../../lib/financialCycle';
 import { buildProductionReport, latestCompletionMoves, type TaskMoveForReport } from '../../lib/productionReport';
-import { formatShortProductionPeriod, shiftShortProductionPeriod, shortProductionPeriodRange, toLocalDateKey } from '../../lib/productionPeriod';
+import { customProductionPeriodRange, formatProductionDateRange, shiftWeeklyProductionPeriod, toLocalDateKey, weeklyProductionPeriodRange } from '../../lib/productionPeriod';
 import type { Client, Task, WorkspaceMember, WorkspaceSummary } from '../workspace/types';
 
 type Props = {
@@ -24,6 +24,8 @@ export function ProductionReportsView({ workspace, currentUserId, tasks, clients
   const [periodKind, setPeriodKind] = useState<EditFlowProductionReport['periodKind']>('month');
   const [monthKey, setMonthKey] = useState(() => currentFinancialCycle(1));
   const [dateKey, setDateKey] = useState(() => toLocalDateKey(new Date()));
+  const [customStartKey, setCustomStartKey] = useState(() => toLocalDateKey(new Date(new Date().getFullYear(), new Date().getMonth(), 1)));
+  const [customEndKey, setCustomEndKey] = useState(() => toLocalDateKey(new Date()));
   const [clientId, setClientId] = useState('all');
   const [editorId, setEditorId] = useState('all');
   const [search, setSearch] = useState('');
@@ -89,43 +91,47 @@ export function ProductionReportsView({ workspace, currentUserId, tasks, clients
     return () => { cancelled = true; };
   }, [workspace.id]);
 
-  useEffect(() => { setVisibleLimit(60); }, [monthKey, dateKey, periodKind, clientId, editorId, search]);
+  useEffect(() => { setVisibleLimit(60); }, [monthKey, dateKey, customStartKey, customEndKey, periodKind, clientId, editorId, search]);
 
-  const shortPeriod = periodKind === 'week' || periodKind === 'fortnight';
-  const range = useMemo(() => shortPeriod
-    ? shortProductionPeriodRange(dateKey, periodKind === 'week' ? 'week' : 'fortnight')
-    : financialCycleRange(monthKey, periodKind === 'cycle' ? cycleStartDay : 1),
-  [monthKey, dateKey, periodKind, cycleStartDay, shortPeriod]);
+  const range = useMemo(() => {
+    if (periodKind === 'week') return weeklyProductionPeriodRange(dateKey);
+    if (periodKind === 'custom') {
+      try { return customProductionPeriodRange(customStartKey, customEndKey); }
+      catch { return null; }
+    }
+    return financialCycleRange(monthKey, periodKind === 'cycle' ? cycleStartDay : 1);
+  }, [monthKey, dateKey, customStartKey, customEndKey, periodKind, cycleStartDay]);
   const completionDates = completionHistory?.key === historyKey ? completionHistory.dates : null;
-  const report = useMemo(() => buildProductionReport(tasks, clients, members, range, { clientId, editorId, currentUserId, canSeeTeam, search }, completionDates ?? undefined),
-    [tasks, clients, members, range, clientId, editorId, currentUserId, canSeeTeam, search, completionDates]);
+  const report = useMemo(() => buildProductionReport(range ? tasks : [], clients, members, range ?? financialCycleRange(monthKey, 1), { clientId, editorId, currentUserId, canSeeTeam, search }, completionDates ?? undefined),
+    [tasks, clients, members, range, monthKey, clientId, editorId, currentUserId, canSeeTeam, search, completionDates]);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
-  const periodLabel = shortPeriod ? formatShortProductionPeriod(range) : periodKind === 'cycle'
+  const periodLabel = !range ? 'Selecione um intervalo válido' : periodKind === 'week' || periodKind === 'custom'
+    ? formatProductionDateRange(range) : periodKind === 'cycle'
     ? formatFinancialCycle(range)
     : new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(range.start);
   const changePeriod = (kind: EditFlowProductionReport['periodKind']) => {
     if (periodKind === kind) return;
     setPeriodKind(kind);
-    if (kind === 'week' || kind === 'fortnight') setDateKey(toLocalDateKey(new Date()));
-    else setMonthKey(currentFinancialCycle(kind === 'cycle' ? cycleStartDay : 1));
+    if (kind === 'week') setDateKey(toLocalDateKey(new Date()));
+    else if (kind !== 'custom') setMonthKey(currentFinancialCycle(kind === 'cycle' ? cycleStartDay : 1));
   };
   const shiftPeriod = (offset: -1 | 1) => {
-    if (periodKind === 'week' || periodKind === 'fortnight') {
-      setDateKey((current) => shiftShortProductionPeriod(current, periodKind, offset));
+    if (periodKind === 'week') {
+      setDateKey((current) => shiftWeeklyProductionPeriod(current, offset));
     } else setMonthKey((current) => shiftMonthKey(current, offset));
   };
   const selectedClient = clientId === 'all' ? 'Todos os clientes' : clientId === 'none' ? 'Sem cliente' : clients.find((client) => client.id === clientId)?.name ?? 'Cliente removido';
   const selectedEditor = editorId === 'all' ? 'Todos os responsáveis' : editorId === 'none' ? 'Sem responsável' : members.find((member) => member.user_id === editorId)?.display_name ?? 'Membro removido';
 
   const exportPdf = async () => {
-    if (exporting) return;
+    if (exporting || !range) return;
     setExporting(true);
     setExportError(null);
     setExportSuccess(null);
     try {
       const result = await window.editflow.exportProductionReport({
         workspaceName: workspace.name,
-        periodKey: shortPeriod ? toLocalDateKey(range.start) : monthKey,
+        periodKey: periodKind === 'custom' ? `${customStartKey}_${customEndKey}` : periodKind === 'week' ? toLocalDateKey(range.start) : monthKey,
         periodLabel,
         periodKind,
         generatedAt: new Intl.DateTimeFormat('pt-BR', { dateStyle: 'long', timeStyle: 'short' }).format(new Date()),
@@ -156,25 +162,29 @@ export function ProductionReportsView({ workspace, currentUserId, tasks, clients
     <div className="production-report-view">
       <section className="production-report-hero">
         <div><span className="report-eyebrow">{canSeeTeam ? 'PRODUÇÃO DA EQUIPE' : 'MINHA PRODUÇÃO'}</span><h2>Relatório de vídeos</h2><p>Vídeos contabilizados pela última entrada registrada na etapa final. Arquivados continuam no histórico.</p></div>
-        <button className="secondary-button" type="button" disabled={exporting} onClick={() => void exportPdf()}>{exporting ? <LoaderCircle size={16} className="spinner" /> : <FileDown size={16} />}Exportar PDF</button>
+        <button className="secondary-button" type="button" disabled={exporting || !range} onClick={() => void exportPdf()}>{exporting ? <LoaderCircle size={16} className="spinner" /> : <FileDown size={16} />}Exportar PDF</button>
       </section>
 
       <section className="production-report-toolbar" aria-label="Período e filtros do relatório">
-        <div className="production-report-period">
+        {periodKind === 'custom' ? <div className="production-report-custom-period">
+          <label><span>Início</span><input type="date" aria-label="Data inicial do relatório" value={customStartKey} onChange={(event) => setCustomStartKey(event.target.value)} /></label>
+          <label><span>Fim</span><input type="date" aria-label="Data final do relatório" value={customEndKey} onChange={(event) => setCustomEndKey(event.target.value)} /></label>
+        </div> : <div className="production-report-period">
           <button type="button" aria-label="Período anterior" onClick={() => shiftPeriod(-1)}><ChevronLeft size={17} /></button>
-          {shortPeriod
-            ? <input type="date" aria-label="Escolher data da semana ou quinzena" value={dateKey} onChange={(event) => { if (/^\d{4}-\d{2}-\d{2}$/.test(event.target.value)) setDateKey(event.target.value); }} />
+          {periodKind === 'week'
+            ? <input type="date" aria-label="Escolher data da semana" value={dateKey} onChange={(event) => { if (/^\d{4}-\d{2}-\d{2}$/.test(event.target.value)) setDateKey(event.target.value); }} />
             : <input type="month" aria-label="Escolher mês" value={monthKey} onChange={(event) => { if (/^\d{4}-(0[1-9]|1[0-2])$/.test(event.target.value)) setMonthKey(event.target.value); }} />}
           <button type="button" aria-label="Próximo período" onClick={() => shiftPeriod(1)}><ChevronRight size={17} /></button>
-        </div>
+        </div>}
         <div className="production-report-period-kind" role="group" aria-label="Tipo de período">
           <button type="button" aria-pressed={periodKind === 'week'} className={periodKind === 'week' ? 'active' : ''} onClick={() => changePeriod('week')}>Semana</button>
-          <button type="button" aria-pressed={periodKind === 'fortnight'} className={periodKind === 'fortnight' ? 'active' : ''} onClick={() => changePeriod('fortnight')} title="Dias 1–15 ou 16 até o fim do mês">15 dias</button>
+          <button type="button" aria-pressed={periodKind === 'custom'} className={periodKind === 'custom' ? 'active' : ''} onClick={() => changePeriod('custom')}>Personalizado</button>
           <button type="button" aria-pressed={periodKind === 'month'} className={periodKind === 'month' ? 'active' : ''} onClick={() => changePeriod('month')}>Mês</button>
           <button type="button" aria-pressed={periodKind === 'cycle'} className={periodKind === 'cycle' ? 'active' : ''} disabled={cycleUnavailable} onClick={() => changePeriod('cycle')}>Ciclo da equipe</button>
         </div>
         <span className="production-report-period-label"><CalendarDays size={15} />{periodLabel}</span>
       </section>
+      {periodKind === 'custom' ? <p className={`production-report-range-note${range ? '' : ' error'}`} role={range ? 'status' : 'alert'}>{range ? 'As datas inicial e final estão incluídas no relatório.' : 'Informe datas válidas, com o início anterior ou igual ao fim.'}</p> : null}
 
       <section className="production-report-summary" aria-label="Resumo dos vídeos concluídos">
         <article><span><Video size={18} /></span><strong>{report.total}</strong><small>{report.total === 1 ? 'Vídeo concluído' : 'Vídeos concluídos'}</small></article>

@@ -1,37 +1,28 @@
 import type { FinancialCycleRange } from './financialCycle';
 
-export type ShortProductionPeriod = 'week' | 'fortnight';
-
 export function toLocalDateKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-export function shortProductionPeriodRange(dateKey: string, kind: ShortProductionPeriod): FinancialCycleRange {
+export function weeklyProductionPeriodRange(dateKey: string): FinancialCycleRange {
   const date = parseLocalDateKey(dateKey);
-  if (kind === 'week') {
-    const start = new Date(date.getFullYear(), date.getMonth(), date.getDate() - ((date.getDay() + 6) % 7));
-    return { start, end: new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7) };
-  }
-
-  const firstHalf = date.getDate() <= 15;
-  return {
-    start: new Date(date.getFullYear(), date.getMonth(), firstHalf ? 1 : 16),
-    end: new Date(date.getFullYear(), date.getMonth() + (firstHalf ? 0 : 1), firstHalf ? 16 : 1),
-  };
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate() - ((date.getDay() + 6) % 7));
+  return { start, end: new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7) };
 }
 
-export function shiftShortProductionPeriod(dateKey: string, kind: ShortProductionPeriod, offset: -1 | 1) {
-  const { start } = shortProductionPeriodRange(dateKey, kind);
-  if (kind === 'week') return toLocalDateKey(new Date(start.getFullYear(), start.getMonth(), start.getDate() + offset * 7));
-  if (offset === 1) return toLocalDateKey(start.getDate() === 1
-    ? new Date(start.getFullYear(), start.getMonth(), 16)
-    : new Date(start.getFullYear(), start.getMonth() + 1, 1));
-  return toLocalDateKey(start.getDate() === 1
-    ? new Date(start.getFullYear(), start.getMonth() - 1, 16)
-    : new Date(start.getFullYear(), start.getMonth(), 1));
+export function shiftWeeklyProductionPeriod(dateKey: string, offset: -1 | 1) {
+  const { start } = weeklyProductionPeriodRange(dateKey);
+  return toLocalDateKey(new Date(start.getFullYear(), start.getMonth(), start.getDate() + offset * 7));
 }
 
-export function formatShortProductionPeriod(range: FinancialCycleRange) {
+export function customProductionPeriodRange(startKey: string, endKey: string): FinancialCycleRange {
+  const start = parseLocalDateKey(startKey);
+  const lastDay = parseLocalDateKey(endKey);
+  if (start > lastDay) throw new Error('A data inicial deve ser anterior ou igual à data final');
+  return { start, end: new Date(lastDay.getFullYear(), lastDay.getMonth(), lastDay.getDate() + 1) };
+}
+
+export function formatProductionDateRange(range: FinancialCycleRange) {
   const endInclusive = new Date(range.end.getFullYear(), range.end.getMonth(), range.end.getDate() - 1);
   const formatter = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' });
   return `${formatter.format(range.start)} – ${formatter.format(endInclusive)}`;

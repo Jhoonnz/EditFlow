@@ -93,7 +93,7 @@ type EditFlowProductionReport = {
   workspaceName: string;
   periodKey: string;
   periodLabel: string;
-  periodKind: 'week' | 'fortnight' | 'month' | 'cycle';
+  periodKind: 'week' | 'custom' | 'month' | 'cycle';
   generatedAt: string;
   clientFilter: string;
   editorFilter: string;

@@ -21,7 +21,9 @@ describe('production report PDF', () => {
   it('validates matching summary and detail totals', () => {
     expect(isProductionReport(report)).toBe(true);
     expect(isProductionReport({ ...report, periodKind: 'week', periodKey: '2026-09-14' })).toBe(true);
-    expect(isProductionReport({ ...report, periodKind: 'fortnight', periodKey: '2026-09-16' })).toBe(true);
+    expect(isProductionReport({ ...report, periodKind: 'custom', periodKey: '2026-08-13_2026-08-28' })).toBe(true);
+    expect(isProductionReport({ ...report, periodKind: 'custom', periodKey: '2026-08-28_2026-08-13' })).toBe(false);
+    expect(isProductionReport({ ...report, periodKind: 'custom', periodKey: '2026-02-30_2026-03-01' })).toBe(false);
     expect(isProductionReport({ ...report, periodKind: 'week', periodKey: '2026-09' })).toBe(false);
     expect(isProductionReport({ ...report, total: 2 })).toBe(false);
     expect(isProductionReport({ ...report, periodKey: '../other' })).toBe(false);
@@ -34,8 +36,8 @@ describe('production report PDF', () => {
     expect(html).toContain('table-header-group');
   });
 
-  it('labels short periods in the printable report', () => {
+  it('labels selected periods in the printable report', () => {
     expect(productionReportHtml({ ...report, periodKind: 'week', periodKey: '2026-09-14' })).toContain('<p>Semana</p>');
-    expect(productionReportHtml({ ...report, periodKind: 'fortnight', periodKey: '2026-09-16' })).toContain('<p>15 dias</p>');
+    expect(productionReportHtml({ ...report, periodKind: 'custom', periodKey: '2026-08-13_2026-08-28', periodLabel: '13 de ago. de 2026 – 28 de ago. de 2026' })).toContain('<p>Intervalo personalizado</p>');
   });
 });

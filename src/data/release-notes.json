@@ -1,5 +1,22 @@
 [
   {
+    "version": "0.1.63",
+    "date": "2026-09-29",
+    "title": "Datas personalizadas nos relatórios",
+    "summary": "Escolha livremente o início e o fim do período para acompanhar a produção, sem depender de quinzenas fixas.",
+    "sections": [
+      {
+        "kind": "improved",
+        "title": "Relatórios por intervalo",
+        "items": [
+          "O filtro de 15 dias foi substituído por Personalizado, com datas inicial e final escolhidas por você; ambas entram na contagem.",
+          "Os totais, a produção por cliente, a lista de vídeos e o PDF seguem exatamente o intervalo selecionado.",
+          "Semana, Mês e Ciclo da equipe continuam disponíveis como atalhos. Datas inválidas impedem a exportação do PDF."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.1.62",
     "date": "2026-09-28",
     "title": "Datas corretas nos relatórios",

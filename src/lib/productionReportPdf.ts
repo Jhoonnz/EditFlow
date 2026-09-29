@@ -1,3 +1,5 @@
+import { customProductionPeriodRange, weeklyProductionPeriodRange } from './productionPeriod';
+
 const escapeHtml = (value: string) => value
   .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
   .replaceAll('"', '&quot;').replaceAll("'", '&#039;');
@@ -11,10 +13,8 @@ export function isProductionReport(value: unknown): value is EditFlowProductionR
   if (!shortText(report.workspaceName, 120) || !shortText(report.periodLabel, 100)
     || !shortText(report.generatedAt, 100) || !shortText(report.clientFilter, 120)
     || !shortText(report.editorFilter, 120) || !shortText(report.searchFilter, 120)
-    || !(['week', 'fortnight', 'month', 'cycle'] as const).includes(report.periodKind as EditFlowProductionReport['periodKind'])
-    || !(report.periodKind === 'week' || report.periodKind === 'fortnight'
-      ? /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(report.periodKey ?? '')
-      : /^\d{4}-(0[1-9]|1[0-2])$/.test(report.periodKey ?? ''))
+    || !(['week', 'custom', 'month', 'cycle'] as const).includes(report.periodKind as EditFlowProductionReport['periodKind'])
+    || !validPeriodKey(report.periodKind, report.periodKey)
     || !count(report.total) || !count(report.clientCount) || !count(report.editorCount)
     || !Array.isArray(report.byClient) || !Array.isArray(report.rows)
     || report.byClient.length > 1_000 || report.rows.length !== report.total) return false;
@@ -22,6 +22,24 @@ export function isProductionReport(value: unknown): value is EditFlowProductionR
   if (report.byClient.reduce((sum, row) => sum + row.count, 0) !== report.total) return false;
   return report.rows.every((row) => row && shortText(row.title, 300) && shortText(row.client, 160)
     && shortText(row.editor, 160) && shortText(row.completedAt, 80) && typeof row.archived === 'boolean');
+}
+
+function validPeriodKey(kind: EditFlowProductionReport['periodKind'] | undefined, key: string | undefined) {
+  if (!key) return false;
+  if (kind === 'month' || kind === 'cycle') return /^\d{4}-(0[1-9]|1[0-2])$/.test(key);
+  try {
+    if (kind === 'week') {
+      weeklyProductionPeriodRange(key);
+      return true;
+    }
+    if (kind === 'custom') {
+      const dates = key.split('_');
+      if (dates.length !== 2) return false;
+      customProductionPeriodRange(dates[0], dates[1]);
+      return true;
+    }
+  } catch { return false; }
+  return false;
 }
 
 export function productionReportHtml(report: EditFlowProductionReport) {
@@ -65,7 +83,7 @@ export function productionReportHtml(report: EditFlowProductionReport) {
 function periodKindLabel(kind: EditFlowProductionReport['periodKind']) {
   switch (kind) {
     case 'week': return 'Semana';
-    case 'fortnight': return '15 dias';
+    case 'custom': return 'Intervalo personalizado';
     case 'cycle': return 'Ciclo da equipe';
     case 'month': return 'Mês calendário';
   }

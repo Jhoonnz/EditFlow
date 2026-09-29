@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { financialCycleRange } from './financialCycle';
 import { buildProductionReport, latestCompletionMoves } from './productionReport';
-import { shortProductionPeriodRange } from './productionPeriod';
+import { customProductionPeriodRange, weeklyProductionPeriodRange } from './productionPeriod';
 import type { Client, Task, WorkspaceMember } from '../features/workspace/types';
 
 const client = { id: 'client-a', name: 'Canal A' } as Client;
@@ -49,16 +49,18 @@ describe('production report', () => {
     expect(report.byClient[0].count).toBe(1);
   });
 
-  it('uses the same weekly and fortnightly boundaries for counts', () => {
+  it('uses weekly and inclusive custom boundaries for counts', () => {
     const rows = [
       task('a', '2026-09-14T15:00:00Z'),
       task('b', '2026-09-15T15:00:00Z'),
       task('c', '2026-09-16T15:00:00Z'),
       task('d', '2026-09-21T15:00:00Z'),
     ];
-    expect(buildProductionReport(rows, [client], [editor], shortProductionPeriodRange('2026-09-16', 'week'), filters).total).toBe(3);
-    expect(buildProductionReport(rows, [client], [editor], shortProductionPeriodRange('2026-09-15', 'fortnight'), filters).total).toBe(2);
-    expect(buildProductionReport(rows, [client], [editor], shortProductionPeriodRange('2026-09-16', 'fortnight'), filters).total).toBe(2);
+    expect(buildProductionReport(rows, [client], [editor], weeklyProductionPeriodRange('2026-09-16'), filters).total).toBe(3);
+    const custom = buildProductionReport(rows, [client], [editor], customProductionPeriodRange('2026-09-15', '2026-09-21'), filters);
+    expect(custom.total).toBe(3);
+    expect(custom.byClient[0].count).toBe(3);
+    expect(custom.rows.map((row) => row.taskId)).toEqual(['d', 'c', 'b']);
   });
 
   it('uses the latest real move into the final column instead of a later backfilled timestamp', () => {

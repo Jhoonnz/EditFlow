@@ -3155,6 +3155,12 @@ body { font-size: var(--text-body); line-height: 1.45; }
 .production-report-period button:hover { background: #efedfb; color: #5c4cb4; }
 .production-report-period input { width: 134px; min-width: 0; padding: 0 5px; border: 0; background: transparent; color: #393447; font: inherit; font-size: 12px; outline: none; color-scheme: light; }
 .production-report-period input[type="date"] { width: 155px; }
+.production-report-custom-period { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.production-report-custom-period label { display: flex; align-items: center; gap: 7px; min-height: 39px; padding: 0 10px; border: 1px solid #e5e2ec; border-radius: 11px; background: #fff; }
+.production-report-custom-period label > span { color: #777384; font-size: 11px; font-weight: 700; }
+.production-report-custom-period input { width: 158px; min-width: 0; border: 0; background: transparent; color: #393447; font: inherit; font-size: 12px; outline: none; color-scheme: light; }
+.production-report-range-note { width: 100%; margin: -4px 0 0; color: #777384; font-size: 11px; }
+.production-report-range-note.error { color: #b84c5f; }
 .production-report-period-kind { display: flex; gap: 3px; padding: 3px; border: 1px solid #e5e2ec; border-radius: 11px; background: #fff; }
 .production-report-period-kind button { min-height: 31px; padding: 0 11px; border: 0; border-radius: 8px; background: transparent; color: #777384; font-size: 11px; cursor: pointer; }
 .production-report-period-kind button.active { background: #eeeafd; color: #5649a9; font-weight: 750; }
@@ -3198,8 +3204,10 @@ body { font-size: var(--text-body); line-height: 1.45; }
 :root[data-theme="dark"] .production-report-hero,:root[data-theme="dark"] .production-report-summary article,:root[data-theme="dark"] .production-report-clients,:root[data-theme="dark"] .production-report-details { border-color: #393640; background: #2b2a32; }
 :root[data-theme="dark"] .production-report-hero h2,:root[data-theme="dark"] .production-report-summary strong,:root[data-theme="dark"] .production-report-clients h3,:root[data-theme="dark"] .production-report-details h3 { color: #f0edf4; }
 :root[data-theme="dark"] .production-report-hero p,:root[data-theme="dark"] .production-report-period-label,:root[data-theme="dark"] .production-report-details header small { color: #aaa4b1; }
-:root[data-theme="dark"] .production-report-period,:root[data-theme="dark"] .production-report-period-kind,:root[data-theme="dark"] .production-report-filters select,:root[data-theme="dark"] .production-report-filters input,:root[data-theme="dark"] .production-report-search > div { border-color: #494550; background: #32313a; color: #eae6ee; }
-:root[data-theme="dark"] .production-report-period input { color: #eeeaf2; color-scheme: dark; }
+:root[data-theme="dark"] .production-report-period,:root[data-theme="dark"] .production-report-custom-period label,:root[data-theme="dark"] .production-report-period-kind,:root[data-theme="dark"] .production-report-filters select,:root[data-theme="dark"] .production-report-filters input,:root[data-theme="dark"] .production-report-search > div { border-color: #494550; background: #32313a; color: #eae6ee; }
+:root[data-theme="dark"] .production-report-period input,:root[data-theme="dark"] .production-report-custom-period input { color: #eeeaf2; color-scheme: dark; }
+:root[data-theme="dark"] .production-report-custom-period label > span,:root[data-theme="dark"] .production-report-range-note { color: #aaa4b1; }
+:root[data-theme="dark"] .production-report-range-note.error { color: #ee93a3; }
 :root[data-theme="dark"] .production-report-period-kind button { color: #b6b0bd; }
 :root[data-theme="dark"] .production-report-period-kind button.active,:root[data-theme="dark"] .production-report-summary article > span { background: #40375f; color: #c9bcff; }
 :root[data-theme="dark"] .production-report-client-grid article { border-color: #413d49; background: #34323c; }

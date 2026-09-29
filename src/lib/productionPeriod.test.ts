@@ -1,30 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import { isDateInRange } from './financialCycle';
-import { formatShortProductionPeriod, shiftShortProductionPeriod, shortProductionPeriodRange } from './productionPeriod';
+import { customProductionPeriodRange, formatProductionDateRange, shiftWeeklyProductionPeriod, weeklyProductionPeriodRange } from './productionPeriod';
 
-describe('production report short periods', () => {
+describe('production report periods', () => {
   it('uses Monday through Sunday, including a year boundary', () => {
-    const range = shortProductionPeriodRange('2027-01-01', 'week');
+    const range = weeklyProductionPeriodRange('2027-01-01');
     expect(range.start).toEqual(new Date(2026, 11, 28));
     expect(range.end).toEqual(new Date(2027, 0, 4));
     expect(isDateInRange(new Date(2027, 0, 3, 23, 59), range)).toBe(true);
     expect(isDateInRange(new Date(2027, 0, 4), range)).toBe(false);
-    expect(shiftShortProductionPeriod('2027-01-01', 'week', 1)).toBe('2027-01-04');
-    expect(formatShortProductionPeriod(range)).toContain('2026');
-    expect(formatShortProductionPeriod(range)).toContain('2027');
+    expect(shiftWeeklyProductionPeriod('2027-01-01', 1)).toBe('2027-01-04');
+    expect(formatProductionDateRange(range)).toContain('2026');
+    expect(formatProductionDateRange(range)).toContain('2027');
   });
 
-  it('splits each calendar month into days 1-15 and 16-end', () => {
-    const first = shortProductionPeriodRange('2028-02-15', 'fortnight');
-    const second = shortProductionPeriodRange('2028-02-16', 'fortnight');
-    expect(first).toEqual({ start: new Date(2028, 1, 1), end: new Date(2028, 1, 16) });
-    expect(second).toEqual({ start: new Date(2028, 1, 16), end: new Date(2028, 2, 1) });
-    expect(shiftShortProductionPeriod('2028-02-15', 'fortnight', 1)).toBe('2028-02-16');
-    expect(shiftShortProductionPeriod('2028-02-16', 'fortnight', 1)).toBe('2028-03-01');
-    expect(shiftShortProductionPeriod('2028-02-01', 'fortnight', -1)).toBe('2028-01-16');
+  it('includes both selected dates across month boundaries', () => {
+    const range = customProductionPeriodRange('2026-08-13', '2026-08-28');
+    expect(range).toEqual({ start: new Date(2026, 7, 13), end: new Date(2026, 7, 29) });
+    expect(isDateInRange(new Date(2026, 7, 28, 23, 59), range)).toBe(true);
+    expect(isDateInRange(new Date(2026, 7, 29), range)).toBe(false);
+    expect(customProductionPeriodRange('2028-02-28', '2028-03-01').end).toEqual(new Date(2028, 2, 2));
+    expect(customProductionPeriodRange('2026-09-28', '2026-09-28').end).toEqual(new Date(2026, 8, 29));
   });
 
-  it('rejects impossible dates', () => {
-    expect(() => shortProductionPeriodRange('2026-02-30', 'week')).toThrow();
+  it('rejects impossible or inverted dates', () => {
+    expect(() => weeklyProductionPeriodRange('2026-02-30')).toThrow();
+    expect(() => customProductionPeriodRange('2026-02-30', '2026-03-01')).toThrow();
+    expect(() => customProductionPeriodRange('2026-09-29', '2026-09-28')).toThrow();
   });
 });
